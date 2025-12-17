@@ -2,61 +2,63 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>State</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Substrate</title>
   <style>
     html, body {
       margin: 0;
       padding: 0;
       width: 100%;
       height: 100%;
-      background: #121212; /* dark mode gray */
+      background: #121212; /* dark mode, not black */
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
     }
 
-    #dot {
+    #shape {
       width: 120px;
       height: 120px;
-      border-radius: 50%;
-      background: #ff8c1a; /* orange */
-      display: none;
+      background: #ff8c00; /* orange */
+      border-radius: 18px;
+      opacity: 1;
+      transition: opacity 0.25s linear;
     }
   </style>
 </head>
 <body>
 
-  <div id="dot"></div>
+  <div id="shape"></div>
 
   <script>
-    // true = A (present), false = _
-    let state = true;
+    // A-present probability (starts stable)
+    let p = 0.75;
 
-    // bias toward presence, but allow change
-    const STABILITY = 0.75;
-    const TICK_MS = 1000;
-
-    const dot = document.getElementById("dot");
+    // whether A is currently present
+    let present = true;
 
     function tick() {
-      if (state) {
-        // A -> A or _
-        state = Math.random() < STABILITY;
-      } else {
-        // _ -> A (reversion)
-        state = Math.random() < (1 - STABILITY);
-      }
+      // small unbiased noise
+      p += (Math.random() - 0.5) * 0.08;
 
-      dot.style.display = state ? "block" : "none";
+      // pull back toward steady A
+      p += (0.75 - p) * 0.02;
+
+      // clamp
+      p = Math.max(0.05, Math.min(0.95, p));
+
+      // decide state
+      present = Math.random() < p;
+
+      // render
+      document.getElementById("shape").style.opacity =
+        present ? "1" : "0";
+
     }
 
-    // start in steady A
-    dot.style.display = "block";
-
-    setInterval(tick, TICK_MS);
+    // fixed interval (time matters only for observation)
+    setInterval(tick, 800);
   </script>
 
 </body>
