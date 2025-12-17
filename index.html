@@ -7,7 +7,7 @@
 <style>
   body {
     margin: 0;
-    background: #121212;
+    background: #141414; /* dark mode, not pure black */
     display: flex;
     align-items: center;
     justify-content: center;
@@ -18,8 +18,8 @@
     height: 160px;
     border-radius: 50%;
     background: orange;
-    opacity: 1;
-    transition: opacity 0.05s linear; /* just a flash, not animation */
+    opacity: 0.5;
+    transition: opacity 0.15s linear; /* subtle, not expressive */
   }
 </style>
 </head>
@@ -28,23 +28,23 @@
 <div id="dot"></div>
 
 <script>
-let present = true;          // current state
-let runLength = 0;           // how long we've stayed here
+let presence = 0.5;      // neutral start
+let inertia = 0;        // persistence memory
 
 function step() {
-  runLength++;
+  inertia += Math.abs(presence - 0.5);
 
-  // hazard increases with persistence, symmetric
-  const hazard = Math.min(0.5, runLength * 0.01);
+  // noise is symmetric
+  const noise = (Math.random() - 0.5) * 0.08;
 
-  if (Math.random() < hazard) {
-    present = !present;
-    runLength = 0;
-  }
+  // persistence pushes back toward equilibrium
+  const drift = -0.02 * (presence - 0.5);
 
-  document.getElementById("dot").style.opacity = present ? 1 : 0;
+  presence += noise + drift;
+  presence = Math.max(0, Math.min(1, presence));
 
-  // no meaningful "time" — just enough to let state resolve
+  document.getElementById("dot").style.opacity = presence;
+
   setTimeout(step, 120);
 }
 
