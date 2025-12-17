@@ -1,103 +1,31 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta
-  name="viewport"
-  content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-/>
-
-<title>Timing Reader</title>
-
-<style>
-/* ===== HARD STOP SCROLL (iOS SAFE) ===== */
-html, body {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  width: 100%;
-  overflow: hidden !important;
-  position: fixed;
-  background: #000;
-  overscroll-behavior: none;
-  touch-action: manipulation;
-  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-}
-
-/* ===== LAYOUT ===== */
-.app {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 18px;
-}
-
-/* ===== READER ===== */
-#reader {
-  width: 80%;
-  padding: 28px 0;
-  text-align: center;
-  font-size: 56px;
-  background: #111;
-  border-radius: 22px;
-  color: #fff;
-}
-
-/* ===== BUTTONS ===== */
-button {
-  width: 80%;
-  padding: 18px 0;
-  font-size: 22px;
-  background: #111;
-  color: #fff;
-  border: none;
-  border-radius: 18px;
-}
-
-button:active {
-  background: #222;
-}
-</style>
-</head>
-
-<body>
-<div class="app">
-  <div id="reader">0.500</div>
-  <button onclick="tap()">TAP</button>
-  <button onclick="endSession()">× END</button>
-</div>
-
 <script>
 /* =========================
-   CONFIG
+   CONFIG (defensible)
 ========================= */
-const DISPLAY_ALPHA = 0.9;      // inertia
-const BASE_WINDOW = 300;
-const MIN_WINDOW = 150;
-const MAX_WINDOW = 900;
-const EXPAND_RATE = 0.4;
-const CONTRACT_RATE = 0.12;
+const DISPLAY_ALPHA = 0.9;     // inertia
+const BASE_WINDOW = 12;       // number of taps
+const MIN_WINDOW  = 6;
+const MAX_WINDOW  = 24;
+
+const VAR_FLOOR = 4;          // ms² ~ human noise floor
+const VAR_CEIL  = 400;        // ms² ~ total breakdown
 
 /* =========================
    STATE
 ========================= */
 let sessionActive = true;
-
 let windowSize = BASE_WINDOW;
-let windowed = [];
 
+let intervals = [];
 let displayValue = 0.5;
 let lastDisplay = 0.5;
-
 let lastTapTime = null;
 
 /* =========================
    HELPERS
 ========================= */
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const mean = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
+const clamp = (v,a,b) => Math.max(a, Math.min(b,v));
+const mean  = a => a.reduce((x,y)=>x+y,0) / a.length;
 
 /* =========================
    TAP
@@ -107,49 +35,46 @@ function tap() {
 
   const now = performance.now();
 
-  // first tap just initializes timing
   if (lastTapTime === null) {
     lastTapTime = now;
-    updateDisplay();
+    paint();
     return;
   }
 
   const delta = now - lastTapTime;
   lastTapTime = now;
 
-  windowed.push(delta);
-  windowed = windowed.filter(d => d < windowSize);
+  intervals.push(delta);
+  if (intervals.length > windowSize) intervals.shift();
 
-  const avg = mean(windowed);
-
-  // instability (variance)
-  const variance = mean(windowed.map(d => (d - avg) ** 2));
-  const instability = Math.sqrt(variance);
-
-  // adaptive window (invisible)
-  if (instability > 30) {
-    windowSize = clamp(
-      windowSize + instability * EXPAND_RATE,
-      MIN_WINDOW,
-      MAX_WINDOW
-    );
-  } else {
-    windowSize = clamp(
-      windowSize - windowSize * CONTRACT_RATE,
-      MIN_WINDOW,
-      MAX_WINDOW
-    );
+  if (intervals.length < 3) {
+    paint();
+    return;
   }
 
-  // normalized estimate (lower delta = better)
-  const estimate = clamp(1 - avg / windowSize, 0, 1);
+  const avg = mean(intervals);
+  const variance =
+    mean(intervals.map(d => (d - avg) ** 2));
 
-  // inertial update (no jumps)
+  /* consistency only */
+  const normalized =
+    1 - clamp(
+      (variance - VAR_FLOOR) / (VAR_CEIL - VAR_FLOOR),
+      0, 1
+    );
+
   displayValue =
     DISPLAY_ALPHA * displayValue +
-    (1 - DISPLAY_ALPHA) * estimate;
+    (1 - DISPLAY_ALPHA) * normalized;
 
-  updateDisplay();
+  /* adaptive window (stable → shrink, unstable → expand) */
+  if (variance > VAR_CEIL * 0.6 && windowSize < MAX_WINDOW) {
+    windowSize++;
+  } else if (variance < VAR_FLOOR * 2 && windowSize > MIN_WINDOW) {
+    windowSize--;
+  }
+
+  paint();
 }
 
 /* =========================
@@ -162,21 +87,16 @@ function endSession() {
 /* =========================
    DISPLAY
 ========================= */
-function updateDisplay() {
+function paint() {
   const el = document.getElementById("reader");
-  const delta = displayValue - lastDisplay;
+  const d  = displayValue - lastDisplay;
 
   el.textContent = displayValue.toFixed(3);
 
-  // strict red / green only
-  if (delta > 0) {
-    el.style.color = "#2ecc71"; // green
-  } else if (delta < 0) {
-    el.style.color = "#e74c3c"; // red
-  }
+  if (d > 0)      el.style.color = "#2ecc71";
+  else if (d < 0) el.style.color = "#e74c3c";
+  else            el.style.color = "#ffffff";
 
   lastDisplay = displayValue;
 }
 </script>
-</body>
-</html>
