@@ -1,58 +1,69 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8" />
   <title>Relative Timing</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
   <style>
     body {
+      margin: 0;
+      height: 100vh;
       background: #000;
       color: #fff;
       font-family: system-ui, sans-serif;
       display: flex;
       align-items: center;
       justify-content: center;
-      height: 100vh;
-      margin: 0;
     }
+
     .card {
       background: #111;
-      padding: 40px;
-      border-radius: 20px;
-      text-align: center;
+      padding: 32px;
+      border-radius: 24px;
       width: 280px;
+      text-align: center;
     }
+
     .value {
       font-size: 48px;
-      margin-bottom: 30px;
+      margin-bottom: 24px;
     }
+
     button {
       width: 100%;
       padding: 16px;
-      margin: 10px 0;
+      margin: 8px 0;
       font-size: 18px;
       border-radius: 999px;
       border: none;
       background: #222;
       color: #fff;
     }
+
+    .label {
+      margin-top: 12px;
+      opacity: 0.4;
+      font-size: 14px;
+    }
   </style>
 </head>
-<body>
 
+<body>
   <div class="card">
-    <div id="value" class="value">0.0000</div>
+    <div id="display" class="value">0.0000</div>
     <button onclick="tap()">tap</button>
-    <button onclick="reset()">reset</button>
-    <div style="opacity:0.4;margin-top:10px;">relative timing signal</div>
+    <button onclick="resetAll()">reset</button>
+    <div class="label">relative timing signal</div>
   </div>
 
   <script>
     const MAX_WINDOW = 20;
-    const ALPHA = 0.2;
+    const ALPHA = 0.15;
 
     let lastTap = null;
-    let windowVals = [];
     let mean = null;
+    let windowVals = [];
 
     function tap() {
       const now = performance.now();
@@ -73,23 +84,24 @@
         : ALPHA * interval + (1 - ALPHA) * mean;
 
       windowVals.push(mean);
-      if (windowVals.length > MAX_WINDOW) windowVals.shift();
+      if (windowVals.length > MAX_WINDOW) {
+        windowVals.shift();
+      }
 
-      render(mean / 1000); // seconds
+      render(mean / 1000);
     }
 
-    function reset() {
+    function resetAll() {
       lastTap = null;
-      windowVals = [];
       mean = null;
+      windowVals = [];
       render(0);
     }
 
     function render(value) {
-      document.getElementById("value").textContent =
+      document.getElementById("display").textContent =
         value.toFixed(4);
     }
   </script>
-
 </body>
 </html>
