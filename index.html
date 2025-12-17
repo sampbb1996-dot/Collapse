@@ -1,25 +1,29 @@
 <script>
-/* =========================
-   CONFIG (defensible)
-========================= */
-const DISPLAY_ALPHA = 0.9;     // inertia
-const BASE_WINDOW = 12;       // number of taps
-const MIN_WINDOW  = 6;
-const MAX_WINDOW  = 24;
+document.addEventListener("DOMContentLoaded", () => {
 
-const VAR_FLOOR = 4;          // ms² ~ human noise floor
-const VAR_CEIL  = 400;        // ms² ~ total breakdown
+/* =========================
+   CONFIG (LOCKED)
+========================= */
+const DISPLAY_ALPHA = 0.88;
+const FAST_WINDOW = 8;
+const SLOW_ALPHA = 0.02;
+
+const VAR_FLOOR = 6;
+const VAR_CEIL  = 500;
 
 /* =========================
    STATE
 ========================= */
 let sessionActive = true;
-let windowSize = BASE_WINDOW;
 
-let intervals = [];
+let lastTapTime = null;
+let fastIntervals = [];
+
+let slowMean = null;
 let displayValue = 0.5;
 let lastDisplay = 0.5;
-let lastTapTime = null;
+
+const reader = document.getElementById("reader");
 
 /* =========================
    HELPERS
@@ -30,8 +34,8 @@ const mean  = a => a.reduce((x,y)=>x+y,0) / a.length;
 /* =========================
    TAP
 ========================= */
-function tap() {
-  if (!sessionActive) return;
+window.tap = function () {
+  if (!sessionActive || !reader) return;
 
   const now = performance.now();
 
@@ -44,59 +48,70 @@ function tap() {
   const delta = now - lastTapTime;
   lastTapTime = now;
 
-  intervals.push(delta);
-  if (intervals.length > windowSize) intervals.shift();
+  fastIntervals.push(delta);
+  if (fastIntervals.length > FAST_WINDOW) fastIntervals.shift();
 
-  if (intervals.length < 3) {
+  if (fastIntervals.length < 4) {
     paint();
     return;
   }
 
-  const avg = mean(intervals);
-  const variance =
-    mean(intervals.map(d => (d - avg) ** 2));
+  const fastMean = mean(fastIntervals);
 
-  /* consistency only */
-  const normalized =
+  if (slowMean === null || !isFinite(slowMean)) {
+    slowMean = fastMean;
+  } else {
+    slowMean = (1 - SLOW_ALPHA) * slowMean + SLOW_ALPHA * fastMean;
+  }
+
+  const error = Math.abs(fastMean - slowMean);
+
+  const variance =
+    mean(fastIntervals.map(d => (d - fastMean) ** 2));
+
+  const stability =
     1 - clamp(
       (variance - VAR_FLOOR) / (VAR_CEIL - VAR_FLOOR),
       0, 1
     );
 
+  const alignment =
+    slowMean > 0
+      ? 1 - clamp(error / slowMean, 0, 1)
+      : 0;
+
+  const estimate = stability * alignment;
+
   displayValue =
     DISPLAY_ALPHA * displayValue +
-    (1 - DISPLAY_ALPHA) * normalized;
-
-  /* adaptive window (stable → shrink, unstable → expand) */
-  if (variance > VAR_CEIL * 0.6 && windowSize < MAX_WINDOW) {
-    windowSize++;
-  } else if (variance < VAR_FLOOR * 2 && windowSize > MIN_WINDOW) {
-    windowSize--;
-  }
+    (1 - DISPLAY_ALPHA) * estimate;
 
   paint();
-}
+};
 
 /* =========================
    END
 ========================= */
-function endSession() {
+window.endSession = function () {
   sessionActive = false;
-}
+};
 
 /* =========================
    DISPLAY
 ========================= */
 function paint() {
-  const el = document.getElementById("reader");
-  const d  = displayValue - lastDisplay;
+  if (!reader || !isFinite(displayValue)) return;
 
-  el.textContent = displayValue.toFixed(3);
+  const d = displayValue - lastDisplay;
 
-  if (d > 0)      el.style.color = "#2ecc71";
-  else if (d < 0) el.style.color = "#e74c3c";
-  else            el.style.color = "#ffffff";
+  reader.textContent = displayValue.toFixed(3);
+
+  if (d > 0)      reader.style.color = "#2ecc71";
+  else if (d < 0) reader.style.color = "#e74c3c";
+  else            reader.style.color = "#ffffff";
 
   lastDisplay = displayValue;
 }
+
+});
 </script>
