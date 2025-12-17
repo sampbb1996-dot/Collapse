@@ -2,166 +2,89 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Structural Tap (Stable)</title>
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+<title>Maintain A</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 
 <style>
-html, body {
-  margin: 0;
-  height: 100%;
-  background: #000;
-  color: #fff;
-  font-family: system-ui, -apple-system, sans-serif;
-  overflow: hidden;
-  touch-action: manipulation;
-  user-select: none;
-}
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #000;
+    color: #fff;
+    font-family: system-ui, sans-serif;
+    overflow: hidden;
+    touch-action: manipulation;
+  }
 
-.app {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-}
+  #app {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
 
-#zone {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+  #A {
+    font-size: 80px;
+    margin-bottom: 40px;
+    opacity: 0;
+    transition: opacity 120ms linear;
+  }
 
-#obj {
-  width: 72px;
-  height: 72px;
-  border-radius: 14px;
-  background: #fff;
-  opacity: 0;
-  transform: scale(0.95);
-  transition: opacity 140ms linear, transform 140ms linear;
-}
+  #A.on {
+    opacity: 1;
+  }
 
-#obj.on {
-  opacity: 1;
-  transform: scale(1);
-}
-
-#hud {
-  position: fixed;
-  top: 14px;
-  left: 0;
-  right: 0;
-  text-align: center;
-  font-size: 16px;
-  opacity: 0.65;
-  pointer-events: none;
-}
-
-#resetBar {
-  padding: 16px;
-}
-
-#reset {
-  width: 100%;
-  padding: 16px;
-  border-radius: 999px;
-  border: none;
-  background: #222;
-  color: #fff;
-  font-size: 1rem;
-}
+  #tap {
+    padding: 18px 60px;
+    font-size: 20px;
+    border-radius: 999px;
+    border: none;
+    background: #222;
+    color: #fff;
+  }
 </style>
 </head>
 
 <body>
-<div class="app">
-  <div id="hud">correct: 0%</div>
-
-  <div id="zone">
-    <div id="obj"></div>
+  <div id="app">
+    <div id="A">A</div>
+    <button id="tap">tap</button>
   </div>
-
-  <div id="resetBar">
-    <button id="reset">reset</button>
-  </div>
-</div>
 
 <script>
-const zone = document.getElementById("zone");
-const obj = document.getElementById("obj");
-const hud = document.getElementById("hud");
-const resetBtn = document.getElementById("reset");
+/*
+  MF STRUCTURE:
 
-// --- Symbol history (structure only) ---
-let hist = [];
-const MAX_HIST = 12;
+  - Tap has ONE meaning: advance state
+  - State is adversarial
+  - A survives in some states, dies in others
+  - No time, no rhythm, no scoring
+*/
 
-// --- Confidence (structural inertia) ---
-let confidence = 0.5; // 0..1
-const ON_THRESHOLD = 0.6;
-const OFF_THRESHOLD = 0.4;
+let state = 0;
 
-// --- Correctness window ---
-let correctnessWindow = [];
-const WINDOW = 20;
+// fixed adversarial structure
+// A exists only in these phases
+const survivesIn = new Set([0, 2, 5]);
 
-function passesStructure() {
-  if (hist.length < 4) return true;
+const PERIOD = 7; // size of structure (arbitrary but explicit)
 
-  const t = hist.slice(-4);
-
-  // strict alternation only
-  for (let i = 1; i < t.length; i++) {
-    if (t[i] === t[i - 1]) return false;
-  }
-  return true;
-}
+const Ael = document.getElementById("A");
+const tapBtn = document.getElementById("tap");
 
 function update() {
-  const alive = confidence > ON_THRESHOLD;
-  obj.classList.toggle("on", alive);
-
-  const pct =
-    correctnessWindow.length === 0
-      ? 0
-      : Math.round(
-          (correctnessWindow.reduce((a, b) => a + b, 0) /
-            correctnessWindow.length) *
-            100
-        );
-
-  hud.textContent = `correct: ${pct}%`;
+  const alive = survivesIn.has(state);
+  Ael.classList.toggle("on", alive);
 }
 
-zone.addEventListener("pointerup", (e) => {
-  const rect = zone.getBoundingClientRect();
-  const sym = e.clientX < rect.left + rect.width / 2 ? "L" : "R";
-
-  hist.push(sym);
-  if (hist.length > MAX_HIST) hist.shift();
-
-  const ok = passesStructure();
-
-  // --- Confidence update ---
-  const delta = ok ? +0.08 : -0.12;
-  confidence = Math.min(1, Math.max(0, confidence + delta));
-
-  // --- Correctness telemetry ---
-  correctnessWindow.push(ok ? 1 : 0);
-  if (correctnessWindow.length > WINDOW) {
-    correctnessWindow.shift();
-  }
-
+tapBtn.addEventListener("click", () => {
+  state = (state + 1) % PERIOD;
   update();
 });
 
-resetBtn.addEventListener("pointerdown", () => {
-  hist = [];
-  confidence = 0.5;
-  correctnessWindow = [];
-  update();
-});
-
+// initial condition
 update();
 </script>
 </body>
