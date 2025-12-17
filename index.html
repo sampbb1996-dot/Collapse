@@ -1,57 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Binary Structure</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #000;
+      color: #fff;
+      font-family: system-ui, -apple-system, sans-serif;
+      overflow: hidden;
+      touch-action: manipulation;
+    }
+
+    #tapArea {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #object {
+      padding: 40px 60px;
+      border-radius: 24px;
+      background: #111;
+      font-size: 48px;
+      opacity: 0;
+      transition: opacity 120ms linear;
+      pointer-events: none;
+    }
+
+    #object.visible {
+      opacity: 1;
+    }
+
+    #reset {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 16px 48px;
+      border-radius: 999px;
+      background: #222;
+      font-size: 18px;
+      user-select: none;
+    }
+
+    #stats {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 14px;
+      opacity: 0.6;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="tapArea"></div>
+
+  <div id="object">■</div>
+
+  <div id="stats">correct: 0%</div>
+
+  <div id="reset">reset</div>
+
 <script>
-let times = [];
-let signal = 0;
-const ALPHA = 0.25;
+(() => {
+  let lastTap = null;       // structural memory
+  let exists = false;      // binary state
 
-let touching = false;
-const zone = document.getElementById("zone");
+  let totalTaps = 0;       // telemetry only
+  let correctTaps = 0;     // telemetry only
 
-zone.addEventListener("pointerdown", () => {
-  touching = true;
-});
+  const object = document.getElementById('object');
+  const stats  = document.getElementById('stats');
+  const tapArea = document.getElementById('tapArea');
+  const resetBtn = document.getElementById('reset');
 
-zone.addEventListener("pointerup", () => {
-  if (!touching) return;
-  touching = false;
-  tap();
-});
-
-zone.addEventListener("pointercancel", () => touching = false);
-
-function tap() {
-  const t = performance.now();
-  times.push(t);
-
-  if (times.length < 4) {
-    render(signal);
-    return;
+  function updateObject() {
+    object.classList.toggle('visible', exists);
   }
 
-  const a = times.at(-1) - times.at(-2);
-  const b = times.at(-2) - times.at(-3);
-  const c = times.at(-3) - times.at(-4);
+  function updateStats() {
+    if (totalTaps === 0) {
+      stats.textContent = 'correct: 0%';
+      return;
+    }
+    const pct = Math.round((correctTaps / totalTaps) * 100);
+    stats.textContent = `correct: ${pct}%`;
+  }
 
-  const r1 = a / b;
-  const r2 = b / c;
+  function handleTap() {
+    const currentTap = true; // tap is a discrete event, no value
 
-  const error = Math.abs(r1 - r2); // >= 0 always
+    totalTaps++;
 
-  // smooth but never evolve without evidence
-  signal = ALPHA * error + (1 - ALPHA) * signal;
+    // structural rule: no identical repetition
+    if (lastTap === currentTap) {
+      exists = false;
+    } else {
+      exists = true;
+      correctTaps++;
+    }
 
-  // hard safety: structural error cannot be negative
-  if (signal < 0) signal = 0;
+    lastTap = currentTap;
 
-  render(signal);
-}
+    updateObject();
+    updateStats();
+  }
 
-function render(v) {
-  document.getElementById("value").textContent = v.toFixed(4);
-}
+  function reset() {
+    lastTap = null;
+    exists = false;
+    totalTaps = 0;
+    correctTaps = 0;
+    updateObject();
+    updateStats();
+  }
 
-document.getElementById("reset").onclick = () => {
-  times = [];
-  signal = 0;
-  render(0);
-};
+  tapArea.addEventListener('pointerdown', handleTap);
+  resetBtn.addEventListener('pointerdown', reset);
+
+})();
 </script>
+
+</body>
+</html>
