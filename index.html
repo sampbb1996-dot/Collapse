@@ -1,70 +1,3 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-
-<title>Timing Reader</title>
-
-<style>
-/* ===== HARD STOP SCROLL ===== */
-html, body {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  overflow: hidden;
-  overscroll-behavior: none;
-  background: #000;
-  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-}
-
-/* ===== LAYOUT ===== */
-.app {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 18px;
-}
-
-/* ===== READER ===== */
-#reader {
-  width: 80%;
-  padding: 26px 0;
-  text-align: center;
-  font-size: 56px;
-  color: #fff;
-  background: #111;
-  border-radius: 22px;
-}
-
-/* ===== BUTTONS ===== */
-button {
-  width: 80%;
-  padding: 18px 0;
-  font-size: 22px;
-  color: #fff;
-  background: #111;
-  border: none;
-  border-radius: 18px;
-  touch-action: manipulation;
-}
-
-button:active {
-  background: #222;
-}
-</style>
-</head>
-
-<body>
-<div class="app">
-  <div id="reader">0.500</div>
-  <button onclick="tap()">TAP</button>
-  <button onclick="tap()">START</button>
-  <button onclick="endSession()">× END</button>
-</div>
-
 <script>
 /* =========================
    CONFIG
@@ -73,15 +6,13 @@ const MIN_WINDOW = 150;
 const MAX_WINDOW = 900;
 const BASE_WINDOW = 300;
 
-const DISPLAY_ALPHA = 0.92;
+const DISPLAY_ALPHA = 0.90; // slightly more responsive
 const EXPAND_RATE = 0.4;
 const CONTRACT_RATE = 0.12;
 
 /* =========================
    STATE
 ========================= */
-let sessionActive = true;
-
 let corpus = [];
 let windowed = [];
 
@@ -96,13 +27,7 @@ let lastTapTime = null;
    HELPERS
 ========================= */
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-
 const mean = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
-
-const std = arr => {
-  const m = mean(arr);
-  return Math.sqrt(mean(arr.map(x => (x - m) ** 2)));
-};
 
 /* =========================
    TAP
@@ -110,57 +35,61 @@ const std = arr => {
 function tap() {
   const now = performance.now();
 
-  if (lastTapTime !== null) {
-    const delta = now - lastTapTime;
-
-    corpus.push(delta);
-    windowed.push(delta);
-    windowed = windowed.filter(d => d < windowSize);
-
-    if (windowed.length >= 1) {
-      const instability = std(windowed);
-
-      if (instability > 30) {
-        windowSize = clamp(
-          windowSize + instability * EXPAND_RATE,
-          MIN_WINDOW,
-          MAX_WINDOW
-        );
-      } else {
-        windowSize = clamp(
-          windowSize - windowSize * CONTRACT_RATE,
-          MIN_WINDOW,
-          MAX_WINDOW
-        );
-      }
-
-      const estimate = clamp(
-        1 - mean(windowed) / windowSize,
-        0,
-        1
-      );
-
-      displayValue =
-        DISPLAY_ALPHA * displayValue +
-        (1 - DISPLAY_ALPHA) * estimate;
-
-      updateDisplay();
-    }
+  // FIRST TAP: force a visible update
+  if (lastTapTime === null) {
+    lastTapTime = now;
+    forceDisplay();
+    return;
   }
 
+  const delta = now - lastTapTime;
   lastTapTime = now;
-}
 
-/* =========================
-   END
-========================= */
-function endSession() {
-  sessionActive = false;
+  corpus.push(delta);
+  windowed.push(delta);
+
+  // adaptive window slice
+  windowed = windowed.filter(d => d < windowSize);
+
+  // --- instability ---
+  const avg = mean(windowed);
+  const variance = mean(windowed.map(d => (d - avg) ** 2));
+  const instability = Math.sqrt(variance);
+
+  if (instability > 30) {
+    windowSize = clamp(
+      windowSize + instability * EXPAND_RATE,
+      MIN_WINDOW,
+      MAX_WINDOW
+    );
+  } else {
+    windowSize = clamp(
+      windowSize - windowSize * CONTRACT_RATE,
+      MIN_WINDOW,
+      MAX_WINDOW
+    );
+  }
+
+  // normalized estimate
+  const estimate = clamp(1 - avg / windowSize, 0, 1);
+
+  // inertial update
+  displayValue =
+    DISPLAY_ALPHA * displayValue +
+    (1 - DISPLAY_ALPHA) * estimate;
+
+  updateDisplay();
 }
 
 /* =========================
    DISPLAY
 ========================= */
+function forceDisplay() {
+  const el = document.getElementById("reader");
+  el.textContent = displayValue.toFixed(3);
+  el.style.color = "#fff";
+}
+
 function updateDisplay() {
   const el = document.getElementById("reader");
   const delta = displayValue - lastDisplay;
@@ -176,5 +105,3 @@ function updateDisplay() {
   lastDisplay = displayValue;
 }
 </script>
-</body>
-</html>
