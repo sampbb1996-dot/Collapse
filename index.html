@@ -1,42 +1,41 @@
 const MAX_WINDOW = 20;
+const ALPHA = 0.2; // smoothing strength (lower = smoother)
 
 let lastTap = null;
 let window = [];
+let mean = null;
 
 function onTap(time) {
-  // first tap: fabricate a zero-length interval
   if (lastTap === null) {
     lastTap = time;
-    window = [0]; // seed corpus
-    return {
-      interval: 0,
-      percent: 0
-    };
+    mean = 0;
+    window = [0];
+    return { interval: 0, percent: 0 };
   }
 
   const interval = time - lastTap;
   lastTap = time;
 
-  window.push(interval);
+  // update smoothed mean
+  mean = mean === null
+    ? interval
+    : ALPHA * interval + (1 - ALPHA) * mean;
+
+  // use mean, not raw interval
+  window.push(mean);
   if (window.length > MAX_WINDOW) {
     window.shift();
   }
 
   if (window.length < 2) {
-    return {
-      interval,
-      percent: 0
-    };
+    return { interval: mean, percent: 0 };
   }
 
   const min = Math.min(...window);
   const max = Math.max(...window);
 
   if (min === max) {
-    return {
-      interval,
-      percent: 0
-    };
+    return { interval: mean, percent: 0 };
   }
 
   const percent =
@@ -44,12 +43,12 @@ function onTap(time) {
       100,
       Math.max(
         0,
-        ((interval - min) / (max - min)) * 100
+        ((mean - min) / (max - min)) * 100
       )
     );
 
   return {
-    interval,
+    interval: mean,
     percent
   };
 }
