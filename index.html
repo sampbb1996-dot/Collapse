@@ -1,70 +1,16 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport"
-  content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-
-<style>
-html, body {
-  margin: 0;
-  height: 100%;
-  overflow: hidden;
-  background: #000;
-  color: #fff;
-  font-family: system-ui, -apple-system, sans-serif;
-}
-
-#zone {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-#value {
-  font-size: 4rem;
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-}
-
-#reset {
-  position: fixed;
-  bottom: 16px;
-  left: 16px;
-  right: 16px;
-  padding: 16px;
-  border-radius: 999px;
-  background: #222;
-  border: none;
-  color: #fff;
-  font-size: 1rem;
-}
-</style>
-</head>
-
-<body>
-<div id="zone">
-  <div id="value">0.0000</div>
-</div>
-<button id="reset">reset</button>
-
 <script>
 let times = [];
 let signal = 0;
-const ALPHA = 0.2;
-const DECAY = 0.98;
+const ALPHA = 0.25;
 
 let touching = false;
-
 const zone = document.getElementById("zone");
 
-zone.addEventListener("pointerdown", e => {
+zone.addEventListener("pointerdown", () => {
   touching = true;
 });
 
-zone.addEventListener("pointerup", e => {
+zone.addEventListener("pointerup", () => {
   if (!touching) return;
   touching = false;
   tap();
@@ -77,7 +23,6 @@ function tap() {
   times.push(t);
 
   if (times.length < 4) {
-    signal *= DECAY;
     render(signal);
     return;
   }
@@ -88,17 +33,20 @@ function tap() {
 
   const r1 = a / b;
   const r2 = b / c;
-  const error = Math.abs(r1 - r2);
 
+  const error = Math.abs(r1 - r2); // >= 0 always
+
+  // smooth but never evolve without evidence
   signal = ALPHA * error + (1 - ALPHA) * signal;
-  signal *= DECAY;
+
+  // hard safety: structural error cannot be negative
+  if (signal < 0) signal = 0;
 
   render(signal);
 }
 
 function render(v) {
-  document.getElementById("value").textContent =
-    v.toFixed(4);
+  document.getElementById("value").textContent = v.toFixed(4);
 }
 
 document.getElementById("reset").onclick = () => {
@@ -107,5 +55,3 @@ document.getElementById("reset").onclick = () => {
   render(0);
 };
 </script>
-</body>
-</html>
