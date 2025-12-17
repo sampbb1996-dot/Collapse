@@ -1,55 +1,113 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Observer</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>A / _</title>
   <style>
     html, body {
       margin: 0;
-      padding: 0;
-      width: 100%;
       height: 100%;
-      background: #121212; /* dark mode, not pure black */
-      display: flex;
-      justify-content: center;
-      align-items: center;
+      background: #161616; /* dark mode, not black */
       overflow: hidden;
     }
 
-    #shape {
-      width: 140px;
-      height: 140px;
-      border-radius: 32px;
+    /* no animations */
+    #dot {
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
       background: #ff9500; /* orange */
-      transition: opacity 0.25s ease;
-      opacity: 1;
+      display: none;       /* binary only */
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
     }
   </style>
 </head>
 <body>
-
-  <div id="shape"></div>
+  <div id="dot"></div>
 
   <script>
-    const shape = document.getElementById("shape");
+    // Requirements:
+    // - No visible tick indicator (no "flash" UI; only state changes)
+    // - Start unbiased: 50/50 A present vs absent
+    // - Binary visibility only (display on/off), no animations
+    // - Fixed internal cadence (not adaptive, not meaningful)
 
-    // probability that A remains present
-    let stability = 0.75; // starts biased toward presence
+    const dot = document.getElementById("dot");
 
-    // fixed tick interval (observation-friendly)
-    const TICK_MS = 900;
+    // Internal state: A present?
+    let A = Math.random() < 0.5; // start exactly unbiased
 
-    function tick() {
-      const present = Math.random() < stability;
-      shape.style.opacity = present ? "1" : "0";
+    // Latent bias toward A vs _ (stationary at 50/50 when bias == 0)
+    // b in [-1, +1]. b>0 biases toward A, b<0 biases toward _
+    let b = 0;
+
+    // History for tendency detection (system-only; no input)
+    const H = [];
+    const HN = 12;
+
+    // Fixed cadence (internal only)
+    const STEP_MS = 800;
+
+    // Base flip rate: controls how often A changes (stationary 50/50 when b==0)
+    const BASE_FLIP = 0.22; // 0..1, higher = more switching
+
+    function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+
+    function record() {
+      H.push(A ? 1 : 0);
+      if (H.length > HN) H.shift();
     }
 
-    // start immediately in steady A
-    shape.style.opacity = "1";
+    // Detect whether the system has been persistently favoring A or _
+    // If no clear tendency, bias decays back to 0 (restoring 50/50).
+    function updateBiasFromHistory() {
+      if (H.length < HN) {
+        // early: enforce neutrality
+        b *= 0.8;
+        return;
+      }
 
-    setInterval(tick, TICK_MS);
+      const mean = H.reduce((s, v) => s + v, 0) / H.length; // 0..1
+      const skew = (mean - 0.5) * 2; // -1..+1
+
+      // Only treat strong skew as a "tendency"
+      if (Math.abs(skew) > 0.45) {
+        // drift bias toward detected skew
+        b = clamp(b + 0.10 * Math.sign(skew), -1, 1);
+      } else {
+        // no tendency => revert toward neutral 50/50
+        b *= 0.65;
+      }
+    }
+
+    function step() {
+      // 50/50 core: symmetric Markov switching around 0.5
+      // Bias modifies switch probability depending on current state.
+      // When b==0, stationary distribution is exactly 0.5.
+      const biasStrength = 0.18; // small: bias emerges slowly
+      const flip =
+        A
+          ? clamp(BASE_FLIP + (-b) * biasStrength, 0.02, 0.98) // if b>0, reduce A->_
+          : clamp(BASE_FLIP + ( b) * biasStrength, 0.02, 0.98); // if b>0, increase _->A
+
+      if (Math.random() < flip) A = !A;
+
+      record();
+      updateBiasFromHistory();
+
+      // render (binary only)
+      dot.style.display = A ? "block" : "none";
+    }
+
+    // initial render
+    dot.style.display = A ? "block" : "none";
+    record();
+
+    setInterval(step, STEP_MS);
   </script>
-
 </body>
 </html>
