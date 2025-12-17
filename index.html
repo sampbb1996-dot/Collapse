@@ -13,7 +13,7 @@
     html, body {
       margin: 0;
       height: 100%;
-      overflow: hidden; /* absolutely no scroll */
+      overflow: hidden;
       background: #000;
       color: #fff;
       font-family: system-ui, -apple-system, sans-serif;
@@ -21,7 +21,6 @@
       touch-action: manipulation;
     }
 
-    /* full screen */
     .app {
       position: fixed;
       inset: 0;
@@ -29,7 +28,6 @@
       flex-direction: column;
     }
 
-    /* tap anywhere here */
     .tap-zone {
       flex: 1;
       display: flex;
@@ -41,16 +39,22 @@
       font-size: 4rem;
       line-height: 1;
       font-variant-numeric: tabular-nums;
-      pointer-events: none; /* taps pass through */
+      pointer-events: none;
     }
 
-    /* reset area */
+    .label {
+      margin-top: 8px;
+      font-size: 0.75rem;
+      opacity: 0.4;
+      text-align: center;
+      pointer-events: none;
+    }
+
     .reset-zone {
       padding: 16px;
-      background: #000;
     }
 
-    .reset-zone button {
+    button {
       width: 100%;
       padding: 16px 0;
       font-size: 1rem;
@@ -65,12 +69,15 @@
 <body>
   <div class="app">
 
-    <!-- TAP ANYWHERE -->
+    <!-- tap anywhere -->
     <div class="tap-zone" onclick="tap()">
-      <div id="display" class="value">0.0000</div>
+      <div>
+        <div id="display" class="value">0.0000</div>
+        <div class="label">relative timing signal</div>
+      </div>
     </div>
 
-    <!-- RESET ONLY -->
+    <!-- reset -->
     <div class="reset-zone">
       <button onclick="resetAll()">reset</button>
     </div>
@@ -78,33 +85,53 @@
   </div>
 
   <script>
+    // smoothing of taps
     const ALPHA = 0.15;
 
+    // decay time constant (ms): how fast waiting loses influence
+    const TAU = 3000;
+
     let lastTap = null;
+    let lastUpdate = null;
     let mean = null;
 
+    function now() {
+      return performance.now();
+    }
+
+    function decayMean(t) {
+      if (mean === null || lastUpdate === null) return;
+      const dt = t - lastUpdate;
+      const decay = Math.exp(-dt / TAU);
+      mean *= decay;
+    }
+
     function tap() {
-      const now = performance.now();
+      const t = now();
 
       if (lastTap === null) {
-        lastTap = now;
+        lastTap = t;
+        lastUpdate = t;
         mean = 0;
         render(0);
         return;
       }
 
-      const interval = now - lastTap;
-      lastTap = now;
+      // decay over real time since last interaction
+      decayMean(t);
 
-      mean = mean === null
-        ? interval
-        : ALPHA * interval + (1 - ALPHA) * mean;
+      const interval = t - lastTap;
+      lastTap = t;
+      lastUpdate = t;
+
+      mean = ALPHA * interval + (1 - ALPHA) * mean;
 
       render(mean / 1000);
     }
 
     function resetAll() {
       lastTap = null;
+      lastUpdate = null;
       mean = null;
       render(0);
     }
