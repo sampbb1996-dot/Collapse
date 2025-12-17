@@ -1,51 +1,106 @@
-<script>
-let presence = 0.6
-let annotations = []
-const tickInterval = 1000
-
-const shape = document.getElementById("shape")
-const score = document.getElementById("score")
-
-function evolve() {
-  // baseline decay
-  presence *= 0.98
-
-  // baseline noise
-  presence += (Math.random() - 0.5) * 0.02
-
-  clamp()
-  render()
-}
-
-function advance(annotation) {
-  // interaction = variance only
-  presence += (Math.random() - 0.5) * 0.15
-
-  if (annotation !== null) {
-    annotations.push(annotation)
-    score.textContent = `annotations: ${annotations.length}`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Persistent Structure</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    touch-action: manipulation;
+    user-select: none;
+    font-family: system-ui, sans-serif;
   }
 
-  clamp()
-  render()
-}
+  #stage {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
 
-function clamp() {
-  presence = Math.max(0.05, Math.min(1, presence))
-}
+  #square {
+    position: absolute;
+    width: 80px;
+    height: 80px;
+    background: #fff;
+    border-radius: 14px;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 0;
+    transition: opacity 120ms linear;
+  }
 
-function render() {
-  shape.style.opacity = presence
-}
+  #reset {
+    position: absolute;
+    bottom: 32px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 14px 28px;
+    border-radius: 24px;
+    background: #222;
+    color: #fff;
+    border: none;
+    font-size: 16px;
+  }
+</style>
+</head>
+<body>
 
-document.body.addEventListener("click", e => {
-  if (e.target.tagName === "BUTTON") return
-  advance(null)
-})
+<div id="stage">
+  <div id="square"></div>
+  <button id="reset">reset</button>
+</div>
 
-document.getElementById("yes").onclick = () => advance(1)
-document.getElementById("no").onclick = () => advance(0)
+<script>
+  let S = 0.6;               // internal structural persistence
+  const decay = 0.015;      // decay per tick
+  const boost = 0.04;       // tap stabilization
+  const noise = 0.03;       // tap noise
+  const tickInterval = 1000;
 
-setInterval(evolve, tickInterval)
-render()
+  const square = document.getElementById("square");
+  const resetBtn = document.getElementById("reset");
+
+  function clamp(x) {
+    return Math.max(0, Math.min(1, x));
+  }
+
+  function tick() {
+    // natural decay
+    S -= decay;
+    S = clamp(S);
+
+    // visibility decision
+    const visible = Math.random() < S;
+    square.style.opacity = visible ? "1" : "0";
+  }
+
+  // auto ticks
+  let timer = setInterval(tick, tickInterval);
+
+  // tap anywhere = interact + advance state
+  document.body.addEventListener("pointerdown", () => {
+    S += boost;
+    S += (Math.random() * 2 - 1) * noise;
+    S = clamp(S);
+    tick();
+  });
+
+  resetBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    S = 0.6;
+    square.style.opacity = "0";
+  });
+
+  // initial state
+  tick();
 </script>
+
+</body>
+</html>
