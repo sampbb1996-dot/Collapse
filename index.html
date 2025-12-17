@@ -1,61 +1,61 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Collapse — Bounded Deviation</title>
+<meta charset="UTF-8">
+<title>Collapse</title>
 
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 
-  <style>
-    * {
-      box-sizing: border-box;
-      -webkit-tap-highlight-color: transparent;
-    }
+<style>
+  * {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+  }
 
-    html, body {
-      margin: 0;
-      height: 100%;
-      background: #ff0044;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      font-family: Arial, sans-serif;
-      color: white;
-      user-select: none;
-      touch-action: manipulation;
-    }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #ff0044;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: Arial, sans-serif;
+    color: white;
+    user-select: none;
+    touch-action: manipulation;
+  }
 
-    .box {
-      background: rgba(0,0,0,0.45);
-      padding: 32px;
-      border-radius: 14px;
-      text-align: center;
-      min-width: 260px;
-    }
+  .box {
+    background: rgba(0,0,0,0.45);
+    padding: 32px;
+    border-radius: 14px;
+    text-align: center;
+    min-width: 260px;
+  }
 
-    #value {
-      font-size: 64px;
-      margin-bottom: 24px;
-    }
+  #value {
+    font-size: 64px;
+    margin-bottom: 24px;
+  }
 
-    .btn {
-      display: block;
-      margin: 12px auto;
-      padding: 18px 0;
-      width: 220px;
-      font-size: 22px;
-      background: #eee;
-      color: #000;
-      border-radius: 999px;
-    }
+  .btn {
+    display: block;
+    margin: 12px auto;
+    padding: 18px 0;
+    width: 220px;
+    font-size: 22px;
+    background: #eee;
+    color: #000;
+    border-radius: 999px;
+  }
 
-    .hint {
-      margin-top: 18px;
-      font-size: 14px;
-      opacity: 0.85;
-    }
-  </style>
+  .hint {
+    margin-top: 18px;
+    font-size: 14px;
+    opacity: 0.85;
+  }
+</style>
 </head>
 <body>
 
@@ -68,9 +68,9 @@
 
 <script>
   let lastTap = null;
-  let expectedInterval = null;
+  let expected = null;
 
-  // deviation is ALWAYS magnitude-only
+  // magnitude ONLY
   let deviation = 0;
 
   const alpha = 0.25;
@@ -78,7 +78,7 @@
   const scale = 100;
 
   const valueEl = document.getElementById("value");
-  const tapEl = document.getElementById("tap");
+  const tapEl   = document.getElementById("tap");
   const resetEl = document.getElementById("reset");
 
   function clamp(v) {
@@ -86,9 +86,14 @@
   }
 
   function render() {
-    // HARD DEFENCE: abs + clamp at render
-    const v = clamp(Math.abs(deviation));
-    valueEl.textContent = `${v.toFixed(1)}%`;
+    // absolute, clamped, and STRING-SANITISED
+    let v = clamp(Math.abs(deviation));
+    let text = v.toFixed(1) + "%";
+
+    // remove ANY possible sign characters
+    text = text.replace(/[+-]/g, "");
+
+    valueEl.textContent = text;
   }
 
   tapEl.addEventListener("touchend", e => {
@@ -99,14 +104,13 @@
     if (lastTap !== null) {
       const interval = (now - lastTap) / 1000;
 
-      if (expectedInterval === null) {
-        expectedInterval = interval;
+      if (expected === null) {
+        expected = interval;
       } else {
-        expectedInterval =
-          (1 - beta) * expectedInterval + beta * interval;
+        expected = (1 - beta) * expected + beta * interval;
 
         const raw =
-          Math.abs(interval - expectedInterval) / expectedInterval;
+          Math.abs(interval - expected) / expected;
 
         const percent = raw * scale;
 
@@ -122,7 +126,7 @@
   resetEl.addEventListener("touchend", e => {
     e.preventDefault();
     lastTap = null;
-    expectedInterval = null;
+    expected = null;
     deviation = 0;
     render();
   }, { passive: false });
