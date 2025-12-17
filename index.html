@@ -1,249 +1,168 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Structural Tap</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta charset="utf-8" />
+<title>Structural Tap (Stable)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
 
-  <style>
-    html, body {
-      margin: 0;
-      height: 100%;
-      overflow: hidden;
-      background: #000;
-      color: #fff;
-      font-family: system-ui, -apple-system, sans-serif;
-      -webkit-text-size-adjust: 100%;
-      touch-action: manipulation;
-      user-select: none;
-    }
+<style>
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  color: #fff;
+  font-family: system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+  touch-action: manipulation;
+  user-select: none;
+}
 
-    .app {
-      position: fixed;
-      inset: 0;
-      display: flex;
-      flex-direction: column;
-    }
+.app {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
 
-    /* tap zone */
-    #zone {
-      flex: 1;
-      position: relative;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
+#zone {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 
-    /* subtle left/right hint (not required) */
-    #zone::before, #zone::after {
-      content: "";
-      position: absolute;
-      top: 0; bottom: 0;
-      width: 50%;
-      opacity: 0.04;
-      pointer-events: none;
-    }
-    #zone::before { left: 0; background: #fff; }
-    #zone::after  { right: 0; background: #fff; opacity: 0.02; }
+#obj {
+  width: 72px;
+  height: 72px;
+  border-radius: 14px;
+  background: #fff;
+  opacity: 0;
+  transform: scale(0.95);
+  transition: opacity 140ms linear, transform 140ms linear;
+}
 
-    /* object */
-    #objWrap {
-      pointer-events: none;
-      text-align: center;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      align-items: center;
-    }
+#obj.on {
+  opacity: 1;
+  transform: scale(1);
+}
 
-    #obj {
-      width: 70px;
-      height: 70px;
-      border-radius: 14px;
-      background: #fff;
-      opacity: 0;
-      transform: scale(0.98);
-      transition: opacity 120ms linear, transform 120ms linear;
-    }
-    #obj.on {
-      opacity: 1;
-      transform: scale(1);
-    }
+#hud {
+  position: fixed;
+  top: 14px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 16px;
+  opacity: 0.65;
+  pointer-events: none;
+}
 
-    #hud {
-      position: fixed;
-      top: 16px;
-      left: 0;
-      right: 0;
-      text-align: center;
-      font-size: 16px;
-      opacity: 0.65;
-      pointer-events: none;
-    }
+#resetBar {
+  padding: 16px;
+}
 
-    #resetBar {
-      padding: 16px;
-    }
-
-    #reset {
-      width: 100%;
-      padding: 16px 0;
-      border-radius: 999px;
-      border: none;
-      background: #222;
-      color: #fff;
-      font-size: 1rem;
-    }
-  </style>
+#reset {
+  width: 100%;
+  padding: 16px;
+  border-radius: 999px;
+  border: none;
+  background: #222;
+  color: #fff;
+  font-size: 1rem;
+}
+</style>
 </head>
 
 <body>
-  <div class="app">
-    <div id="hud">correct: 0% · mode: L</div>
+<div class="app">
+  <div id="hud">correct: 0%</div>
 
-    <div id="zone">
-      <div id="objWrap">
-        <div id="obj"></div>
-      </div>
-    </div>
-
-    <div id="resetBar">
-      <button id="reset">reset</button>
-    </div>
+  <div id="zone">
+    <div id="obj"></div>
   </div>
 
-  <script>
-    // ---- Core idea ----
-    // taps are discrete symbols, derived only from *where* you tap (left/right),
-    // not *when* you tap.
-    //
-    // Binary state: object exists (ON) iff the last-window structure satisfies
-    // the current constraint.
-    //
-    // "Correctness %" is telemetry: fraction of taps that resulted in ON.
-    //
-    // As correctness -> 0%, constraints tighten (taps become more decisive).
+  <div id="resetBar">
+    <button id="reset">reset</button>
+  </div>
+</div>
 
-    const zone = document.getElementById("zone");
-    const obj = document.getElementById("obj");
-    const hud = document.getElementById("hud");
-    const resetBtn = document.getElementById("reset");
+<script>
+const zone = document.getElementById("zone");
+const obj = document.getElementById("obj");
+const hud = document.getElementById("hud");
+const resetBtn = document.getElementById("reset");
 
-    let touching = false;
+// --- Symbol history (structure only) ---
+let hist = [];
+const MAX_HIST = 12;
 
-    // symbol history: 'L' or 'R'
-    let hist = [];
+// --- Confidence (structural inertia) ---
+let confidence = 0.5; // 0..1
+const ON_THRESHOLD = 0.6;
+const OFF_THRESHOLD = 0.4;
 
-    // binary existence state
-    let alive = false;
+// --- Correctness window ---
+let correctnessWindow = [];
+const WINDOW = 20;
 
-    // telemetry
-    let totalTaps = 0;
-    let correctTaps = 0;
+function passesStructure() {
+  if (hist.length < 4) return true;
 
-    function pct() {
-      return totalTaps === 0 ? 0 : (correctTaps / totalTaps) * 100;
-    }
+  const t = hist.slice(-4);
 
-    function modeFromPct(p) {
-      // discrete tightening (no smooth weighting)
-      // L = lenient, M = medium, S = strict
-      if (p < 30) return "S";
-      if (p < 70) return "M";
-      return "L";
-    }
+  // strict alternation only
+  for (let i = 1; i < t.length; i++) {
+    if (t[i] === t[i - 1]) return false;
+  }
+  return true;
+}
 
-    function last(n) {
-      if (hist.length < n) return null;
-      return hist.slice(hist.length - n);
-    }
+function update() {
+  const alive = confidence > ON_THRESHOLD;
+  obj.classList.toggle("on", alive);
 
-    // ---- Structural rules (no timing) ----
-    // L (lenient): must not be stuck (no 3-in-a-row of same symbol)
-    // M (medium): last 4 must contain both symbols AND have exactly 2 runs (XXYY or YYXX allowed)
-    // S (strict): last 4 must be perfectly alternating (LRLR or RLRL)
-    function passesRule(mode) {
-      if (mode === "L") {
-        const t = last(3);
-        if (!t) return true; // not enough history => forgiving
-        return !(t[0] === t[1] && t[1] === t[2]);
-      }
+  const pct =
+    correctnessWindow.length === 0
+      ? 0
+      : Math.round(
+          (correctnessWindow.reduce((a, b) => a + b, 0) /
+            correctnessWindow.length) *
+            100
+        );
 
-      if (mode === "M") {
-        const t = last(4);
-        if (!t) return true;
-        const hasL = t.includes("L");
-        const hasR = t.includes("R");
-        if (!(hasL && hasR)) return false;
+  hud.textContent = `correct: ${pct}%`;
+}
 
-        // count runs
-        let runs = 1;
-        for (let i = 1; i < t.length; i++) {
-          if (t[i] !== t[i - 1]) runs++;
-        }
-        // exactly 2 runs means patterns like LLRR or RRLL
-        return runs === 2;
-      }
+zone.addEventListener("pointerup", (e) => {
+  const rect = zone.getBoundingClientRect();
+  const sym = e.clientX < rect.left + rect.width / 2 ? "L" : "R";
 
-      // mode === "S"
-      const t = last(4);
-      if (!t) return true;
-      // perfect alternation
-      for (let i = 1; i < t.length; i++) {
-        if (t[i] === t[i - 1]) return false;
-      }
-      return true;
-    }
+  hist.push(sym);
+  if (hist.length > MAX_HIST) hist.shift();
 
-    function updateUI(mode) {
-      obj.classList.toggle("on", alive);
-      const p = Math.round(pct());
-      hud.textContent = `correct: ${p}% · mode: ${mode}`;
-    }
+  const ok = passesStructure();
 
-    function tapAt(clientX) {
-      const rect = zone.getBoundingClientRect();
-      const mid = rect.left + rect.width / 2;
-      const sym = clientX < mid ? "L" : "R";
+  // --- Confidence update ---
+  const delta = ok ? +0.08 : -0.12;
+  confidence = Math.min(1, Math.max(0, confidence + delta));
 
-      hist.push(sym);
-      if (hist.length > 32) hist.shift();
+  // --- Correctness telemetry ---
+  correctnessWindow.push(ok ? 1 : 0);
+  if (correctnessWindow.length > WINDOW) {
+    correctnessWindow.shift();
+  }
 
-      totalTaps++;
+  update();
+});
 
-      const mode = modeFromPct(pct());
-      alive = passesRule(mode);
+resetBtn.addEventListener("pointerdown", () => {
+  hist = [];
+  confidence = 0.5;
+  correctnessWindow = [];
+  update();
+});
 
-      if (alive) correctTaps++;
-
-      updateUI(mode);
-    }
-
-    // One tap per release (prevents press-and-hold weirdness)
-    zone.addEventListener("pointerdown", (e) => {
-      touching = true;
-    });
-
-    zone.addEventListener("pointerup", (e) => {
-      if (!touching) return;
-      touching = false;
-      tapAt(e.clientX);
-    });
-
-    zone.addEventListener("pointercancel", () => {
-      touching = false;
-    });
-
-    resetBtn.addEventListener("pointerdown", () => {
-      hist = [];
-      alive = false;
-      totalTaps = 0;
-      correctTaps = 0;
-      updateUI("L");
-    });
-
-    // init
-    updateUI("L");
-  </script>
+update();
+</script>
 </body>
 </html>
