@@ -1,108 +1,200 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Collapse — FIXED</title>
-
-<meta name="viewport"
-      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-
-<style>
-  html, body {
-    margin: 0;
-    height: 100%;
-    background: #ff0044;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    font-family: Arial, sans-serif;
-    color: white;
-  }
-  .box {
-    background: rgba(0,0,0,0.5);
-    padding: 32px;
-    border-radius: 14px;
-    text-align: center;
-    min-width: 260px;
-  }
-  #value {
-    font-size: 64px;
-    margin-bottom: 24px;
-  }
-  .btn {
-    display: block;
-    margin: 12px auto;
-    padding: 18px 0;
-    width: 220px;
-    font-size: 22px;
-    background: #eee;
-    color: #000;
-    border-radius: 999px;
-  }
-  .hint {
-    margin-top: 12px;
-    font-size: 12px;
-    opacity: 0.8;
-  }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Collapse – Relative Timing Deviation</title>
+  <style>
+    :root{
+      --bg:#ff0044;
+      --card:#6b0f1a;
+      --btn:#efefef;
+      --txt:#ffffff;
+    }
+    *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+    html,body{ height:100%; }
+    body{
+      margin:0;
+      background:var(--bg);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      touch-action: manipulation; /* reduces double-tap zoom */
+    }
+    .card{
+      width:min(520px, 92vw);
+      padding:28px 22px 22px;
+      background:var(--card);
+      border-radius:22px;
+      box-shadow: 0 18px 45px rgba(0,0,0,0.22);
+      text-align:center;
+    }
+    .value{
+      font-size: clamp(56px, 10vw, 96px);
+      line-height:1;
+      font-weight:650;
+      color:var(--txt);
+      letter-spacing: -0.02em;
+      margin: 6px 0 18px;
+    }
+    .btn{
+      width:min(380px, 84%);
+      height:74px;
+      border:none;
+      border-radius:40px;
+      background:var(--btn);
+      font-size:22px;
+      font-weight:650;
+      margin:10px auto;
+      display:block;
+      cursor:pointer;
+    }
+    .label{
+      margin-top: 14px;
+      color: rgba(255,255,255,0.72);
+      font-size: 16px;
+    }
+    .tiny{
+      margin-top:10px;
+      color: rgba(255,255,255,0.55);
+      font-size: 13px;
+      min-height: 18px;
+    }
+  </style>
 </head>
 <body>
-
-<div class="box">
-  <div id="value">0.0%</div>
-  <div class="btn" id="tap">TAP</div>
-  <div class="btn" id="reset">RESET</div>
-  <div class="hint">DEBUG: NO SIGNS • Collapse vFINAL</div>
-</div>
+  <div class="card">
+    <div id="value" class="value">50.0%</div>
+    <button id="tap" class="btn">TAP</button>
+    <button id="reset" class="btn">RESET</button>
+    <div class="label">Relative timing deviation</div>
+    <div id="hint" class="tiny"></div>
+  </div>
 
 <script>
+(() => {
+  // --- Tunables (non-arbitrary, but you can adjust feel) ---
+  const EPS = 0.001;               // never reach 0 or 1 (0.1%..99.9%)
+  const MIN_DT = 90;               // ms: anti-spam floor
+  const MAX_DT = 4000;             // ms: ignore super-long pauses for baseline
+  const BASELINE_INIT = 450;       // ms: only used until we have enough taps
+  const EMA_ALPHA = 0.12;          // baseline update speed (lower = more stable)
+  const BASELINE_GUARD = 0.60;     // only update baseline if dt within ±60% ratio band
+  const K = 3.6;                   // sigmoid steepness (maps deviation -> score)
+
+  // State
   let lastTap = null;
-  let expected = null;
-  let deviation = 0;
+  let baseline = null;             // rolling tempo (ms)
+  let score = 0.5;                 // output in (0,1)
 
-  const alpha = 0.25;
-  const beta = 0.05;
-  const scale = 100;
+  const valueEl = document.getElementById('value');
+  const hintEl = document.getElementById('hint');
+  const tapBtn = document.getElementById('tap');
+  const resetBtn = document.getElementById('reset');
 
-  const valueEl = document.getElementById("value");
+  // Helpers
+  const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
-  function clamp(v) {
-    return Math.max(0, Math.min(100, v));
+  // deviation is scale-free: dt vs baseline (log ratio)
+  function deviation(dt, base){
+    return Math.abs(Math.log(dt / base));
   }
 
-  function render() {
-    const v = clamp(Math.abs(deviation));
-    valueEl.textContent = v.toFixed(1) + "%";
+  // sigmoid squashes deviation -> (0,1)
+  function sigmoid(x){
+    return 1 / (1 + Math.exp(-x));
   }
 
-  document.getElementById("tap").onclick = () => {
+  // map deviation to "stability score": high when close to baseline
+  function deviationToScore(dev){
+    // dev=0 => sigmoid(0)=0.5 => we want near 1, so use (1 - sigmoid(k*(dev - m)))
+    // simplest: 1 - sigmoid(K*dev) gives 0.5 at dev=0; we want ~1 at dev=0
+    // so instead: sigmoid(-K*dev) = 1 - sigmoid(K*dev)
+    return sigmoid(-K * dev); // dev=0 => 0.5, dev big => approaches 0
+  }
+
+  // Recenter so dev=0 corresponds to ~50%? If you want 50% at "perfect", keep as-is.
+  // If you want "perfect" to feel high, boost with a convex remap:
+  function remap(s){
+    // make 0.5 map upward without ever reaching 1:
+    // s' = 1 - (1 - s)^2  (concave up near 1)
+    return 1 - Math.pow(1 - s, 2);
+  }
+
+  function render(extraHint=""){
+    const pct = (score * 100).toFixed(1);
+    valueEl.textContent = `${pct}%`;
+    hintEl.textContent = extraHint;
+  }
+
+  function reset(){
+    lastTap = null;
+    baseline = null;
+    score = 0.5;
+    render("");
+  }
+
+  function onTap(){
     const now = performance.now();
 
-    if (lastTap !== null) {
-      const interval = (now - lastTap) / 1000;
+    if (lastTap === null){
+      lastTap = now;
+      baseline = BASELINE_INIT;
+      render("first tap: baseline priming");
+      return;
+    }
 
-      if (expected === null) {
-        expected = interval;
-      } else {
-        expected = (1 - beta) * expected + beta * interval;
-        const raw = Math.abs(interval - expected) / expected;
-        deviation = clamp(alpha * raw * scale + (1 - alpha) * deviation);
+    const dt = now - lastTap;
+    lastTap = now;
+
+    // Hard anti-spam: too fast -> do NOT let it anchor baseline
+    if (dt < MIN_DT){
+      // Option A: ignore completely (no score update)
+      render("too fast (anti-spam)");
+      return;
+
+      // Option B: penalize instead (uncomment below, and remove the return)
+      // const dev = deviation(MIN_DT, baseline || BASELINE_INIT);
+      // score = clamp(remap(deviationToScore(dev)), EPS, 1 - EPS);
+      // render("too fast (penalized)");
+      // return;
+    }
+
+    // If baseline doesn't exist, initialize from first valid interval
+    if (baseline === null) baseline = dt;
+
+    // Compute deviation from *current* baseline (relative, no absolute target)
+    const dev = deviation(dt, baseline);
+
+    // Update score
+    let s = deviationToScore(dev);
+    s = remap(s);
+    score = clamp(s, EPS, 1 - EPS);
+
+    // Update baseline cautiously:
+    // - ignore very long pauses
+    // - ignore outliers that would let a single weird tap redefine tempo
+    if (dt <= MAX_DT){
+      const ratio = dt / baseline;
+      const withinGuard = (ratio >= (1 - BASELINE_GUARD)) && (ratio <= (1 + BASELINE_GUARD));
+      if (withinGuard){
+        baseline = (1 - EMA_ALPHA) * baseline + EMA_ALPHA * dt;
       }
     }
 
-    lastTap = now;
-    render();
-  };
+    render(`dt=${Math.round(dt)}ms  base≈${Math.round(baseline)}ms`);
+  }
 
-  document.getElementById("reset").onclick = () => {
-    lastTap = null;
-    expected = null;
-    deviation = 0;
-    render();
-  };
+  // Prevent focus/selection weirdness on iOS
+  tapBtn.addEventListener('touchstart', (e) => { e.preventDefault(); onTap(); }, {passive:false});
+  tapBtn.addEventListener('click', (e) => { e.preventDefault(); onTap(); });
 
-  render();
+  resetBtn.addEventListener('touchstart', (e) => { e.preventDefault(); reset(); }, {passive:false});
+  resetBtn.addEventListener('click', (e) => { e.preventDefault(); reset(); });
+
+  reset();
+})();
 </script>
-
 </body>
 </html>
