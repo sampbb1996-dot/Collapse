@@ -2,10 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta
-  name="viewport"
-  content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
 <title>Timing Reader</title>
 
 <style>
@@ -13,8 +10,6 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
-  width: 100%;
-  overflow: hidden;
   background: #000;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
 }
@@ -35,7 +30,7 @@ html, body {
   font-size: 56px;
   background: #111;
   border-radius: 22px;
-  color: #ffffff;
+  color: #fff;
 }
 
 button {
@@ -58,16 +53,21 @@ button {
 </div>
 
 <script>
-/* =========================
-   STATE
-========================= */
-let active = true;
-let lastTap = null;
 let value = 0.5;
-let lastValue = 0.5;
 
 const reader = document.getElementById("reader");
 const tapBtn = document.getElementById("tapBtn");
 const endBtn = document.getElementById("endBtn");
 
-/*
+tapBtn.onclick = () => {
+  value = Math.min(1, Math.max(0, value + (Math.random() - 0.5) * 0.1));
+  reader.textContent = value.toFixed(3);
+};
+
+endBtn.onclick = () => {
+  value = 0.5;
+  reader.textContent = "0.500";
+};
+</script>
+</body>
+</html>
