@@ -1,37 +1,55 @@
-<script>
-let value = 0.5;
-let lastTap = null;
-let lastInterval = null;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Collapse</title>
+</head>
+<body>
 
-const reader = document.getElementById("reader");
-const tapBtn = document.getElementById("tapBtn");
-const endBtn = document.getElementById("endBtn");
+  <div id="reader">0.500</div>
 
-tapBtn.onclick = () => {
-  const now = performance.now();
+  <button id="tapBtn">Tap</button>
+  <button id="endBtn">End</button>
 
-  if (lastTap !== null) {
-    const interval = (now - lastTap) / 1000;
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      let value = 0.5;
+      let lastTap = null;
+      let lastInterval = null;
 
-    if (lastInterval !== null) {
-      const deviation = Math.abs(interval - lastInterval);
+      const reader = document.getElementById("reader");
+      const tapBtn = document.getElementById("tapBtn");
+      const endBtn = document.getElementById("endBtn");
 
-      // stability improves value, instability degrades it
-      value += (0.05 - deviation) * 0.5;
-    }
+      if (!reader || !tapBtn || !endBtn) return;
 
-    lastInterval = interval;
-  }
+      tapBtn.onclick = () => {
+        const now = performance.now();
 
-  lastTap = now;
-  value = Math.max(0, Math.min(1, value));
-  reader.textContent = value.toFixed(3);
-};
+        if (lastTap !== null) {
+          const interval = (now - lastTap) / 1000;
 
-endBtn.onclick = () => {
-  value = 0.5;
-  lastTap = null;
-  lastInterval = null;
-  reader.textContent = "0.500";
-};
-</script>
+          if (lastInterval !== null) {
+            const deviation = Math.abs(interval - lastInterval);
+            value += (0.05 - deviation) * 0.5;
+          }
+
+          lastInterval = interval;
+        }
+
+        lastTap = now;
+        value = Math.max(0, Math.min(1, value));
+        reader.textContent = value.toFixed(3);
+      };
+
+      endBtn.onclick = () => {
+        value = 0.5;
+        lastTap = null;
+        lastInterval = null;
+        reader.textContent = "0.500";
+      };
+    });
+  </script>
+
+</body>
+</html>
