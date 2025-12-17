@@ -2,72 +2,59 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Observe</title>
+  <title>State</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <style>
     html, body {
       margin: 0;
       padding: 0;
-      background: #000;
       width: 100%;
       height: 100%;
-      overflow: hidden;
+      background: #121212; /* dark mode gray */
       display: flex;
       align-items: center;
       justify-content: center;
-      color: #666;
-      font-family: system-ui, sans-serif;
+      overflow: hidden;
     }
 
-    #square {
+    #dot {
       width: 120px;
       height: 120px;
-      background: #fff;
-      border-radius: 20px;
-      display: none; /* controlled by state */
-    }
-
-    #label {
-      position: absolute;
-      top: 20px;
-      text-align: center;
-      width: 100%;
-      font-size: 16px;
-      letter-spacing: 1px;
+      border-radius: 50%;
+      background: #ff8c1a; /* orange */
+      display: none;
     }
   </style>
 </head>
 <body>
 
-  <div id="label">mode: observe</div>
-  <div id="square"></div>
+  <div id="dot"></div>
 
   <script>
-    // --- Core state ---
-    let state = true; // true = A (square present)
-    let stability = 0.9; // bias toward A
+    // true = A (present), false = _
+    let state = true;
+
+    // bias toward presence, but allow change
+    const STABILITY = 0.75;
     const TICK_MS = 1000;
 
-    const square = document.getElementById("square");
+    const dot = document.getElementById("dot");
 
     function tick() {
-      // probability that A persists
-      const pStayA = stability;
-
       if (state) {
         // A -> A or _
-        state = Math.random() < pStayA;
+        state = Math.random() < STABILITY;
       } else {
-        // _ -> A (reversion toward steady state)
-        state = Math.random() < (1 - pStayA);
+        // _ -> A (reversion)
+        state = Math.random() < (1 - STABILITY);
       }
 
-      square.style.display = state ? "block" : "none";
+      dot.style.display = state ? "block" : "none";
     }
 
-    // start in steady state A
-    square.style.display = "block";
+    // start in steady A
+    dot.style.display = "block";
 
     setInterval(tick, TICK_MS);
   </script>
