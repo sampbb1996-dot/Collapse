@@ -1,125 +1,90 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Collapse</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <title>Collapse – Debug Proof</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <style>
     body {
       margin: 0;
       height: 100vh;
-      background: #0e0e0e;
-      color: #ffffff;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #ff0044; /* impossible to miss */
       display: flex;
+      justify-content: center;
       align-items: center;
-      justify-content: center;
+      font-family: Arial, sans-serif;
+      color: white;
     }
 
-    .container {
+    .box {
+      background: rgba(0,0,0,0.4);
+      padding: 30px;
+      border-radius: 12px;
       text-align: center;
-      width: 100%;
-      max-width: 400px;
     }
 
-    .value {
-      font-size: 4rem;
-      font-weight: 600;
-      margin-bottom: 1.5rem;
-      letter-spacing: 0.05em;
-    }
-
-    .buttons {
-      display: flex;
-      justify-content: center;
-      gap: 1rem;
+    #value {
+      font-size: 64px;
+      margin-bottom: 20px;
     }
 
     button {
-      background: #1f1f1f;
-      color: #fff;
-      border: 1px solid #333;
-      padding: 0.75rem 1.25rem;
-      font-size: 1rem;
-      border-radius: 6px;
-      cursor: pointer;
-    }
-
-    button:active {
-      transform: scale(0.97);
-    }
-
-    .hint {
-      margin-top: 1.5rem;
-      font-size: 0.8rem;
-      opacity: 0.6;
+      font-size: 20px;
+      padding: 10px 20px;
+      margin: 5px;
     }
   </style>
 </head>
 <body>
 
-  <div class="container">
-    <div id="reader" class="value">0.500</div>
-
-    <div class="buttons">
-      <button id="tapBtn">Tap</button>
-      <button id="endBtn">Reset</button>
-    </div>
-
-    <div class="hint">
-      Stability increases value. Irregularity collapses it.
+  <div class="box">
+    <div id="value">0.500</div>
+    <button id="tap">TAP</button>
+    <button id="reset">RESET</button>
+    <div style="margin-top:15px;font-size:14px;">
+      If this is pink, the file updated.
     </div>
   </div>
 
   <script>
-    document.addEventListener("DOMContentLoaded", () => {
-      let value = 0.5;
-      let lastTap = null;
-      let lastInterval = null;
+    let value = 0.5;
+    let lastTap = null;
+    let lastInterval = null;
 
-      const reader = document.getElementById("reader");
-      const tapBtn = document.getElementById("tapBtn");
-      const endBtn = document.getElementById("endBtn");
+    const valueEl = document.getElementById("value");
+    const tapBtn = document.getElementById("tap");
+    const resetBtn = document.getElementById("reset");
 
-      function clamp(v) {
-        return Math.max(0, Math.min(1, v));
-      }
+    function clamp(v) {
+      return Math.max(0, Math.min(1, v));
+    }
 
-      function updateDisplay() {
-        reader.textContent = value.toFixed(3);
-      }
+    tapBtn.onclick = () => {
+      const now = performance.now();
 
-      tapBtn.addEventListener("click", () => {
-        const now = performance.now();
+      if (lastTap !== null) {
+        const interval = (now - lastTap) / 1000;
 
-        if (lastTap !== null) {
-          const interval = (now - lastTap) / 1000;
-
-          if (lastInterval !== null) {
-            const deviation = Math.abs(interval - lastInterval);
-
-            // Core mechanic:
-            // regular rhythm → positive drift
-            // irregular rhythm → collapse
-            value += (0.05 - deviation) * 0.5;
-          }
-
-          lastInterval = interval;
+        if (lastInterval !== null) {
+          const deviation = Math.abs(interval - lastInterval);
+          value += (0.05 - deviation);
         }
 
-        lastTap = now;
-        value = clamp(value);
-        updateDisplay();
-      });
+        lastInterval = interval;
+      }
 
-      endBtn.addEventListener("click", () => {
-        value = 0.5;
-        lastTap = null;
-        lastInterval = null;
-        updateDisplay();
-      });
-    });
+      lastTap = now;
+      value = clamp(value);
+      valueEl.textContent = value.toFixed(3);
+    };
+
+    resetBtn.onclick = () => {
+      value = 0.5;
+      lastTap = null;
+      lastInterval = null;
+      valueEl.textContent = "0.500";
+    };
   </script>
 
 </body>
