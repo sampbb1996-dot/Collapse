@@ -2,20 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Collapse — Non-Closure</title>
+  <title>Collapse — Non-Closure (Correct)</title>
 
   <meta name="viewport"
-        content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no">
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 
   <style>
-    * {
-      box-sizing: border-box;
-      -webkit-tap-highlight-color: transparent;
-    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
     html, body {
       margin: 0;
-      width: 100%;
       height: 100%;
       background: #ff0044;
       display: flex;
@@ -23,12 +19,9 @@
       align-items: center;
       font-family: Arial, sans-serif;
       color: white;
-
       user-select: none;
       -webkit-user-select: none;
-      -webkit-text-size-adjust: 100%;
       touch-action: manipulation;
-      overscroll-behavior: none;
     }
 
     .box {
@@ -53,83 +46,74 @@
       background: #eee;
       color: #000;
       border-radius: 999px;
-      min-height: 56px;
-    }
-
-    .hint {
-      margin-top: 18px;
-      font-size: 14px;
-      opacity: 0.9;
     }
   </style>
 </head>
 <body>
 
-  <div class="box">
-    <div id="value">—</div>
+<div class="box">
+  <div id="value">—</div>
+  <div id="tap" class="btn">TAP</div>
+  <div id="reset" class="btn">RESET</div>
+</div>
 
-    <div id="tap" class="btn">TAP</div>
-    <div id="reset" class="btn">RESET</div>
+<script>
+  // --- INTERNAL STATE ---
+  // belief is unbounded → certainty is impossible
+  let belief = 0.0;
 
-    <div class="hint">Nothing reaches certainty.</div>
-  </div>
+  let lastTap = null;
+  let lastInterval = null;
 
-  <script>
-    // suppress gesture zoom (best effort)
-    ['gesturestart','gesturechange','gestureend'].forEach(ev =>
-      document.addEventListener(ev, e => e.preventDefault(), { passive: false })
-    );
+  const valueEl = document.getElementById("value");
+  const tapEl = document.getElementById("tap");
+  const resetEl = document.getElementById("reset");
 
-    // confidence state (not probability)
-    let value = 0.37;          // interior seed, not midpoint
-    let lastTap = null;
-    let lastInterval = null;
+  // sigmoid projection (never reaches 0 or 1)
+  function project(b) {
+    const p = 1 / (1 + Math.exp(-b));
+    const eps = 0.001;            // epistemic gap
+    return eps + (1 - 2 * eps) * p;
+  }
 
-    const valueEl = document.getElementById("value");
-    const tapEl = document.getElementById("tap");
-    const resetEl = document.getElementById("reset");
+  function render() {
+    const v = project(belief);
+    valueEl.textContent = v.toPrecision(3); // precision, not fixed
+  }
 
-    function render() {
-      valueEl.textContent = value.toFixed(3);
-    }
+  tapEl.addEventListener("touchend", e => {
+    e.preventDefault();
 
-    tapEl.addEventListener("touchend", e => {
-      e.preventDefault();
+    const now = performance.now();
 
-      const now = performance.now();
+    if (lastTap !== null) {
+      const interval = (now - lastTap) / 1000;
 
-      if (lastTap !== null) {
-        const interval = (now - lastTap) / 1000;
+      if (lastInterval !== null) {
+        const deviation = Math.abs(interval - lastInterval);
+        const signal = 0.05 - deviation;
 
-        if (lastInterval !== null) {
-          const deviation = Math.abs(interval - lastInterval);
-
-          // base signal
-          const delta = (0.05 - deviation);
-
-          // epistemic damping: extremes resist movement
-          const openness = 1 - Math.abs(2 * value - 1);
-
-          value += delta * openness * 0.8;
-        }
-
-        lastInterval = interval;
+        // update belief, not value
+        belief += signal;
       }
 
-      lastTap = now;
-      render();
-    }, { passive: false });
+      lastInterval = interval;
+    }
 
-    resetEl.addEventListener("touchend", e => {
-      e.preventDefault();
-      value = 0.37;
-      lastTap = null;
-      lastInterval = null;
-      render();
-    }, { passive: false });
-
+    lastTap = now;
     render();
-  </script>
+  }, { passive: false });
+
+  resetEl.addEventListener("touchend", e => {
+    e.preventDefault();
+    belief = 0.0;
+    lastTap = null;
+    lastInterval = null;
+    render();
+  }, { passive: false });
+
+  render();
+</script>
 
 </body>
 </html>
