@@ -1,91 +1,129 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<title>Maintain A</title>
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>A</title>
 
 <style>
   html, body {
     margin: 0;
+    padding: 0;
     height: 100%;
     background: #000;
     color: #fff;
-    font-family: system-ui, sans-serif;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     overflow: hidden;
-    touch-action: manipulation;
   }
 
-  #app {
+  #stage {
     position: fixed;
     inset: 0;
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
+    touch-action: manipulation;
   }
 
-  #A {
-    font-size: 80px;
-    margin-bottom: 40px;
-    opacity: 0;
+  #a {
+    width: 80px;
+    height: 80px;
+    border-radius: 16px;
+    background: white;
+    opacity: 1;
     transition: opacity 120ms linear;
   }
 
-  #A.on {
-    opacity: 1;
+  #stats {
+    position: fixed;
+    top: 16px;
+    width: 100%;
+    text-align: center;
+    font-size: 14px;
+    opacity: 0.6;
   }
 
-  #tap {
-    padding: 18px 60px;
-    font-size: 20px;
+  #reset {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 14px 28px;
     border-radius: 999px;
-    border: none;
     background: #222;
     color: #fff;
+    font-size: 16px;
+    border: none;
   }
 </style>
 </head>
-
 <body>
-  <div id="app">
-    <div id="A">A</div>
-    <button id="tap">tap</button>
-  </div>
+
+<div id="stats">correct: 100%</div>
+
+<div id="stage">
+  <div id="a"></div>
+</div>
+
+<button id="reset">reset</button>
 
 <script>
-/*
-  MF STRUCTURE:
+  let stability = 1.0;        // internal, hidden
+  let present = true;
 
-  - Tap has ONE meaning: advance state
-  - State is adversarial
-  - A survives in some states, dies in others
-  - No time, no rhythm, no scoring
-*/
+  let taps = 0;
+  let correct = 0;
 
-let state = 0;
+  const A = document.getElementById("a");
+  const stats = document.getElementById("stats");
+  const resetBtn = document.getElementById("reset");
 
-// fixed adversarial structure
-// A exists only in these phases
-const survivesIn = new Set([0, 2, 5]);
+  function updateUI() {
+    A.style.opacity = present ? 1 : 0;
+    const pct = taps === 0 ? 100 : Math.round((correct / taps) * 100);
+    stats.textContent = `correct: ${pct}%`;
+  }
 
-const PERIOD = 7; // size of structure (arbitrary but explicit)
+  function tap() {
+    taps++;
 
-const Ael = document.getElementById("A");
-const tapBtn = document.getElementById("tap");
+    // structural disturbance
+    const delta = (Math.random() - 0.5) * 0.25;
+    stability += delta;
 
-function update() {
-  const alive = survivesIn.has(state);
-  Ael.classList.toggle("on", alive);
-}
+    // gentle pull toward neutral
+    stability += (present ? 0.02 : -0.02);
 
-tapBtn.addEventListener("click", () => {
-  state = (state + 1) % PERIOD;
-  update();
-});
+    // clamp internal state
+    stability = Math.max(0, Math.min(1, stability));
 
-// initial condition
-update();
+    // state transition
+    if (present && stability < 0.3) present = false;
+    if (!present && stability > 0.7) present = true;
+
+    if (present) correct++;
+
+    updateUI();
+  }
+
+  let locked = false;
+  document.getElementById("stage").addEventListener("click", () => {
+    if (locked) return;
+    locked = true;
+    tap();
+    setTimeout(() => locked = false, 60); // prevents hold spam
+  });
+
+  resetBtn.onclick = () => {
+    stability = 1.0;
+    present = true;
+    taps = 0;
+    correct = 0;
+    updateUI();
+  };
+
+  updateUI();
 </script>
+
 </body>
 </html>
