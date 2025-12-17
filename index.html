@@ -2,53 +2,74 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Collapse – Debug Proof</title>
+  <title>Collapse – Max Suppression</title>
 
-  <!-- hard stop mobile zoom -->
+  <!-- strongest viewport lock allowed -->
   <meta name="viewport"
-        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no">
 
   <style>
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
     html, body {
       margin: 0;
+      width: 100%;
       height: 100%;
-      background: #ff0044; /* unmistakable */
+      background: #ff0044;
       display: flex;
       justify-content: center;
       align-items: center;
       font-family: Arial, sans-serif;
       color: white;
 
-      /* mobile behaviour fixes */
-      touch-action: manipulation;
-      -webkit-user-select: none;
+      /* kill text + zoom behaviors */
       user-select: none;
+      -webkit-user-select: none;
       -webkit-text-size-adjust: 100%;
+      touch-action: manipulation;
+      overscroll-behavior: none;
     }
 
     .box {
       background: rgba(0,0,0,0.4);
-      padding: 30px;
-      border-radius: 12px;
+      padding: 32px;
+      border-radius: 14px;
       text-align: center;
+      min-width: 260px;
     }
 
     #value {
       font-size: 64px;
-      margin-bottom: 20px;
+      margin-bottom: 24px;
+      pointer-events: none;
     }
 
-    button {
-      font-size: 20px;
-      padding: 12px 24px;
-      margin: 6px;
+    .btn {
+      display: block;
+      margin: 12px auto;
+      padding: 18px 0;
+      width: 220px;
+      font-size: 22px;
+      background: #eee;
+      color: #000;
       border-radius: 999px;
-      border: none;
-      cursor: pointer;
 
-      /* remove iOS tap artifacts */
-      -webkit-tap-highlight-color: transparent;
-      touch-action: manipulation;
+      /* explicit hit target */
+      min-height: 56px;
+      line-height: 1;
+
+      /* remove focus semantics */
+      outline: none;
+    }
+
+    .hint {
+      margin-top: 18px;
+      font-size: 14px;
+      opacity: 0.9;
+      pointer-events: none;
     }
   </style>
 </head>
@@ -57,26 +78,31 @@
   <div class="box">
     <div id="value">0.500</div>
 
-    <button id="tap">TAP</button>
-    <button id="reset">RESET</button>
+    <div id="tap" class="btn">TAP</div>
+    <div id="reset" class="btn">RESET</div>
 
-    <div style="margin-top:15px;font-size:14px;">
-      If this is pink, the file updated.
-    </div>
+    <div class="hint">If this is pink, it updated.</div>
   </div>
 
   <script>
+    // gesture suppression (best-effort only)
+    ['gesturestart','gesturechange','gestureend'].forEach(ev =>
+      document.addEventListener(ev, e => e.preventDefault(), { passive: false })
+    );
+
     let value = 0.5;
     let lastTap = null;
     let lastInterval = null;
 
     const valueEl = document.getElementById("value");
-    const tapBtn = document.getElementById("tap");
-    const resetBtn = document.getElementById("reset");
+    const tapEl = document.getElementById("tap");
+    const resetEl = document.getElementById("reset");
 
     const clamp = v => Math.max(0, Math.min(1, v));
 
-    tapBtn.onclick = () => {
+    tapEl.addEventListener("touchend", e => {
+      e.preventDefault();
+
       const now = performance.now();
 
       if (lastTap !== null) {
@@ -93,14 +119,15 @@
       lastTap = now;
       value = clamp(value);
       valueEl.textContent = value.toFixed(3);
-    };
+    }, { passive: false });
 
-    resetBtn.onclick = () => {
+    resetEl.addEventListener("touchend", e => {
+      e.preventDefault();
       value = 0.5;
       lastTap = null;
       lastInterval = null;
       valueEl.textContent = "0.500";
-    };
+    }, { passive: false });
   </script>
 
 </body>
