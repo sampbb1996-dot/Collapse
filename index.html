@@ -1,205 +1,174 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta
-  name="viewport"
-  content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
-/>
+<meta charset="UTF-8">
+<meta name="viewport"
+  content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-<title>CORE — Collapse Timing</title>
+<title>Timing</title>
 
 <style>
-/* =========================
-   GLOBAL HARD BLOCKS
-   ========================= */
-* {
-  -webkit-tap-highlight-color: transparent !important;
-  -webkit-touch-callout: none !important;
-  -webkit-user-select: none !important;
-  user-select: none !important;
-  box-sizing: border-box;
-}
-
 html, body {
   margin: 0;
   padding: 0;
   background: #000;
   color: #fff;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
-  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
   touch-action: manipulation;
 }
 
-/* =========================
-   LAYOUT
-   ========================= */
-.app {
-  height: 100vh;
+* {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.container {
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  gap: 22px;
+  gap: 24px;
 }
 
-.display {
-  width: 88%;
-  height: 90px;
+.panel {
+  width: 86%;
+  max-width: 420px;
+  padding: 30px;
   border-radius: 18px;
-  background: #0e1b2f;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 42px;
-  letter-spacing: 0.5px;
+  background: #141414;
+  text-align: center;
+  font-size: 48px;
+  transition: color 0.25s ease;
 }
 
-button {
-  width: 88%;
-  height: 64px;
+.btn {
+  width: 86%;
+  max-width: 420px;
+  padding: 22px;
   border-radius: 18px;
-  border: none;
   background: #1f1f1f;
-  color: #fff;
-  font-size: 18px;
-  letter-spacing: 1px;
+  text-align: center;
+  font-size: 20px;
 }
 
-button:active {
-  transform: scale(0.98);
-}
-
-button.secondary {
-  background: #121212;
-  opacity: 0.7;
-}
-
-/* =========================
-   STATE COLORING
-   ========================= */
-.stable {
-  background: #0e1b2f;
-}
-
-.collapsing {
-  background: #2f1b0e;
-}
-
-.collapsed {
-  background: #2f0e0e;
+.btn:active {
+  background: #2a2a2a;
 }
 </style>
 </head>
 
 <body>
-<div class="app">
+<div class="container">
 
-  <div id="display" class="display stable">—</div>
+  <div id="score" class="panel">0%</div>
 
-  <button id="tap">TAP</button>
-  <button id="start" class="secondary">START</button>
-  <button id="end" class="secondary">× END</button>
+  <div id="tap" class="btn">TAP</div>
+  <div id="start" class="btn">START</div>
 
 </div>
 
 <script>
-/* =========================
-   CORE STATE
-   ========================= */
+/* ================= CORE STATE ================= */
+
 let running = false;
 let lastTap = null;
-let samples = [];
-let startTime = null;
+let intervals = [];
 
-const IMPULSE_WINDOW = 340; // ms — widened to avoid iOS micro-bounce
-const MAX_SAMPLES = 20;
+let adaptiveWindow = 240;      // start wide (max signal retention)
+const ceilingWindow = 45;      // domain ceiling (hard anchor)
+const minWindow = 35;          // safety floor
 
-/* =========================
-   HELPERS
-   ========================= */
+let lastScore = 0;
+
+/* ================= HELPERS ================= */
+
 function mean(arr) {
-  return arr.reduce((a, b) => a + b, 0) / arr.length;
+  return arr.reduce((a,b)=>a+b,0) / arr.length;
 }
 
-function variance(arr) {
-  const m = mean(arr);
-  return mean(arr.map(x => (x - m) ** 2));
+function std(arr, m) {
+  return Math.sqrt(
+    arr.reduce((a,b)=>a+(b-m)*(b-m),0) / arr.length
+  );
 }
 
-function clamp(n, min, max) {
-  return Math.min(max, Math.max(min, n));
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
 }
 
-/* =========================
-   DISPLAY UPDATE
-   ========================= */
-function updateDisplay() {
-  if (samples.length < 2) {
-    display.textContent = "—";
-    display.className = "display stable";
-    return;
-  }
+/* ================= CORE LOGIC ================= */
 
-  const v = variance(samples);
-  const signal = clamp(1 / (1 + v), 0, 1);
+function updateScore() {
+  if (intervals.length < 4) return;
 
-  display.textContent = signal.toFixed(3);
+  const m = mean(intervals);
+  const s = std(intervals, m);
 
-  if (signal > 0.75) {
-    display.className = "display stable";
-  } else if (signal > 0.4) {
-    display.className = "display collapsing";
+  // Stability = variance relative to current envelope
+  let stability = 1 - (s / adaptiveWindow);
+  stability = clamp(stability, 0, 1);
+
+  const score = Math.round(stability * 100);
+  const el = document.getElementById("score");
+
+  // Directional color only
+  if (score >= lastScore) {
+    el.style.color = "#4caf50"; // green
   } else {
-    display.className = "display collapsed";
+    el.style.color = "#f44336"; // red
   }
+
+  el.textContent = score + "%";
+  lastScore = score;
+
+  /* ---------------- Adaptive window logic ----------------
+     - Instability → expand envelope (preserve signal)
+     - Stability   → tighten envelope (increase resolution)
+     ------------------------------------------------------ */
+
+  if (s > adaptiveWindow * 0.6) {
+    adaptiveWindow *= 1.10;   // expand quickly when unstable
+  } else {
+    adaptiveWindow *= 0.97;   // tighten slowly when stable
+  }
+
+  adaptiveWindow = clamp(adaptiveWindow, ceilingWindow, 400);
 }
 
-/* =========================
-   EVENTS
-   ========================= */
-tap.onclick = () => {
+/* ================= EVENTS ================= */
+
+document.getElementById("tap").onclick = () => {
   if (!running) return;
 
   const now = performance.now();
 
   if (lastTap !== null) {
     const delta = now - lastTap;
+    intervals.push(delta);
 
-    // Ignore accidental micro-taps
-    if (delta < IMPULSE_WINDOW) return;
+    if (intervals.length > 20) {
+      intervals.shift();
+    }
 
-    samples.push(delta);
-    if (samples.length > MAX_SAMPLES) samples.shift();
-
-    updateDisplay();
+    updateScore();
   }
 
   lastTap = now;
 };
 
-start.onclick = () => {
+document.getElementById("start").onclick = () => {
   running = true;
-  samples = [];
   lastTap = null;
-  startTime = performance.now();
-  display.textContent = "—";
-  display.className = "display stable";
-};
+  intervals = [];
+  adaptiveWindow = 240;
+  lastScore = 0;
 
-end.onclick = () => {
-  running = false;
+  const el = document.getElementById("score");
+  el.textContent = "0%";
+  el.style.color = "#4caf50";
 };
-
-/* =========================
-   SAFETY: BLOCK ZOOM / DBL TAP
-   ========================= */
-let lastTouchEnd = 0;
-document.addEventListener("touchend", e => {
-  const now = Date.now();
-  if (now - lastTouchEnd <= 300) e.preventDefault();
-  lastTouchEnd = now;
-}, { passive: false });
 </script>
 </body>
 </html>
