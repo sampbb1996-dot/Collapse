@@ -1,175 +1,226 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>3 Modes</title>
-<style>
-  html, body {
-    margin: 0;
-    height: 100%;
-    background: #000;
-    overflow: hidden;
-    touch-action: manipulation;
-    user-select: none;
-    font-family: system-ui, sans-serif;
-  }
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>3 Modes</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+      touch-action: manipulation;
+      user-select: none;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      color: #777;
+    }
 
-  #modeLabel {
-    position: fixed;
-    top: 18px;
-    width: 100%;
-    text-align: center;
-    color: #777;
-    font-size: 16px;
-    letter-spacing: 0.2px;
-  }
+    #hud {
+      position: fixed;
+      top: 16px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 16px;
+      pointer-events: none;
+    }
 
-  #indicator {
-    position: fixed;
-    left: 50%;
-    top: 45%;
-    transform: translate(-50%, -50%);
-    width: 90px;
-    height: 90px;
-    background: #fff;
-    border-radius: 18px;
-    display: none; /* present / not present only */
-  }
+    #stage {
+      position: fixed;
+      inset: 0;
+    }
 
-  #controls {
-    position: fixed;
-    bottom: 22px;
-    left: 0;
-    right: 0;
-    display: flex;
-    gap: 10px;
-    justify-content: center;
-    padding: 0 16px;
-  }
+    /* binary presence only: visible or not */
+    #obj {
+      position: fixed;
+      left: 50%;
+      top: 45%;
+      transform: translate(-50%, -50%);
+      width: 92px;
+      height: 92px;
+      background: #fff;
+      border-radius: 18px;
+      display: block; /* starts at steady A */
+    }
 
-  button {
-    background: #222;
-    color: #eee;
-    border: none;
-    border-radius: 999px;
-    padding: 14px 18px;
-    font-size: 15px;
-  }
+    #controls {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 22px;
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      padding: 0 14px;
+    }
 
-  button.active {
-    background: #444;
-  }
-</style>
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 14px 18px;
+      font-size: 15px;
+      background: #222;
+      color: #eee;
+    }
+    button.active { background: #444; }
+  </style>
 </head>
 <body>
+  <div id="hud">mode: game</div>
+  <div id="stage"></div>
+  <div id="obj"></div>
 
-<div id="modeLabel"></div>
-<div id="indicator"></div>
-
-<div id="controls">
-  <button id="btnObserve">observe</button>
-  <button id="btnSlide">slideshow</button>
-  <button id="btnTest">test</button>
-  <button id="btnReset">reset</button>
-</div>
+  <div id="controls">
+    <button id="mGame" class="active">game</button>
+    <button id="mSlide">slideshow</button>
+    <button id="mAuto">autoplay</button>
+    <button id="reset">reset</button>
+  </div>
 
 <script>
-  // --- 3 modes ---
-  // 0 = observe (auto ticks, taps ignored)
-  // 1 = slideshow (no auto ticks, tap advances)
-  // 2 = test (auto ticks, taps add variance + record binary, but DO NOT advance)
+(() => {
+  // Modes:
+  // 0 game     : auto ticks, tap = binary (left/right) + advances one step immediately
+  // 1 slideshow: no auto ticks, tap = advance only (no binary, no inference)
+  // 2 autoplay : auto ticks, taps ignored (pure viewing)
   let mode = 0;
 
-  // core state
-  let S = 0.6;                 // 0..1
-  const THRESH = 0.5;
+  // ---- core state ----
+  // "A state" = steady visible.
+  // System can be pushed away from A by "coherent" (intentional) input.
+  let S = 0;                  // latent drift (returns to 0)
+  let C = 0;                  // confidence in intention (0..1)
+  let pHat = 0.5;             // estimated bias of user's binary (0..1)
+
+  // fixed time
   const TICK_MS = 1000;
 
-  // evolution
-  const DECAY = 0.02;          // per tick
-  const BASE_NOISE = 0.00;     // keep 0 unless you explicitly want ambient variance
+  // dynamics
+  const RETURN = 0.06;        // pull back toward A each tick
+  const WANDER = 0.22;        // how far from A the system can drift when C is high
+  const INFER_RATE = 0.08;    // how fast we adapt pHat
+  const C_UP = 0.06;          // increase confidence on coherence
+  const C_DOWN = 0.10;        // decrease confidence on incoherence
 
-  // test input effects (variance only)
-  const TEST_NOISE = 0.08;
+  // rendering threshold
+  const ABSENT_CUTOFF = 0.55; // higher = more often present
 
-  // optional log (kept but not displayed)
-  const testBits = [];
+  const hud = document.getElementById("hud");
+  const obj = document.getElementById("obj");
 
-  const indicator = document.getElementById("indicator");
-  const modeLabel = document.getElementById("modeLabel");
+  const bGame = document.getElementById("mGame");
+  const bSlide = document.getElementById("mSlide");
+  const bAuto = document.getElementById("mAuto");
+  const bReset = document.getElementById("reset");
 
-  const btnObserve = document.getElementById("btnObserve");
-  const btnSlide   = document.getElementById("btnSlide");
-  const btnTest    = document.getElementById("btnTest");
-  const btnReset   = document.getElementById("btnReset");
+  function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+  function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
 
-  function clamp(x) {
-    return Math.max(0, Math.min(1, x));
+  function setMode(m){
+    mode = m;
+    bGame.classList.toggle("active", mode === 0);
+    bSlide.classList.toggle("active", mode === 1);
+    bAuto.classList.toggle("active", mode === 2);
+    hud.textContent = `mode: ${mode===0?"game":mode===1?"slideshow":"autoplay"}`;
   }
 
-  function render() {
-    indicator.style.display = (S > THRESH) ? "block" : "none";
-    modeLabel.textContent =
-      mode === 0 ? "mode: observe" :
-      mode === 1 ? "mode: slideshow" :
-                   "mode: test";
-    btnObserve.classList.toggle("active", mode === 0);
-    btnSlide.classList.toggle("active", mode === 1);
-    btnTest.classList.toggle("active", mode === 2);
+  // ---- intention inference (game mode only) ----
+  // "Coherence" is self-consistency relative to the running estimate pHat.
+  // Random tapping tends to pHat ~ 0.5 and produces low predictability => C decays back toward 0.
+  function ingestBit(bit){
+    // bit in {0,1}
+    const pred = (pHat >= 0.5) ? 1 : 0;
+    const coherent = (bit === pred);
+
+    // update confidence (no feedback shown)
+    C = clamp01(C + (coherent ? C_UP : -C_DOWN));
+
+    // update estimated bias
+    pHat = (1 - INFER_RATE) * pHat + INFER_RATE * bit;
+
+    // push latent state away from A only if confidence exists
+    // (coherent input increases ability to move system forward; incoherent input dampens)
+    const dir = bit ? 1 : -1;
+    S += dir * (0.10 + 0.25 * C);
+    S = clamp(S, -2.5, 2.5);
   }
 
-  function tick() {
-    // fixed-time evolution only
-    S -= DECAY;
-    if (BASE_NOISE !== 0) S += (Math.random() * 2 - 1) * BASE_NOISE;
-    S = clamp(S);
-    render();
+  // ---- tick evolution ----
+  function step(){
+    // return toward A regardless of input
+    S *= (1 - RETURN);
+
+    // when intention confidence is low, system collapses toward A (steady presence)
+    // when high, system wanders (variance) away from A
+    if (C > 0.01) {
+      const noise = (Math.random() * 2 - 1) * (WANDER * C);
+      S = clamp(S + noise, -2.5, 2.5);
+    }
+
+    // render: present/not present only
+    // A state => always present
+    if (C < 0.10 && Math.abs(S) < 0.25) {
+      obj.style.display = "block";
+      return;
+    }
+
+    // otherwise presence becomes contingent on state
+    // higher C increases the chance of "not-A" (absence) appearing.
+    const absenceBias = clamp01((Math.abs(S) / 2.5) * (0.35 + 0.65 * C));
+    const presentProb = clamp01(1 - absenceBias);
+
+    obj.style.display = (Math.random() < presentProb && presentProb > (1 - ABSENT_CUTOFF)) ? "block" : "none";
   }
 
-  // fixed interval scheduler: ONLY runs tick in auto modes
+  // ---- timing ----
   setInterval(() => {
-    if (mode === 0 || mode === 2) tick();
+    if (mode === 0 || mode === 2) step(); // game and autoplay are fixed-interval
   }, TICK_MS);
 
-  // tap surface (whole screen except buttons)
+  // ---- input surface ----
+  // In game mode:
+  //   tap left/right = 0/1 + immediate step
+  // In slideshow:
+  //   tap = immediate step only
+  // In autoplay:
+  //   taps ignored
   document.body.addEventListener("pointerdown", (e) => {
-    if (e.target.tagName === "BUTTON") return;
+    if (e.target && e.target.tagName === "BUTTON") return;
+
+    if (mode === 0) {
+      const x = e.clientX / window.innerWidth;
+      const bit = (x < 0.5) ? 0 : 1;     // binary from tap position
+      ingestBit(bit);
+      step();                             // immediate advance (required)
+      return;
+    }
 
     if (mode === 1) {
-      // slideshow: tap advances state (this is the only mode where taps change timing)
-      tick();
+      step();                             // advance only
       return;
     }
 
-    if (mode === 2) {
-      // test: tap injects variance + records a binary bit, but DOES NOT advance time
-      const bit = Math.random() < 0.5 ? 0 : 1; // if you later want explicit yes/no, replace this
-      testBits.push(bit);
-
-      S += (Math.random() * 2 - 1) * TEST_NOISE;
-      S = clamp(S);
-      render();
-      return;
-    }
-
-    // observe: taps ignored
+    // mode === 2: ignore
   });
 
-  // mode buttons
-  btnObserve.onclick = () => { mode = 0; render(); };
-  btnSlide.onclick   = () => { mode = 1; render(); };
-  btnTest.onclick    = () => { mode = 2; render(); };
+  // ---- controls ----
+  bGame.onclick = () => setMode(0);
+  bSlide.onclick = () => setMode(1);
+  bAuto.onclick = () => setMode(2);
 
-  // reset
-  btnReset.onclick = () => {
-    S = 0.6;
-    testBits.length = 0;
-    render();
+  bReset.onclick = (e) => {
+    e.stopPropagation();
+    S = 0;
+    C = 0;
+    pHat = 0.5;
+    obj.style.display = "block"; // steady A
   };
 
-  render();
+  // init
+  setMode(0);
+  obj.style.display = "block"; // steady A at start
+})();
 </script>
-
 </body>
 </html>
