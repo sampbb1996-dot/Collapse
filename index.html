@@ -1,5 +1,5 @@
 const MAX_WINDOW = 20;
-const ALPHA = 0.2; // smoothing strength (lower = smoother)
+const ALPHA = 0.2;
 
 let lastTap = null;
 let window = [];
@@ -16,16 +16,14 @@ function onTap(time) {
   const interval = time - lastTap;
   lastTap = time;
 
-  // update smoothed mean
+  // smooth
   mean = mean === null
     ? interval
     : ALPHA * interval + (1 - ALPHA) * mean;
 
-  // use mean, not raw interval
+  // IMPORTANT: use mean, not interval
   window.push(mean);
-  if (window.length > MAX_WINDOW) {
-    window.shift();
-  }
+  if (window.length > MAX_WINDOW) window.shift();
 
   if (window.length < 2) {
     return { interval: mean, percent: 0 };
@@ -39,16 +37,9 @@ function onTap(time) {
   }
 
   const percent =
-    Math.min(
-      100,
-      Math.max(
-        0,
-        ((mean - min) / (max - min)) * 100
-      )
+    Math.min(100,
+      Math.max(0, ((mean - min) / (max - min)) * 100)
     );
 
-  return {
-    interval: mean,
-    percent
-  };
+  return { interval: mean, percent };
 }
