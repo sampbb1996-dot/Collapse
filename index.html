@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Collapse — Bounded Timing Deviation</title>
+  <title>Collapse — Bounded Deviation</title>
 
   <meta name="viewport"
         content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
@@ -67,19 +67,15 @@
 </div>
 
 <script>
-  // -----------------------------
-  // STATE
-  // -----------------------------
   let lastTap = null;
   let expectedInterval = null;
 
-  // bounded deviation signal [0–100]
+  // deviation is ALWAYS magnitude-only
   let deviation = 0;
 
-  // tuning parameters
-  const alpha = 0.25;   // smoothing
-  const beta  = 0.05;   // expectation learning rate
-  const scale = 100;    // maps relative deviation to %
+  const alpha = 0.25;
+  const beta  = 0.05;
+  const scale = 100;
 
   const valueEl = document.getElementById("value");
   const tapEl = document.getElementById("tap");
@@ -90,12 +86,11 @@
   }
 
   function render() {
-    valueEl.textContent = `${deviation.toFixed(1)}%`;
+    // HARD DEFENCE: abs + clamp at render
+    const v = clamp(Math.abs(deviation));
+    valueEl.textContent = `${v.toFixed(1)}%`;
   }
 
-  // -----------------------------
-  // INTERACTION
-  // -----------------------------
   tapEl.addEventListener("touchend", e => {
     e.preventDefault();
 
@@ -107,17 +102,14 @@
       if (expectedInterval === null) {
         expectedInterval = interval;
       } else {
-        // slowly learn expected rhythm
         expectedInterval =
           (1 - beta) * expectedInterval + beta * interval;
 
-        // absolute relative deviation
         const raw =
           Math.abs(interval - expectedInterval) / expectedInterval;
 
         const percent = raw * scale;
 
-        // smooth + clamp
         deviation =
           clamp(alpha * percent + (1 - alpha) * deviation);
       }
