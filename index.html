@@ -1,27 +1,37 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<title>Timing Reader</title>
+<script>
+let value = 0.5;
+let lastTap = null;
+let lastInterval = null;
 
-<style>
-html, body {
-  margin: 0;
-  height: 100%;
-  background: #000;
-  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-}
+const reader = document.getElementById("reader");
+const tapBtn = document.getElementById("tapBtn");
+const endBtn = document.getElementById("endBtn");
 
-.app {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 18px;
-}
+tapBtn.onclick = () => {
+  const now = performance.now();
 
-#reader {
-  width: 80%;
-  padding: 28
+  if (lastTap !== null) {
+    const interval = (now - lastTap) / 1000;
+
+    if (lastInterval !== null) {
+      const deviation = Math.abs(interval - lastInterval);
+
+      // stability improves value, instability degrades it
+      value += (0.05 - deviation) * 0.5;
+    }
+
+    lastInterval = interval;
+  }
+
+  lastTap = now;
+  value = Math.max(0, Math.min(1, value));
+  reader.textContent = value.toFixed(3);
+};
+
+endBtn.onclick = () => {
+  value = 0.5;
+  lastTap = null;
+  lastInterval = null;
+  reader.textContent = "0.500";
+};
+</script>
