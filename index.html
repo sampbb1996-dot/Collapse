@@ -1,225 +1,326 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <title>3 Modes</title>
-  <style>
-    html, body {
-      margin: 0;
-      height: 100%;
-      background: #000;
-      overflow: hidden;
-      touch-action: manipulation;
-      user-select: none;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-      color: #777;
-    }
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>A / _</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+    touch-action: manipulation;
+    user-select: none;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    color: #777;
+  }
 
-    #hud {
-      position: fixed;
-      top: 16px;
-      left: 0;
-      right: 0;
-      text-align: center;
-      font-size: 16px;
-      pointer-events: none;
-    }
+  #hud {
+    position: fixed;
+    top: 16px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 16px;
+    pointer-events: none;
+  }
 
-    #stage {
-      position: fixed;
-      inset: 0;
-    }
+  /* NO EFFECTS: binary presence only */
+  #square {
+    position: fixed;
+    left: 50%;
+    top: 45%;
+    transform: translate(-50%, -50%);
+    width: 90px;
+    height: 90px;
+    background: #fff;
+    border-radius: 18px;
+    display: block; /* start at A */
+  }
 
-    /* binary presence only: visible or not */
-    #obj {
-      position: fixed;
-      left: 50%;
-      top: 45%;
-      transform: translate(-50%, -50%);
-      width: 92px;
-      height: 92px;
-      background: #fff;
-      border-radius: 18px;
-      display: block; /* starts at steady A */
-    }
+  #controls {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 20px;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    padding: 0 14px;
+    flex-wrap: wrap;
+  }
 
-    #controls {
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 22px;
-      display: flex;
-      justify-content: center;
-      gap: 10px;
-      padding: 0 14px;
-    }
-
-    button {
-      border: 0;
-      border-radius: 999px;
-      padding: 14px 18px;
-      font-size: 15px;
-      background: #222;
-      color: #eee;
-    }
-    button.active { background: #444; }
-  </style>
+  button {
+    border: 0;
+    border-radius: 999px;
+    padding: 14px 18px;
+    font-size: 15px;
+    background: #222;
+    color: #eee;
+  }
+  button.active { background: #444; }
+  button:disabled { opacity: 0.35; }
+</style>
 </head>
+
 <body>
-  <div id="hud">mode: game</div>
-  <div id="stage"></div>
-  <div id="obj"></div>
+  <div id="hud">mode: observe</div>
+  <div id="square"></div>
 
   <div id="controls">
-    <button id="mGame" class="active">game</button>
-    <button id="mSlide">slideshow</button>
+    <button id="mObserve" class="active">observe</button>
+    <button id="mGame">game</button>
     <button id="mAuto">autoplay</button>
+
+    <button id="yes">yes</button>
+    <button id="no">no</button>
+
     <button id="reset">reset</button>
   </div>
 
 <script>
 (() => {
-  // Modes:
-  // 0 game     : auto ticks, tap = binary (left/right) + advances one step immediately
-  // 1 slideshow: no auto ticks, tap = advance only (no binary, no inference)
-  // 2 autoplay : auto ticks, taps ignored (pure viewing)
-  let mode = 0;
+  /**
+   * 3 modes:
+   *  - observe  : frozen at steady A (square stays)
+   *  - autoplay : fixed interval ticks (watch), no input needed
+   *  - game     : fixed interval ticks (must wait), binary input is recorded between ticks
+   *
+   * Key requirement:
+   *  - Random / non-intentional input should rapidly collapse back toward A.
+   *  - Use DATA CONSUMPTION (states seen + interruptions + coherence of bits), not timing skill.
+   *  - No per-tap feedback, no “wrong”.
+   */
 
-  // ---- core state ----
-  // "A state" = steady visible.
-  // System can be pushed away from A by "coherent" (intentional) input.
-  let S = 0;                  // latent drift (returns to 0)
-  let C = 0;                  // confidence in intention (0..1)
-  let pHat = 0.5;             // estimated bias of user's binary (0..1)
-
-  // fixed time
-  const TICK_MS = 1000;
-
-  // dynamics
-  const RETURN = 0.06;        // pull back toward A each tick
-  const WANDER = 0.22;        // how far from A the system can drift when C is high
-  const INFER_RATE = 0.08;    // how fast we adapt pHat
-  const C_UP = 0.06;          // increase confidence on coherence
-  const C_DOWN = 0.10;        // decrease confidence on incoherence
-
-  // rendering threshold
-  const ABSENT_CUTOFF = 0.55; // higher = more often present
-
+  // -------- UI --------
   const hud = document.getElementById("hud");
-  const obj = document.getElementById("obj");
+  const square = document.getElementById("square");
 
+  const bObserve = document.getElementById("mObserve");
   const bGame = document.getElementById("mGame");
-  const bSlide = document.getElementById("mSlide");
   const bAuto = document.getElementById("mAuto");
+
+  const bYes = document.getElementById("yes");
+  const bNo = document.getElementById("no");
   const bReset = document.getElementById("reset");
 
-  function clamp01(x){ return Math.max(0, Math.min(1, x)); }
-  function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
-
-  function setMode(m){
+  // -------- modes --------
+  let mode = "observe"; // observe | game | autoplay
+  function setMode(m) {
     mode = m;
-    bGame.classList.toggle("active", mode === 0);
-    bSlide.classList.toggle("active", mode === 1);
-    bAuto.classList.toggle("active", mode === 2);
-    hud.textContent = `mode: ${mode===0?"game":mode===1?"slideshow":"autoplay"}`;
-  }
+    bObserve.classList.toggle("active", m === "observe");
+    bGame.classList.toggle("active", m === "game");
+    bAuto.classList.toggle("active", m === "autoplay");
 
-  // ---- intention inference (game mode only) ----
-  // "Coherence" is self-consistency relative to the running estimate pHat.
-  // Random tapping tends to pHat ~ 0.5 and produces low predictability => C decays back toward 0.
-  function ingestBit(bit){
-    // bit in {0,1}
-    const pred = (pHat >= 0.5) ? 1 : 0;
-    const coherent = (bit === pred);
+    hud.textContent = `mode: ${m}`;
 
-    // update confidence (no feedback shown)
-    C = clamp01(C + (coherent ? C_UP : -C_DOWN));
+    const inGame = (m === "game");
+    bYes.disabled = !inGame;
+    bNo.disabled = !inGame;
 
-    // update estimated bias
-    pHat = (1 - INFER_RATE) * pHat + INFER_RATE * bit;
-
-    // push latent state away from A only if confidence exists
-    // (coherent input increases ability to move system forward; incoherent input dampens)
-    const dir = bit ? 1 : -1;
-    S += dir * (0.10 + 0.25 * C);
-    S = clamp(S, -2.5, 2.5);
-  }
-
-  // ---- tick evolution ----
-  function step(){
-    // return toward A regardless of input
-    S *= (1 - RETURN);
-
-    // when intention confidence is low, system collapses toward A (steady presence)
-    // when high, system wanders (variance) away from A
-    if (C > 0.01) {
-      const noise = (Math.random() * 2 - 1) * (WANDER * C);
-      S = clamp(S + noise, -2.5, 2.5);
+    // observe must be steady A immediately
+    if (m === "observe") {
+      resetStateToA();
+      renderPresence(1.0);
     }
+  }
 
-    // render: present/not present only
-    // A state => always present
-    if (C < 0.10 && Math.abs(S) < 0.25) {
-      obj.style.display = "block";
+  // -------- helpers --------
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
+  const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+
+  // -------- corpus driver (deterministic) --------
+  let seed0 = 123456789;
+  function lcg() {
+    seed0 = (1664525 * seed0 + 1013904223) >>> 0;
+    return seed0 / 4294967296; // [0,1)
+  }
+  function corpusStep() {
+    // centered in [-1, 1]
+    return (lcg() * 2 - 1);
+  }
+
+  // -------- "data consumption" metrics --------
+  // Data = number of states consumed (ticks).
+  // Interpretations of consumption = interruptions per state, run length, and bit coherence.
+  let statesSeen = 0;          // total states consumed
+  let uninterruptedRun = 0;    // consecutive states without any input
+  let inputsSinceLastState = 0;// “interruption density”
+  let interruptions = 0;       // total input events (game only)
+
+  // Binary stream (game mode only)
+  const BIT_WINDOW = 32;
+  let bits = [];               // last BIT_WINDOW bits
+  let coherence = 0;           // 0..1 (not shown)
+
+  function updateCoherence() {
+    if (bits.length < 8) { coherence = 0; return; }
+
+    // bias away from 0.5
+    const mean = bits.reduce((a,b)=>a+b,0) / bits.length; // 0..1
+    const bias = Math.abs(mean - 0.5) * 2;                // 0..1
+
+    // flip structure: coin-flip alternation ~0.5 flip rate
+    let flips = 0;
+    for (let i=1;i<bits.length;i++) if (bits[i] !== bits[i-1]) flips++;
+    const flipRate = flips / (bits.length - 1);           // 0..1
+    const nonCoin = Math.abs(flipRate - 0.5) * 2;         // 0..1  (0 means coin-like)
+
+    // Conservative: coherence is high only if either bias OR non-coin flip structure exists.
+    coherence = clamp01(Math.max(bias, nonCoin));
+  }
+
+  // -------- core state (A / _) --------
+  // A attractor: x -> 0. Moving away from A increases chance of absence.
+  let x = 0; // deviation from A
+
+  // Coupling = how much the system “trusts” the consumption stream as informative (0..1).
+  // This is derived from DATA CONSUMPTION, not time.
+  let coupling = 0; // 0..1
+
+  const TICK_MS = 1000;
+
+  // A dynamics (chosen to return to A quickly)
+  const RETURN_TO_A = 0.22;
+  const MAX_X = 2.5;
+
+  // Presence function (binary display only)
+  const A_BAND = 0.12; // inside this, force A present
+  function presenceProbFromX() {
+    const ax = Math.abs(x);
+    if (ax <= A_BAND) return 1.0;
+    // monotone drop in [0,1]
+    const p = 1 - (ax / MAX_X);
+    return clamp01(p * p);
+  }
+
+  function renderPresence(prob) {
+    // binary only
+    square.style.display = (Math.random() < prob) ? "block" : "none";
+  }
+
+  function resetStateToA() {
+    x = 0;
+    coupling = 0;
+
+    statesSeen = 0;
+    uninterruptedRun = 0;
+    inputsSinceLastState = 0;
+    interruptions = 0;
+
+    bits = [];
+    coherence = 0;
+
+    // reset corpus phase too
+    seed0 = 123456789;
+  }
+
+  // -------- derive coupling from DATA CONSUMPTION --------
+  // fast: converge within ~10–30 states.
+  function updateCouplingAfterState() {
+    // “Interruption density” = input events per state observed.
+    const denom = Math.max(1, statesSeen);
+    const interruptRate = interruptions / denom; // 0..∞ but typically small
+
+    // uninterruptedRun is consumption style too: if user never intervenes, that's not "noise".
+    // But in game mode, if user intervenes constantly, it becomes noise.
+    const densityPenalty = clamp01(1 - (interruptRate * 0.9)); // higher interruptions => lower
+
+    // Coherence only matters in game mode (bits exist), otherwise coherence=0.
+    // If coherence is low, treat input as uninformative => return to A.
+    const coherenceGate = clamp01(coherence);
+
+    // Combine: coupling rises only when (low interruption density) AND (coherent bits).
+    // This is the quickest way to collapse random tapping.
+    const target = clamp01(densityPenalty * coherenceGate);
+
+    // Fast update (state-based, not time-based)
+    const alpha = 0.45; // big step: quick detection
+    coupling = clamp01(coupling + (target - coupling) * alpha);
+  }
+
+  // -------- advance one state (the primitive) --------
+  function consumeState() {
+    statesSeen++;
+
+    if (mode === "observe") {
+      // must remain steady A
+      x = 0;
+      renderPresence(1.0);
       return;
     }
 
-    // otherwise presence becomes contingent on state
-    // higher C increases the chance of "not-A" (absence) appearing.
-    const absenceBias = clamp01((Math.abs(S) / 2.5) * (0.35 + 0.65 * C));
-    const presentProb = clamp01(1 - absenceBias);
+    // Update uninterrupted run metric
+    if (inputsSinceLastState === 0) uninterruptedRun++;
+    else uninterruptedRun = 0;
 
-    obj.style.display = (Math.random() < presentProb && presentProb > (1 - ABSENT_CUTOFF)) ? "block" : "none";
+    // Always pull back to A
+    x *= (1 - RETURN_TO_A);
+
+    // Corpus tries to move away from A, but amplitude is gated.
+    // - autoplay: tiny baseline drift (watchable but still A-dominant)
+    // - game: amplitude depends on coupling (derived from data consumption)
+    const drive = corpusStep(); // [-1,1]
+
+    let amp = 0;
+    if (mode === "autoplay") {
+      amp = 0.18; // watchable minimal motion
+    } else if (mode === "game") {
+      // If input is random/uninformative, coupling -> 0 -> amp -> 0 (collapses to A).
+      amp = 0.95 * coupling;
+    }
+
+    x = clamp(x + amp * drive, -MAX_X, MAX_X);
+
+    // Update coupling AFTER consuming a state, using consumption metrics up to now.
+    if (mode === "game") updateCouplingAfterState();
+    else coupling = 0; // irrelevant outside game
+
+    // Reset per-state input accumulator
+    inputsSinceLastState = 0;
+
+    // Render binary presence
+    renderPresence(presenceProbFromX());
   }
 
-  // ---- timing ----
+  // -------- game input (binary) --------
+  // In game mode: input records a bit and counts as “interruption”.
+  // It does NOT advance state. User must wait for tick.
+  function recordBit(bit) {
+    if (mode !== "game") return;
+
+    interruptions++;
+    inputsSinceLastState++;
+
+    bits.push(bit);
+    if (bits.length > BIT_WINDOW) bits.shift();
+    updateCoherence();
+    // no render change, no state advance
+  }
+
+  // -------- fixed ticks --------
   setInterval(() => {
-    if (mode === 0 || mode === 2) step(); // game and autoplay are fixed-interval
+    if (mode === "game" || mode === "autoplay") consumeState();
   }, TICK_MS);
 
-  // ---- input surface ----
-  // In game mode:
-  //   tap left/right = 0/1 + immediate step
-  // In slideshow:
-  //   tap = immediate step only
-  // In autoplay:
-  //   taps ignored
-  document.body.addEventListener("pointerdown", (e) => {
-    if (e.target && e.target.tagName === "BUTTON") return;
+  // -------- wire UI --------
+  bObserve.onclick = () => setMode("observe");
+  bGame.onclick = () => setMode("game");
+  bAuto.onclick = () => setMode("autoplay");
 
-    if (mode === 0) {
-      const x = e.clientX / window.innerWidth;
-      const bit = (x < 0.5) ? 0 : 1;     // binary from tap position
-      ingestBit(bit);
-      step();                             // immediate advance (required)
-      return;
-    }
-
-    if (mode === 1) {
-      step();                             // advance only
-      return;
-    }
-
-    // mode === 2: ignore
-  });
-
-  // ---- controls ----
-  bGame.onclick = () => setMode(0);
-  bSlide.onclick = () => setMode(1);
-  bAuto.onclick = () => setMode(2);
+  bYes.onclick = (e) => { e.stopPropagation(); recordBit(1); };
+  bNo.onclick  = (e) => { e.stopPropagation(); recordBit(0); };
 
   bReset.onclick = (e) => {
     e.stopPropagation();
-    S = 0;
-    C = 0;
-    pHat = 0.5;
-    obj.style.display = "block"; // steady A
+    resetStateToA();
+    renderPresence(1.0);
   };
 
   // init
-  setMode(0);
-  obj.style.display = "block"; // steady A at start
+  setMode("observe");
+  renderPresence(1.0);
 })();
 </script>
 </body>
