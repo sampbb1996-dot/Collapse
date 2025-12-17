@@ -6,245 +6,54 @@
     name="viewport"
     content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
   />
-  <title>Collapse — Relative Timing Deviation</title>
+  <title>Collapse</title>
+
   <style>
     :root{
-      --bg:#ff0044;
-      --card:#6b0f1a;
-      --btn:#efefef;
-      --txt:#ffffff;
-      --sub:rgba(255,255,255,0.72);
-      --tiny:rgba(255,255,255,0.55);
+      --bg:#000000;
+      --panel:#0f0f0f;
+      --border:#1f1f1f;
+      --text:#ffffff;
+      --muted:#8a8a8a;
+      --btn:#151515;
     }
-    *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
-    html,body{ height:100%; }
-    body{
+
+    *{
+      box-sizing:border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body{
+      height:100%;
       margin:0;
+    }
+
+    body{
       background:var(--bg);
       display:flex;
       align-items:center;
       justify-content:center;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       touch-action: manipulation;
-      user-select: none;
-      -webkit-user-select: none;
+      user-select:none;
+      -webkit-user-select:none;
     }
-    .card{
+
+    .panel{
       width:min(520px, 92vw);
-      padding:28px 22px 22px;
-      background:var(--card);
-      border-radius:22px;
-      box-shadow: 0 18px 45px rgba(0,0,0,0.22);
+      padding:32px 28px 28px;
+      background:var(--panel);
+      border-radius:20px;
+      border:1px solid var(--border);
       text-align:center;
     }
+
     .value{
-      font-size: clamp(56px, 10vw, 96px);
-      line-height:1;
-      font-weight:650;
-      color:var(--txt);
-      letter-spacing: -0.02em;
-      margin: 6px 0 18px;
-    }
-    .btn{
-      width:min(380px, 84%);
-      height:74px;
-      border:none;
-      border-radius:40px;
-      background:var(--btn);
-      font-size:22px;
-      font-weight:650;
-      margin:10px auto;
-      display:block;
-      cursor:pointer;
-    }
-    .label{
-      margin-top: 14px;
-      color: var(--sub);
-      font-size: 16px;
-    }
-    .tiny{
-      margin-top:10px;
-      color: var(--tiny);
-      font-size: 13px;
-      min-height: 18px;
-    }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div id="value" class="value">—</div>
-    <button id="tap" class="btn">TAP</button>
-    <button id="reset" class="btn">RESET</button>
-    <div class="label">Relative timing deviation</div>
-    <div id="hint" class="tiny"></div>
-  </div>
-
-<script>
-(() => {
-  // =========================
-  // Collapse (self-anchoring)
-  // =========================
-  // No external target tempo.
-  // Score is relative alignment vs your own learned baseline.
-  // 0% and 100% are unreachable by construction.
-  //
-  // Improvements vs earlier versions:
-  // - Calibration phase (cold start handled explicitly)
-  // - Anti-spam floor (too-fast taps ignored)
-  // - Baseline update guard (outliers can't re-anchor)
-  // - Optional "stability" meta-signal (second-order)
-  // =========================
-
-  // ---- Tunables (keep stable) ----
-  const EPS = 0.001;            // hard bounds: (0.1%..99.9%)
-  const MIN_DT = 90;            // ms: below this is spam / non-signal
-  const MAX_DT = 4000;          // ms: ignore ultra-long pauses for baseline
-  const INIT_BASELINE = 450;    // ms: used only during calibration
-  const EMA_ALPHA = 0.12;       // baseline learning rate
-  const GUARD = 0.60;           // dt must be within ±60% of baseline to update baseline
-  const K = 3.6;                // deviation->score steepness
-  const CAL_TAPS = 6;           // require N valid intervals before showing %
-  const META_ALPHA = 0.10;      // meta stability smoothing
-
-  // ---- State ----
-  let lastTap = null;
-  let baseline = null;          // learned tempo (ms)
-  let validIntervals = 0;       // count of accepted dt intervals
-  let score = 0.5;              // (0,1)
-  let metaStability = 0.0;      // 0..1: higher means steadier recently
-
-  const valueEl = document.getElementById('value');
-  const hintEl = document.getElementById('hint');
-  const tapBtn = document.getElementById('tap');
-  const resetBtn = document.getElementById('reset');
-
-  // ---- Helpers ----
-  const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
-
-  function deviation(dt, base){
-    // scale-free, symmetric: dt/base and base/dt treated equally
-    return Math.abs(Math.log(dt / base));
-  }
-
-  function sigmoid(x){
-    return 1 / (1 + Math.exp(-x));
-  }
-
-  function devToRawScore(dev){
-    // dev=0 => 0.5. We then remap to make "perfect" feel meaningfully high
-    return sigmoid(-K * dev);
-  }
-
-  function remap(s){
-    // convex lift without hitting 1
-    return 1 - Math.pow(1 - s, 2);
-  }
-
-  function formatPct(p){
-    // prevent display rounding to 100.0
-    const pct = clamp(p * 100, 0.1, 99.9);
-    return pct.toFixed(1) + "%";
-  }
-
-  function render(msg=""){
-    if (validIntervals < CAL_TAPS){
-      const remaining = Math.max(0, CAL_TAPS - validIntervals);
-      valueEl.textContent = "—";
-      hintEl.textContent = remaining > 0
-        ? `calibrating (${remaining} more)`
-        : "calibrating";
-      if (msg) hintEl.textContent = msg;
-      return;
-    }
-    valueEl.textContent = formatPct(score);
-    hintEl.textContent = msg || "";
-  }
-
-  function reset(){
-    lastTap = null;
-    baseline = null;
-    validIntervals = 0;
-    score = 0.5;
-    metaStability = 0.0;
-    render("calibrating");
-  }
-
-  function onTap(){
-    const now = performance.now();
-
-    // first tap primes only
-    if (lastTap === null){
-      lastTap = now;
-      baseline = INIT_BASELINE;
-      render("calibrating");
-      return;
+      font-size: clamp(48px, 9vw, 86px);
+      font-weight:600;
+      letter-spacing:-0.015em;
+      color:var(--text);
+      margin:8px 0 22px;
     }
 
-    const dt = now - lastTap;
-    lastTap = now;
-
-    // anti-spam: too fast => ignore fully (does not update baseline, does not update score)
-    if (dt < MIN_DT){
-      render("too fast (ignored)");
-      return;
-    }
-
-    // ignore extremely long pauses for baseline learning, but still treat as an interval for scoring
-    const base = baseline ?? INIT_BASELINE;
-
-    // compute deviation vs current baseline
-    const dev = deviation(dt, base);
-
-    // score update (bounded)
-    let s = remap(devToRawScore(dev));
-    score = clamp(s, EPS, 1 - EPS);
-
-    // meta stability: high when dev is low (smoothed)
-    const instantStability = clamp(1 - (dev / 1.2), 0, 1); // 1.2 ~ "very off"
-    metaStability = (1 - META_ALPHA) * metaStability + META_ALPHA * instantStability;
-
-    // baseline update guarded:
-    // - only if dt is not crazy long
-    // - only if dt is within guard band so outliers can't re-anchor
-    if (dt <= MAX_DT){
-      const ratio = dt / base;
-      const within = (ratio >= (1 - GUARD)) && (ratio <= (1 + GUARD));
-      if (within){
-        baseline = (1 - EMA_ALPHA) * base + EMA_ALPHA * dt;
-      } else {
-        baseline = base; // explicit no-change
-      }
-    } else {
-      baseline = base; // explicit no-change
-    }
-
-    // count only "valid intervals" (non-spam). Long pauses still count as intervals.
-    validIntervals += 1;
-
-    // message: keep minimal; no debug spam
-    if (validIntervals < CAL_TAPS){
-      render(`calibrating (${CAL_TAPS - validIntervals} more)`);
-      return;
-    }
-
-    // optional: show a compact coaching hint derived from stability only
-    let hint = "";
-    if (metaStability > 0.78) hint = "stable";
-    else if (metaStability < 0.35) hint = "unstable";
-    else hint = "adjusting";
-
-    render(hint);
-  }
-
-  // iOS: prevent selection/zoom quirks
-  tapBtn.addEventListener('touchstart', (e) => { e.preventDefault(); onTap(); }, {passive:false});
-  tapBtn.addEventListener('click',      (e) => { e.preventDefault(); onTap(); });
-
-  resetBtn.addEventListener('touchstart', (e) => { e.preventDefault(); reset(); }, {passive:false});
-  resetBtn.addEventListener('click',      (e) => { e.preventDefault(); reset(); });
-
-  reset();
-})();
-</script>
-</body>
-</html>
+    .
