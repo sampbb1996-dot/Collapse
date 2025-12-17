@@ -8,7 +8,10 @@
         content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 
   <style>
-    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
 
     html, body {
       margin: 0;
@@ -37,3 +40,103 @@
     }
 
     .btn {
+      display: block;
+      margin: 12px auto;
+      padding: 18px 0;
+      width: 220px;
+      font-size: 22px;
+      background: #eee;
+      color: #000;
+      border-radius: 999px;
+    }
+
+    .hint {
+      margin-top: 18px;
+      font-size: 14px;
+      opacity: 0.85;
+    }
+  </style>
+</head>
+<body>
+
+<div class="box">
+  <div id="value">0.0%</div>
+  <div id="tap" class="btn">TAP</div>
+  <div id="reset" class="btn">RESET</div>
+  <div class="hint">Relative timing deviation</div>
+</div>
+
+<script>
+  // -----------------------------
+  // STATE
+  // -----------------------------
+  let lastTap = null;
+  let expectedInterval = null;
+
+  // bounded deviation signal [0–100]
+  let deviation = 0;
+
+  // tuning parameters
+  const alpha = 0.25;   // smoothing
+  const beta  = 0.05;   // expectation learning rate
+  const scale = 100;    // maps relative deviation to %
+
+  const valueEl = document.getElementById("value");
+  const tapEl = document.getElementById("tap");
+  const resetEl = document.getElementById("reset");
+
+  function clamp(v) {
+    return Math.max(0, Math.min(100, v));
+  }
+
+  function render() {
+    valueEl.textContent = `${deviation.toFixed(1)}%`;
+  }
+
+  // -----------------------------
+  // INTERACTION
+  // -----------------------------
+  tapEl.addEventListener("touchend", e => {
+    e.preventDefault();
+
+    const now = performance.now();
+
+    if (lastTap !== null) {
+      const interval = (now - lastTap) / 1000;
+
+      if (expectedInterval === null) {
+        expectedInterval = interval;
+      } else {
+        // slowly learn expected rhythm
+        expectedInterval =
+          (1 - beta) * expectedInterval + beta * interval;
+
+        // absolute relative deviation
+        const raw =
+          Math.abs(interval - expectedInterval) / expectedInterval;
+
+        const percent = raw * scale;
+
+        // smooth + clamp
+        deviation =
+          clamp(alpha * percent + (1 - alpha) * deviation);
+      }
+    }
+
+    lastTap = now;
+    render();
+  }, { passive: false });
+
+  resetEl.addEventListener("touchend", e => {
+    e.preventDefault();
+    lastTap = null;
+    expectedInterval = null;
+    deviation = 0;
+    render();
+  }, { passive: false });
+
+  render();
+</script>
+
+</body>
+</html>
