@@ -2,13 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Collapse — Relative %</title>
+  <title>Collapse — Relative Timing Signal</title>
 
   <meta name="viewport"
         content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 
   <style>
-    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
 
     html, body {
       margin: 0;
@@ -50,7 +53,7 @@
     .hint {
       margin-top: 18px;
       font-size: 14px;
-      opacity: 0.9;
+      opacity: 0.85;
     }
   </style>
 </head>
@@ -60,24 +63,33 @@
   <div id="value">0%</div>
   <div id="tap" class="btn">TAP</div>
   <div id="reset" class="btn">RESET</div>
-  <div class="hint">Relative stability</div>
+  <div class="hint">Relative temporal stability</div>
 </div>
 
 <script>
+  // -----------------------------
+  // STATE
+  // -----------------------------
   let lastTap = null;
   let lastInterval = null;
 
-  let score = 0; // relative %, centered at 0
+  // relative instability signal (percent)
+  let instability = 0;
 
   const valueEl = document.getElementById("value");
   const tapEl = document.getElementById("tap");
   const resetEl = document.getElementById("reset");
 
+  // -----------------------------
+  // RENDER
+  // -----------------------------
   function render() {
-    const rounded = Math.round(score);
-    valueEl.textContent = `${rounded}%`;
+    valueEl.textContent = `${Math.round(instability)}%`;
   }
 
+  // -----------------------------
+  // INTERACTION
+  // -----------------------------
   tapEl.addEventListener("touchend", e => {
     e.preventDefault();
 
@@ -87,11 +99,14 @@
       const interval = (now - lastTap) / 1000;
 
       if (lastInterval !== null) {
-        const deviation = interval - lastInterval;
+        // relative deviation (signed)
+        const deviation = (interval - lastInterval) / lastInterval;
 
-        // relative adjustment (self-scaling)
-        score += (-deviation * 100);
-        score *= 0.9; // natural decay, keeps it relative
+        // update instability
+        instability += deviation * 100;
+
+        // decay keeps it relative, not cumulative
+        instability *= 0.85;
       }
 
       lastInterval = interval;
@@ -103,9 +118,9 @@
 
   resetEl.addEventListener("touchend", e => {
     e.preventDefault();
-    score = 0;
     lastTap = null;
     lastInterval = null;
+    instability = 0;
     render();
   }, { passive: false });
 
