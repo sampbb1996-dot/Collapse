@@ -1,105 +1,93 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8" />
-<title>Persistent Structure</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Structure</title>
 <style>
-  html, body {
+  body {
     margin: 0;
-    padding: 0;
-    background: #000;
-    width: 100%;
-    height: 100%;
+    background: black;
+    color: white;
+    height: 100vh;
     overflow: hidden;
-    touch-action: manipulation;
-    user-select: none;
     font-family: system-ui, sans-serif;
   }
-
-  #stage {
-    position: relative;
-    width: 100%;
-    height: 100%;
-  }
-
-  #square {
+  #indicator {
     position: absolute;
-    width: 80px;
-    height: 80px;
-    background: #fff;
-    border-radius: 14px;
-    top: 50%;
+    top: 40%;
     left: 50%;
     transform: translate(-50%, -50%);
-    opacity: 0;
-    transition: opacity 120ms linear;
+    width: 80px;
+    height: 80px;
+    background: white;
+    display: none;
   }
-
-  #reset {
+  #controls {
     position: absolute;
-    bottom: 32px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 14px 28px;
-    border-radius: 24px;
+    bottom: 20px;
+    width: 100%;
+    text-align: center;
+  }
+  button {
+    margin: 4px;
+    padding: 10px 18px;
     background: #222;
-    color: #fff;
+    color: white;
     border: none;
-    font-size: 16px;
+    border-radius: 20px;
   }
 </style>
 </head>
 <body>
 
-<div id="stage">
-  <div id="square"></div>
-  <button id="reset">reset</button>
+<div id="indicator"></div>
+
+<div id="controls">
+  <button onclick="mode=0">observe</button>
+  <button onclick="mode=1">slideshow</button>
+  <button onclick="mode=2">test</button>
+  <button onclick="reset()">reset</button>
 </div>
 
 <script>
-  let S = 0.6;               // internal structural persistence
-  const decay = 0.015;      // decay per tick
-  const boost = 0.04;       // tap stabilization
-  const noise = 0.03;       // tap noise
-  const tickInterval = 1000;
+  let S = 0.5;
+  const decay = 0.01;
+  const perturb = 0.05;
+  const threshold = 0.5;
 
-  const square = document.getElementById("square");
-  const resetBtn = document.getElementById("reset");
+  let mode = 0; // 0 observe, 1 slideshow, 2 test
+
+  const indicator = document.getElementById("indicator");
 
   function clamp(x) {
     return Math.max(0, Math.min(1, x));
   }
 
   function tick() {
-    // natural decay
     S -= decay;
     S = clamp(S);
-
-    // visibility decision
-    const visible = Math.random() < S;
-    square.style.opacity = visible ? "1" : "0";
+    indicator.style.display = S > threshold ? "block" : "none";
   }
 
-  // auto ticks
-  let timer = setInterval(tick, tickInterval);
+  setInterval(() => {
+    if (mode !== 1) tick();
+  }, 1000);
 
-  // tap anywhere = interact + advance state
   document.body.addEventListener("pointerdown", () => {
-    S += boost;
-    S += (Math.random() * 2 - 1) * noise;
-    S = clamp(S);
-    tick();
+    if (mode === 1) {
+      tick();
+    } else if (mode === 2) {
+      S += (Math.random() < 0.5 ? -1 : 1) * perturb;
+      S = clamp(S);
+      tick();
+    }
   });
 
-  resetBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    S = 0.6;
-    square.style.opacity = "0";
-  });
-
-  // initial state
-  tick();
+  function reset() {
+    S = 0.5;
+    indicator.style.display = "none";
+  }
 </script>
 
 </body>
