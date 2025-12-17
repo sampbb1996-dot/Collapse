@@ -1,52 +1,76 @@
-let bias = 0;           // -1 = _, 0 = balanced, +1 = A
-let state = true;       // true = A present
-const history = [];
-const HISTORY = 10;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Observe</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-const NOISE = 0.05;
-const DECAY = 0.04;
-const THRESHOLD = 0.6;
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #666;
+      font-family: system-ui, sans-serif;
+    }
 
-function detectTendency() {
-  if (history.length < HISTORY) return 0;
+    #square {
+      width: 120px;
+      height: 120px;
+      background: #fff;
+      border-radius: 20px;
+      display: none; /* controlled by state */
+    }
 
-  let sum = history.reduce((a, b) => a + b, 0);
-  let avg = sum / history.length;
+    #label {
+      position: absolute;
+      top: 20px;
+      text-align: center;
+      width: 100%;
+      font-size: 16px;
+      letter-spacing: 1px;
+    }
+  </style>
+</head>
+<body>
 
-  if (avg > 0.7) return +1;
-  if (avg < 0.3) return -1;
-  return 0;
-}
+  <div id="label">mode: observe</div>
+  <div id="square"></div>
 
-function tick() {
-  // baseline: flip state (50/50)
-  state = !state;
+  <script>
+    // --- Core state ---
+    let state = true; // true = A (square present)
+    let stability = 0.9; // bias toward A
+    const TICK_MS = 1000;
 
-  // record
-  history.push(state ? 1 : 0);
-  if (history.length > HISTORY) history.shift();
+    const square = document.getElementById("square");
 
-  // exploratory noise
-  bias += (Math.random() - 0.5) * NOISE;
+    function tick() {
+      // probability that A persists
+      const pStayA = stability;
 
-  // tendency influence
-  const tendency = detectTendency();
-  if (tendency === 0) {
-    // no structure → decay toward balance
-    bias *= (1 - DECAY);
-  } else {
-    bias += tendency * NOISE;
-  }
+      if (state) {
+        // A -> A or _
+        state = Math.random() < pStayA;
+      } else {
+        // _ -> A (reversion toward steady state)
+        state = Math.random() < (1 - pStayA);
+      }
 
-  // clamp
-  bias = Math.max(-1, Math.min(1, bias));
+      square.style.display = state ? "block" : "none";
+    }
 
-  // render decision
-  if (Math.abs(bias) < THRESHOLD) {
-    // balanced → follow oscillation
-    square.style.display = state ? "block" : "none";
-  } else {
-    // biased → dominant attractor
-    square.style.display = bias > 0 ? "block" : "none";
-  }
-}
+    // start in steady state A
+    square.style.display = "block";
+
+    setInterval(tick, TICK_MS);
+  </script>
+
+</body>
+</html>
