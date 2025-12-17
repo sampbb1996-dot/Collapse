@@ -2,16 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Collapse — Relative Timing Drift</title>
+  <title>Collapse — Relative Timing Error</title>
 
   <meta name="viewport"
         content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 
   <style>
-    * {
-      box-sizing: border-box;
-      -webkit-tap-highlight-color: transparent;
-    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
     html, body {
       margin: 0;
@@ -63,34 +60,26 @@
   <div id="value">0.0%</div>
   <div id="tap" class="btn">TAP</div>
   <div id="reset" class="btn">RESET</div>
-  <div class="hint">Signed relative drift</div>
+  <div class="hint">Instantaneous relative timing error</div>
 </div>
 
 <script>
-  // -----------------------------
-  // STATE
-  // -----------------------------
   let lastTap = null;
   let lastInterval = null;
 
-  // signed relative drift (%)
-  let drift = 0;
+  // smoothed relative error (%)
+  let errorEMA = 0;
+  const alpha = 0.25; // memory strength (0 = none, 1 = instant)
 
   const valueEl = document.getElementById("value");
   const tapEl = document.getElementById("tap");
   const resetEl = document.getElementById("reset");
 
-  // -----------------------------
-  // RENDER
-  // -----------------------------
   function render() {
-    const sign = drift > 0 ? "+" : "";
-    valueEl.textContent = `${sign}${drift.toFixed(1)}%`;
+    const sign = errorEMA > 0 ? "+" : "";
+    valueEl.textContent = `${sign}${errorEMA.toFixed(1)}%`;
   }
 
-  // -----------------------------
-  // INTERACTION
-  // -----------------------------
   tapEl.addEventListener("touchend", e => {
     e.preventDefault();
 
@@ -99,15 +88,12 @@
     if (lastTap !== null) {
       const interval = (now - lastTap) / 1000;
 
-      if (lastInterval !== null) {
-        // relative signed deviation
-        const deviation = (interval - lastInterval) / lastInterval;
+      if (lastInterval !== null && lastInterval > 0) {
+        // instantaneous relative error
+        const relError = (interval - lastInterval) / lastInterval * 100;
 
-        // update drift
-        drift += deviation * 100;
-
-        // decay toward zero (keeps sign meaningful)
-        drift *= 0.9;
+        // exponential smoothing (NOT accumulation)
+        errorEMA = alpha * relError + (1 - alpha) * errorEMA;
       }
 
       lastInterval = interval;
@@ -121,7 +107,7 @@
     e.preventDefault();
     lastTap = null;
     lastInterval = null;
-    drift = 0;
+    errorEMA = 0;
     render();
   }, { passive: false });
 
