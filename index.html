@@ -19,7 +19,6 @@ html, body {
 #zone {
   position: fixed;
   inset: 0;
-  touch-action: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -47,50 +46,54 @@ html, body {
 </head>
 
 <body>
-<div id="zone">
+<div id="zone" onclick="tap()">
   <div id="value">0.0000</div>
 </div>
 <button id="reset">reset</button>
 
 <script>
-let x = 0;              // balance state
-let u = 0;              // control input
-const k = 2.5;          // damping (stability)
-let lastT = performance.now();
+let times = [];
+let signal = 0;
+const ALPHA = 0.2;   // smoothing
+const DECAY = 0.98;  // relax toward baseline
 
-function step(t) {
-  const dt = (t - lastT) / 1000;
-  lastT = t;
+function tap() {
+  const t = performance.now();
+  times.push(t);
+  if (times.length < 4) {
+    render(signal *= DECAY);
+    return;
+  }
 
-  // dynamics: ẋ = u - kx
-  x += (u - k * x) * dt;
+  // last three intervals
+  const a = times[times.length - 1] - times[times.length - 2];
+  const b = times[times.length - 2] - times[times.length - 3];
+  const c = times[times.length - 3] - times[times.length - 4];
 
+  // structural consistency (ratio-of-ratios)
+  const r1 = a / b;
+  const r2 = b / c;
+  const error = Math.abs(r1 - r2);
+
+  // smooth + decay toward zero
+  signal = ALPHA * error + (1 - ALPHA) * signal;
+  signal *= DECAY;
+
+  render(signal);
+}
+
+function resetAll() {
+  times = [];
+  signal = 0;
+  render(0);
+}
+
+function render(v) {
   document.getElementById("value").textContent =
-    x.toFixed(4);
-
-  requestAnimationFrame(step);
+    v.toFixed(4);
 }
 
-requestAnimationFrame(step);
-
-const zone = document.getElementById("zone");
-
-zone.addEventListener("touchstart", handle);
-zone.addEventListener("touchmove", handle);
-zone.addEventListener("touchend", () => u = 0);
-
-function handle(e) {
-  const touch = e.touches[0];
-  const rect = zone.getBoundingClientRect();
-  const mid = rect.left + rect.width / 2;
-  u = (touch.clientX - mid) / (rect.width / 2);
-  u = Math.max(-1, Math.min(1, u));
-}
-
-document.getElementById("reset").onclick = () => {
-  x = 0;
-  u = 0;
-};
+document.getElementById("reset").onclick = resetAll;
 </script>
 </body>
 </html>
