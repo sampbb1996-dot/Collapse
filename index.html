@@ -1,101 +1,41 @@
 <!doctype html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <title>Substrate</title>
-  <style>
-    html, body {
-      margin: 0;
-      height: 100%;
-      background: #141414; /* dark mode, not black */
-      overflow: hidden;
-    }
-
-    /* single object, no UI */
-    #dot {
-      position: fixed;
-      left: 50%;
-      top: 50%;
-      transform: translate(-50%, -50%);
-      width: 140px;
-      height: 140px;
-      border-radius: 50%;
-      background: #ff8c1a; /* orange */
-      opacity: 0;          /* continuous presence signal */
-    }
-  </style>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+html,body{margin:0;height:100%;background:#1a1a1a}
+canvas{display:block}
+</style>
 </head>
 <body>
-  <div id="dot"></div>
+<canvas id="c"></canvas>
+<script>
+const c = document.getElementById('c');
+const ctx = c.getContext('2d');
+function resize(){c.width=innerWidth;c.height=innerHeight}
+resize(); addEventListener('resize',resize);
 
-  <script>
-    // Requirements (implemented):
-    // - No buttons, no modes, no text
-    // - Starts unbiased: steady state is 50/50 (centered at 0.5)
-    // - No explicit tick/flash indicator
-    // - Uses persistence-dependent hazard to avoid "stuck forever" without hard caps
-    // - Continuous opacity (not binary), so no event edges
-    // - Fixed internal cadence only (not adaptive)
+// state is a distribution, not a value
+let bias = 0; // steady state = 0 (50/50)
+let variance = 0.15;
 
-    const dot = document.getElementById("dot");
+function step(){
+  const img = ctx.createImageData(c.width,c.height);
+  for(let i=0;i<img.data.length;i+=4){
+    const n = (Math.random()*2-1)*variance + bias;
+    const v = Math.max(0,Math.min(255,128 + n*128));
+    img.data[i]=v; img.data[i+1]=v*0.8; img.data[i+2]=v*0.4;
+    img.data[i+3]=255;
+  }
+  ctx.putImageData(img,0,0);
 
-    // Continuous state in [0,1], unbiased around 0.5
-    let x = 0.5;
+  // slow reversion to neutrality
+  bias *= 0.995;
+  variance += (0.15-variance)*0.002;
 
-    // Directional "run" (how long we've been drifting mostly one way)
-    let run = 0;
-
-    // Internal cadence (not a cue; no UI tick)
-    const STEP_MS = 120;
-
-    // Symmetric random walk around 0.5
-    const NOISE = 0.06;
-
-    // Pull back to neutrality (keeps 50/50 as steady state)
-    const DRIFT = 0.02;
-
-    // Persistence hazard: the longer it stays on one side, the more likely it flips direction
-    const HAZARD_SLOPE = 0.010; // soft, not a hard cap
-    const HAZARD_MAX = 0.45;
-
-    // Current drift direction (+1 or -1), symmetric init
-    let dir = Math.random() < 0.5 ? -1 : 1;
-
-    function clamp01(v) {
-      return Math.max(0, Math.min(1, v));
-    }
-
-    function step() {
-      // Track whether we're staying on one side of 0.5 (presence vs absence region)
-      const side = x >= 0.5 ? 1 : -1;
-      const dirSide = dir;
-
-      // If direction keeps pushing the same side, increase run; else reset
-      if (side === dirSide) run++;
-      else run = 0;
-
-      // Hazard rises with persistence (prevents indefinite freezing without hard caps)
-      const hazard = Math.min(HAZARD_MAX, run * HAZARD_SLOPE);
-      if (Math.random() < hazard) {
-        dir *= -1;
-        run = 0;
-      }
-
-      // Symmetric update: noise + drift-to-center + small directional push
-      const noise = (Math.random() * 2 - 1) * NOISE;
-      const drift = -(x - 0.5) * DRIFT;
-      const push = dir * 0.01;
-
-      x = clamp01(x + noise + drift + push);
-
-      // Render: opacity IS the state (no animation cues, no on/off edges)
-      dot.style.opacity = String(x);
-
-      setTimeout(step, STEP_MS);
-    }
-
-    step();
-  </script>
+  requestAnimationFrame(step);
+}
+step();
+</script>
 </body>
 </html>
