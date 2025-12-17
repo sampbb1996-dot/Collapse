@@ -2,9 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Collapse – Max Suppression</title>
+  <title>Collapse — Non-Closure</title>
 
-  <!-- strongest viewport lock allowed -->
   <meta name="viewport"
         content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no">
 
@@ -25,7 +24,6 @@
       font-family: Arial, sans-serif;
       color: white;
 
-      /* kill text + zoom behaviors */
       user-select: none;
       -webkit-user-select: none;
       -webkit-text-size-adjust: 100%;
@@ -34,7 +32,7 @@
     }
 
     .box {
-      background: rgba(0,0,0,0.4);
+      background: rgba(0,0,0,0.45);
       padding: 32px;
       border-radius: 14px;
       text-align: center;
@@ -44,7 +42,6 @@
     #value {
       font-size: 64px;
       margin-bottom: 24px;
-      pointer-events: none;
     }
 
     .btn {
@@ -56,41 +53,35 @@
       background: #eee;
       color: #000;
       border-radius: 999px;
-
-      /* explicit hit target */
       min-height: 56px;
-      line-height: 1;
-
-      /* remove focus semantics */
-      outline: none;
     }
 
     .hint {
       margin-top: 18px;
       font-size: 14px;
       opacity: 0.9;
-      pointer-events: none;
     }
   </style>
 </head>
 <body>
 
   <div class="box">
-    <div id="value">0.500</div>
+    <div id="value">—</div>
 
     <div id="tap" class="btn">TAP</div>
     <div id="reset" class="btn">RESET</div>
 
-    <div class="hint">If this is pink, it updated.</div>
+    <div class="hint">Nothing reaches certainty.</div>
   </div>
 
   <script>
-    // gesture suppression (best-effort only)
+    // suppress gesture zoom (best effort)
     ['gesturestart','gesturechange','gestureend'].forEach(ev =>
       document.addEventListener(ev, e => e.preventDefault(), { passive: false })
     );
 
-    let value = 0.5;
+    // confidence state (not probability)
+    let value = 0.37;          // interior seed, not midpoint
     let lastTap = null;
     let lastInterval = null;
 
@@ -98,7 +89,9 @@
     const tapEl = document.getElementById("tap");
     const resetEl = document.getElementById("reset");
 
-    const clamp = v => Math.max(0, Math.min(1, v));
+    function render() {
+      valueEl.textContent = value.toFixed(3);
+    }
 
     tapEl.addEventListener("touchend", e => {
       e.preventDefault();
@@ -110,24 +103,32 @@
 
         if (lastInterval !== null) {
           const deviation = Math.abs(interval - lastInterval);
-          value += (0.05 - deviation);
+
+          // base signal
+          const delta = (0.05 - deviation);
+
+          // epistemic damping: extremes resist movement
+          const openness = 1 - Math.abs(2 * value - 1);
+
+          value += delta * openness * 0.8;
         }
 
         lastInterval = interval;
       }
 
       lastTap = now;
-      value = clamp(value);
-      valueEl.textContent = value.toFixed(3);
+      render();
     }, { passive: false });
 
     resetEl.addEventListener("touchend", e => {
       e.preventDefault();
-      value = 0.5;
+      value = 0.37;
       lastTap = null;
       lastInterval = null;
-      valueEl.textContent = "0.500";
+      render();
     }, { passive: false });
+
+    render();
   </script>
 
 </body>
