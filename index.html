@@ -1,117 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+/>
+<title>Timing Reader</title>
+
+<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: #000;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 18px;
+}
+
+#reader {
+  width: 80%;
+  padding: 28px 0;
+  text-align: center;
+  font-size: 56px;
+  background: #111;
+  border-radius: 22px;
+  color: #ffffff;
+}
+
+button {
+  width: 80%;
+  padding: 18px 0;
+  font-size: 22px;
+  background: #111;
+  color: #fff;
+  border: none;
+  border-radius: 18px;
+}
+</style>
+</head>
+
+<body>
+<div class="app">
+  <div id="reader">0.500</div>
+  <button id="tapBtn">TAP</button>
+  <button id="endBtn">× END</button>
+</div>
+
 <script>
-document.addEventListener("DOMContentLoaded", () => {
-
-/* =========================
-   CONFIG (LOCKED)
-========================= */
-const DISPLAY_ALPHA = 0.88;
-const FAST_WINDOW = 8;
-const SLOW_ALPHA = 0.02;
-
-const VAR_FLOOR = 6;
-const VAR_CEIL  = 500;
-
 /* =========================
    STATE
 ========================= */
-let sessionActive = true;
-
-let lastTapTime = null;
-let fastIntervals = [];
-
-let slowMean = null;
-let displayValue = 0.5;
-let lastDisplay = 0.5;
+let active = true;
+let lastTap = null;
+let value = 0.5;
+let lastValue = 0.5;
 
 const reader = document.getElementById("reader");
+const tapBtn = document.getElementById("tapBtn");
+const endBtn = document.getElementById("endBtn");
 
-/* =========================
-   HELPERS
-========================= */
-const clamp = (v,a,b) => Math.max(a, Math.min(b,v));
-const mean  = a => a.reduce((x,y)=>x+y,0) / a.length;
-
-/* =========================
-   TAP
-========================= */
-window.tap = function () {
-  if (!sessionActive || !reader) return;
-
-  const now = performance.now();
-
-  if (lastTapTime === null) {
-    lastTapTime = now;
-    paint();
-    return;
-  }
-
-  const delta = now - lastTapTime;
-  lastTapTime = now;
-
-  fastIntervals.push(delta);
-  if (fastIntervals.length > FAST_WINDOW) fastIntervals.shift();
-
-  if (fastIntervals.length < 4) {
-    paint();
-    return;
-  }
-
-  const fastMean = mean(fastIntervals);
-
-  if (slowMean === null || !isFinite(slowMean)) {
-    slowMean = fastMean;
-  } else {
-    slowMean = (1 - SLOW_ALPHA) * slowMean + SLOW_ALPHA * fastMean;
-  }
-
-  const error = Math.abs(fastMean - slowMean);
-
-  const variance =
-    mean(fastIntervals.map(d => (d - fastMean) ** 2));
-
-  const stability =
-    1 - clamp(
-      (variance - VAR_FLOOR) / (VAR_CEIL - VAR_FLOOR),
-      0, 1
-    );
-
-  const alignment =
-    slowMean > 0
-      ? 1 - clamp(error / slowMean, 0, 1)
-      : 0;
-
-  const estimate = stability * alignment;
-
-  displayValue =
-    DISPLAY_ALPHA * displayValue +
-    (1 - DISPLAY_ALPHA) * estimate;
-
-  paint();
-};
-
-/* =========================
-   END
-========================= */
-window.endSession = function () {
-  sessionActive = false;
-};
-
-/* =========================
-   DISPLAY
-========================= */
-function paint() {
-  if (!reader || !isFinite(displayValue)) return;
-
-  const d = displayValue - lastDisplay;
-
-  reader.textContent = displayValue.toFixed(3);
-
-  if (d > 0)      reader.style.color = "#2ecc71";
-  else if (d < 0) reader.style.color = "#e74c3c";
-  else            reader.style.color = "#ffffff";
-
-  lastDisplay = displayValue;
-}
-
-});
-</script>
+/*
