@@ -2,133 +2,248 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Binary Structure</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Structural Tap</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+
   <style>
     html, body {
       margin: 0;
-      padding: 0;
       height: 100%;
+      overflow: hidden;
       background: #000;
       color: #fff;
       font-family: system-ui, -apple-system, sans-serif;
-      overflow: hidden;
+      -webkit-text-size-adjust: 100%;
       touch-action: manipulation;
+      user-select: none;
     }
 
-    #tapArea {
-      position: absolute;
+    .app {
+      position: fixed;
       inset: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* tap zone */
+    #zone {
+      flex: 1;
+      position: relative;
       display: flex;
       align-items: center;
       justify-content: center;
     }
 
-    #object {
-      padding: 40px 60px;
-      border-radius: 24px;
-      background: #111;
-      font-size: 48px;
+    /* subtle left/right hint (not required) */
+    #zone::before, #zone::after {
+      content: "";
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 50%;
+      opacity: 0.04;
+      pointer-events: none;
+    }
+    #zone::before { left: 0; background: #fff; }
+    #zone::after  { right: 0; background: #fff; opacity: 0.02; }
+
+    /* object */
+    #objWrap {
+      pointer-events: none;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-items: center;
+    }
+
+    #obj {
+      width: 70px;
+      height: 70px;
+      border-radius: 14px;
+      background: #fff;
       opacity: 0;
-      transition: opacity 120ms linear;
+      transform: scale(0.98);
+      transition: opacity 120ms linear, transform 120ms linear;
+    }
+    #obj.on {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    #hud {
+      position: fixed;
+      top: 16px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 16px;
+      opacity: 0.65;
       pointer-events: none;
     }
 
-    #object.visible {
-      opacity: 1;
+    #resetBar {
+      padding: 16px;
     }
 
     #reset {
-      position: absolute;
-      bottom: 24px;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 16px 48px;
+      width: 100%;
+      padding: 16px 0;
       border-radius: 999px;
+      border: none;
       background: #222;
-      font-size: 18px;
-      user-select: none;
-    }
-
-    #stats {
-      position: absolute;
-      top: 16px;
-      left: 50%;
-      transform: translateX(-50%);
-      font-size: 14px;
-      opacity: 0.6;
+      color: #fff;
+      font-size: 1rem;
     }
   </style>
 </head>
+
 <body>
+  <div class="app">
+    <div id="hud">correct: 0% · mode: L</div>
 
-  <div id="tapArea"></div>
+    <div id="zone">
+      <div id="objWrap">
+        <div id="obj"></div>
+      </div>
+    </div>
 
-  <div id="object">■</div>
+    <div id="resetBar">
+      <button id="reset">reset</button>
+    </div>
+  </div>
 
-  <div id="stats">correct: 0%</div>
+  <script>
+    // ---- Core idea ----
+    // taps are discrete symbols, derived only from *where* you tap (left/right),
+    // not *when* you tap.
+    //
+    // Binary state: object exists (ON) iff the last-window structure satisfies
+    // the current constraint.
+    //
+    // "Correctness %" is telemetry: fraction of taps that resulted in ON.
+    //
+    // As correctness -> 0%, constraints tighten (taps become more decisive).
 
-  <div id="reset">reset</div>
+    const zone = document.getElementById("zone");
+    const obj = document.getElementById("obj");
+    const hud = document.getElementById("hud");
+    const resetBtn = document.getElementById("reset");
 
-<script>
-(() => {
-  let lastTap = null;       // structural memory
-  let exists = false;      // binary state
+    let touching = false;
 
-  let totalTaps = 0;       // telemetry only
-  let correctTaps = 0;     // telemetry only
+    // symbol history: 'L' or 'R'
+    let hist = [];
 
-  const object = document.getElementById('object');
-  const stats  = document.getElementById('stats');
-  const tapArea = document.getElementById('tapArea');
-  const resetBtn = document.getElementById('reset');
+    // binary existence state
+    let alive = false;
 
-  function updateObject() {
-    object.classList.toggle('visible', exists);
-  }
+    // telemetry
+    let totalTaps = 0;
+    let correctTaps = 0;
 
-  function updateStats() {
-    if (totalTaps === 0) {
-      stats.textContent = 'correct: 0%';
-      return;
+    function pct() {
+      return totalTaps === 0 ? 0 : (correctTaps / totalTaps) * 100;
     }
-    const pct = Math.round((correctTaps / totalTaps) * 100);
-    stats.textContent = `correct: ${pct}%`;
-  }
 
-  function handleTap() {
-    const currentTap = true; // tap is a discrete event, no value
-
-    totalTaps++;
-
-    // structural rule: no identical repetition
-    if (lastTap === currentTap) {
-      exists = false;
-    } else {
-      exists = true;
-      correctTaps++;
+    function modeFromPct(p) {
+      // discrete tightening (no smooth weighting)
+      // L = lenient, M = medium, S = strict
+      if (p < 30) return "S";
+      if (p < 70) return "M";
+      return "L";
     }
 
-    lastTap = currentTap;
+    function last(n) {
+      if (hist.length < n) return null;
+      return hist.slice(hist.length - n);
+    }
 
-    updateObject();
-    updateStats();
-  }
+    // ---- Structural rules (no timing) ----
+    // L (lenient): must not be stuck (no 3-in-a-row of same symbol)
+    // M (medium): last 4 must contain both symbols AND have exactly 2 runs (XXYY or YYXX allowed)
+    // S (strict): last 4 must be perfectly alternating (LRLR or RLRL)
+    function passesRule(mode) {
+      if (mode === "L") {
+        const t = last(3);
+        if (!t) return true; // not enough history => forgiving
+        return !(t[0] === t[1] && t[1] === t[2]);
+      }
 
-  function reset() {
-    lastTap = null;
-    exists = false;
-    totalTaps = 0;
-    correctTaps = 0;
-    updateObject();
-    updateStats();
-  }
+      if (mode === "M") {
+        const t = last(4);
+        if (!t) return true;
+        const hasL = t.includes("L");
+        const hasR = t.includes("R");
+        if (!(hasL && hasR)) return false;
 
-  tapArea.addEventListener('pointerdown', handleTap);
-  resetBtn.addEventListener('pointerdown', reset);
+        // count runs
+        let runs = 1;
+        for (let i = 1; i < t.length; i++) {
+          if (t[i] !== t[i - 1]) runs++;
+        }
+        // exactly 2 runs means patterns like LLRR or RRLL
+        return runs === 2;
+      }
 
-})();
-</script>
+      // mode === "S"
+      const t = last(4);
+      if (!t) return true;
+      // perfect alternation
+      for (let i = 1; i < t.length; i++) {
+        if (t[i] === t[i - 1]) return false;
+      }
+      return true;
+    }
 
+    function updateUI(mode) {
+      obj.classList.toggle("on", alive);
+      const p = Math.round(pct());
+      hud.textContent = `correct: ${p}% · mode: ${mode}`;
+    }
+
+    function tapAt(clientX) {
+      const rect = zone.getBoundingClientRect();
+      const mid = rect.left + rect.width / 2;
+      const sym = clientX < mid ? "L" : "R";
+
+      hist.push(sym);
+      if (hist.length > 32) hist.shift();
+
+      totalTaps++;
+
+      const mode = modeFromPct(pct());
+      alive = passesRule(mode);
+
+      if (alive) correctTaps++;
+
+      updateUI(mode);
+    }
+
+    // One tap per release (prevents press-and-hold weirdness)
+    zone.addEventListener("pointerdown", (e) => {
+      touching = true;
+    });
+
+    zone.addEventListener("pointerup", (e) => {
+      if (!touching) return;
+      touching = false;
+      tapAt(e.clientX);
+    });
+
+    zone.addEventListener("pointercancel", () => {
+      touching = false;
+    });
+
+    resetBtn.addEventListener("pointerdown", () => {
+      hist = [];
+      alive = false;
+      totalTaps = 0;
+      correctTaps = 0;
+      updateUI("L");
+    });
+
+    // init
+    updateUI("L");
+  </script>
 </body>
 </html>
