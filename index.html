@@ -4,202 +4,249 @@
 <meta charset="UTF-8" />
 <meta
   name="viewport"
-  content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+  content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
 />
 
 <title>CORE — Collapse Timing</title>
 
 <style>
-/* =========================
-   GLOBAL HARD BLOCKS
-   ========================= */
-* {
-  -webkit-tap-highlight-color: transparent !important;
-  -webkit-touch-callout: none !important;
-  -webkit-user-select: none !important;
-  user-select: none !important;
-  box-sizing: border-box;
-}
+  * {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
+  }
 
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #000;
-  color: #fff;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
-  overflow: hidden;
-  touch-action: manipulation;
-}
+  body {
+    margin: 0;
+    background: #000;
+    color: #fff;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+  }
 
-/* =========================
-   LAYOUT
-   ========================= */
-.app {
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 22px;
-}
+  .container {
+    width: 92%;
+    max-width: 420px;
+    text-align: center;
+  }
 
-.display {
-  width: 88%;
-  height: 90px;
-  border-radius: 18px;
-  background: #0e1b2f;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 42px;
-  letter-spacing: 0.5px;
-}
+  .display {
+    background: #111;
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 16px;
+    font-size: 32px;
+    letter-spacing: 0.04em;
+  }
 
-button {
-  width: 88%;
-  height: 64px;
-  border-radius: 18px;
-  border: none;
-  background: #1f1f1f;
-  color: #fff;
-  font-size: 18px;
-  letter-spacing: 1px;
-}
+  .sub {
+    font-size: 14px;
+    opacity: 0.6;
+    margin-top: 6px;
+  }
 
-button:active {
-  transform: scale(0.98);
-}
+  button {
+    width: 100%;
+    padding: 18px;
+    margin: 10px 0;
+    font-size: 18px;
+    border-radius: 14px;
+    border: none;
+    background: #1c1c1c;
+    color: white;
+  }
 
-button.secondary {
-  background: #121212;
-  opacity: 0.7;
-}
+  button:active {
+    background: #2a2a2a;
+  }
 
-/* =========================
-   STATE COLORING
-   ========================= */
-.stable {
-  background: #0e1b2f;
-}
+  button:disabled {
+    opacity: 0.4;
+  }
 
-.collapsing {
-  background: #2f1b0e;
-}
-
-.collapsed {
-  background: #2f0e0e;
-}
+  .ceiling {
+    margin-top: 12px;
+    font-size: 12px;
+    opacity: 0.5;
+  }
 </style>
 </head>
 
 <body>
-<div class="app">
+<div class="container">
 
-  <div id="display" class="display stable">—</div>
+  <div class="display" id="mainDisplay">READY</div>
+  <div class="sub" id="subDisplay">Tap START to begin</div>
 
-  <button id="tap">TAP</button>
-  <button id="start" class="secondary">START</button>
-  <button id="end" class="secondary">× END</button>
+  <button id="tapBtn" disabled>TAP</button>
+  <button id="startBtn">START</button>
+  <button id="endBtn">× END</button>
+
+  <div class="ceiling" id="ceilingInfo"></div>
 
 </div>
 
 <script>
 /* =========================
    CORE STATE
-   ========================= */
-let running = false;
-let lastTap = null;
-let samples = [];
-let startTime = null;
+========================= */
 
-const IMPULSE_WINDOW = 340; // ms — widened to avoid iOS micro-bounce
-const MAX_SAMPLES = 20;
+let active = false;
+let locked = false;
 
-/* =========================
-   HELPERS
-   ========================= */
-function mean(arr) {
-  return arr.reduce((a, b) => a + b, 0) / arr.length;
-}
+let targetInterval = 600; // ms
+let windowSize = 120;     // ms (adaptive)
+let ceilingWindow = 45;   // corpus ceiling
 
-function variance(arr) {
-  const m = mean(arr);
-  return mean(arr.map(x => (x - m) ** 2));
-}
+let lastTargetTime = null;
+let lastTapTime = null;
 
-function clamp(n, min, max) {
-  return Math.min(max, Math.max(min, n));
-}
+let stabilityScore = 0;
+let tapCount = 0;
+
+let runLog = [];
 
 /* =========================
-   DISPLAY UPDATE
-   ========================= */
-function updateDisplay() {
-  if (samples.length < 2) {
-    display.textContent = "—";
-    display.className = "display stable";
-    return;
-  }
+   UTILS
+========================= */
 
-  const v = variance(samples);
-  const signal = clamp(1 / (1 + v), 0, 1);
+function now() {
+  return performance.now();
+}
 
-  display.textContent = signal.toFixed(3);
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
 
-  if (signal > 0.75) {
-    display.className = "display stable";
-  } else if (signal > 0.4) {
-    display.className = "display collapsing";
+/* =========================
+   GAME LOGIC
+========================= */
+
+function startGame() {
+  active = true;
+  locked = false;
+
+  tapCount = 0;
+  stabilityScore = 0;
+  windowSize = 120;
+  runLog = [];
+
+  lastTargetTime = now();
+
+  updateUI("RUNNING", "Find the rhythm");
+  tapBtn.disabled = false;
+
+  tick();
+}
+
+function tick() {
+  if (!active || locked) return;
+
+  lastTargetTime += targetInterval;
+
+  setTimeout(tick, targetInterval);
+}
+
+function handleTap() {
+  if (!active || locked) return;
+
+  const t = now();
+  const delta = Math.abs(t - lastTargetTime);
+
+  const hit = delta <= windowSize;
+
+  tapCount++;
+
+  if (hit) {
+    stabilityScore++;
+    windowSize = clamp(windowSize * 0.93, ceilingWindow, 200);
   } else {
-    display.className = "display collapsed";
+    stabilityScore--;
+    windowSize = clamp(windowSize * 1.08, ceilingWindow, 240);
   }
+
+  runLog.push({
+    tap: tapCount,
+    delta: Math.round(delta),
+    window: Math.round(windowSize),
+    hit
+  });
+
+  updateUI(
+    hit ? "✓" : "✕",
+    `Δ ${Math.round(delta)} ms | window ±${Math.round(windowSize)}`
+  );
+
+  checkTerminal();
+}
+
+function checkTerminal() {
+  if (windowSize <= ceilingWindow && stabilityScore >= 12) {
+    collapse("CEILING STABLE");
+  }
+
+  if (stabilityScore <= -6) {
+    collapse("UNSTABLE");
+  }
+}
+
+function collapse(reason) {
+  locked = true;
+  active = false;
+
+  tapBtn.disabled = true;
+
+  updateUI("COLLAPSE", reason);
+
+  exportRun();
+}
+
+/* =========================
+   EXPORT
+========================= */
+
+function exportRun() {
+  const data = {
+    taps: tapCount,
+    finalWindow: Math.round(windowSize),
+    stabilityScore,
+    log: runLog
+  };
+
+  console.log("CORE RUN:", data);
+}
+
+/* =========================
+   UI
+========================= */
+
+function updateUI(main, sub) {
+  mainDisplay.textContent = main;
+  subDisplay.textContent = sub;
+  ceilingInfo.textContent = `Ceiling window: ±${ceilingWindow} ms`;
 }
 
 /* =========================
    EVENTS
-   ========================= */
-tap.onclick = () => {
-  if (!running) return;
+========================= */
 
-  const now = performance.now();
+tapBtn.addEventListener("click", handleTap);
 
-  if (lastTap !== null) {
-    const delta = now - lastTap;
+startBtn.addEventListener("click", startGame);
 
-    // Ignore accidental micro-taps
-    if (delta < IMPULSE_WINDOW) return;
-
-    samples.push(delta);
-    if (samples.length > MAX_SAMPLES) samples.shift();
-
-    updateDisplay();
-  }
-
-  lastTap = now;
-};
-
-start.onclick = () => {
-  running = true;
-  samples = [];
-  lastTap = null;
-  startTime = performance.now();
-  display.textContent = "—";
-  display.className = "display stable";
-};
-
-end.onclick = () => {
-  running = false;
-};
+endBtn.addEventListener("click", () => {
+  if (active && !locked) collapse("MANUAL END");
+});
 
 /* =========================
-   SAFETY: BLOCK ZOOM / DBL TAP
-   ========================= */
-let lastTouchEnd = 0;
-document.addEventListener("touchend", e => {
-  const now = Date.now();
-  if (now - lastTouchEnd <= 300) e.preventDefault();
-  lastTouchEnd = now;
-}, { passive: false });
+   INIT
+========================= */
+
+updateUI("READY", "Temporal precision task");
 </script>
 </body>
 </html>
