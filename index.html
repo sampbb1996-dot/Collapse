@@ -3,15 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <title>Relative Timing</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 
   <style>
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       margin: 0;
-      height: 100vh;
+      min-height: 100vh;
       background: #000;
       color: #fff;
-      font-family: system-ui, sans-serif;
+      font-family: system-ui, -apple-system, sans-serif;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -19,22 +23,24 @@
 
     .card {
       background: #111;
-      padding: 32px;
+      padding: 32px 24px;
       border-radius: 24px;
-      width: 280px;
+      width: min(90vw, 320px);
       text-align: center;
     }
 
     .value {
-      font-size: 48px;
+      font-size: 3rem;
+      line-height: 1.2;
       margin-bottom: 24px;
+      font-variant-numeric: tabular-nums;
     }
 
     button {
       width: 100%;
-      padding: 16px;
+      padding: 14px 0;
       margin: 8px 0;
-      font-size: 18px;
+      font-size: 1rem;
       border-radius: 999px;
       border: none;
       background: #222;
@@ -43,8 +49,8 @@
 
     .label {
       margin-top: 12px;
+      font-size: 0.75rem;
       opacity: 0.4;
-      font-size: 14px;
     }
   </style>
 </head>
@@ -84,9 +90,7 @@
         : ALPHA * interval + (1 - ALPHA) * mean;
 
       windowVals.push(mean);
-      if (windowVals.length > MAX_WINDOW) {
-        windowVals.shift();
-      }
+      if (windowVals.length > MAX_WINDOW) windowVals.shift();
 
       render(mean / 1000);
     }
@@ -98,9 +102,9 @@
       render(0);
     }
 
-    function render(value) {
+    function render(v) {
       document.getElementById("display").textContent =
-        value.toFixed(4);
+        v.toFixed(4);
     }
   </script>
 </body>
