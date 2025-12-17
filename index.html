@@ -1,93 +1,174 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Structure</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>3 Modes</title>
 <style>
-  body {
+  html, body {
     margin: 0;
-    background: black;
-    color: white;
-    height: 100vh;
+    height: 100%;
+    background: #000;
     overflow: hidden;
+    touch-action: manipulation;
+    user-select: none;
     font-family: system-ui, sans-serif;
   }
-  #indicator {
-    position: absolute;
-    top: 40%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 80px;
-    height: 80px;
-    background: white;
-    display: none;
-  }
-  #controls {
-    position: absolute;
-    bottom: 20px;
+
+  #modeLabel {
+    position: fixed;
+    top: 18px;
     width: 100%;
     text-align: center;
+    color: #777;
+    font-size: 16px;
+    letter-spacing: 0.2px;
   }
+
+  #indicator {
+    position: fixed;
+    left: 50%;
+    top: 45%;
+    transform: translate(-50%, -50%);
+    width: 90px;
+    height: 90px;
+    background: #fff;
+    border-radius: 18px;
+    display: none; /* present / not present only */
+  }
+
+  #controls {
+    position: fixed;
+    bottom: 22px;
+    left: 0;
+    right: 0;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    padding: 0 16px;
+  }
+
   button {
-    margin: 4px;
-    padding: 10px 18px;
     background: #222;
-    color: white;
+    color: #eee;
     border: none;
-    border-radius: 20px;
+    border-radius: 999px;
+    padding: 14px 18px;
+    font-size: 15px;
+  }
+
+  button.active {
+    background: #444;
   }
 </style>
 </head>
 <body>
 
+<div id="modeLabel"></div>
 <div id="indicator"></div>
 
 <div id="controls">
-  <button onclick="mode=0">observe</button>
-  <button onclick="mode=1">slideshow</button>
-  <button onclick="mode=2">test</button>
-  <button onclick="reset()">reset</button>
+  <button id="btnObserve">observe</button>
+  <button id="btnSlide">slideshow</button>
+  <button id="btnTest">test</button>
+  <button id="btnReset">reset</button>
 </div>
 
 <script>
-  let S = 0.5;
-  const decay = 0.01;
-  const perturb = 0.05;
-  const threshold = 0.5;
+  // --- 3 modes ---
+  // 0 = observe (auto ticks, taps ignored)
+  // 1 = slideshow (no auto ticks, tap advances)
+  // 2 = test (auto ticks, taps add variance + record binary, but DO NOT advance)
+  let mode = 0;
 
-  let mode = 0; // 0 observe, 1 slideshow, 2 test
+  // core state
+  let S = 0.6;                 // 0..1
+  const THRESH = 0.5;
+  const TICK_MS = 1000;
+
+  // evolution
+  const DECAY = 0.02;          // per tick
+  const BASE_NOISE = 0.00;     // keep 0 unless you explicitly want ambient variance
+
+  // test input effects (variance only)
+  const TEST_NOISE = 0.08;
+
+  // optional log (kept but not displayed)
+  const testBits = [];
 
   const indicator = document.getElementById("indicator");
+  const modeLabel = document.getElementById("modeLabel");
+
+  const btnObserve = document.getElementById("btnObserve");
+  const btnSlide   = document.getElementById("btnSlide");
+  const btnTest    = document.getElementById("btnTest");
+  const btnReset   = document.getElementById("btnReset");
 
   function clamp(x) {
     return Math.max(0, Math.min(1, x));
   }
 
-  function tick() {
-    S -= decay;
-    S = clamp(S);
-    indicator.style.display = S > threshold ? "block" : "none";
+  function render() {
+    indicator.style.display = (S > THRESH) ? "block" : "none";
+    modeLabel.textContent =
+      mode === 0 ? "mode: observe" :
+      mode === 1 ? "mode: slideshow" :
+                   "mode: test";
+    btnObserve.classList.toggle("active", mode === 0);
+    btnSlide.classList.toggle("active", mode === 1);
+    btnTest.classList.toggle("active", mode === 2);
   }
 
-  setInterval(() => {
-    if (mode !== 1) tick();
-  }, 1000);
+  function tick() {
+    // fixed-time evolution only
+    S -= DECAY;
+    if (BASE_NOISE !== 0) S += (Math.random() * 2 - 1) * BASE_NOISE;
+    S = clamp(S);
+    render();
+  }
 
-  document.body.addEventListener("pointerdown", () => {
+  // fixed interval scheduler: ONLY runs tick in auto modes
+  setInterval(() => {
+    if (mode === 0 || mode === 2) tick();
+  }, TICK_MS);
+
+  // tap surface (whole screen except buttons)
+  document.body.addEventListener("pointerdown", (e) => {
+    if (e.target.tagName === "BUTTON") return;
+
     if (mode === 1) {
+      // slideshow: tap advances state (this is the only mode where taps change timing)
       tick();
-    } else if (mode === 2) {
-      S += (Math.random() < 0.5 ? -1 : 1) * perturb;
-      S = clamp(S);
-      tick();
+      return;
     }
+
+    if (mode === 2) {
+      // test: tap injects variance + records a binary bit, but DOES NOT advance time
+      const bit = Math.random() < 0.5 ? 0 : 1; // if you later want explicit yes/no, replace this
+      testBits.push(bit);
+
+      S += (Math.random() * 2 - 1) * TEST_NOISE;
+      S = clamp(S);
+      render();
+      return;
+    }
+
+    // observe: taps ignored
   });
 
-  function reset() {
-    S = 0.5;
-    indicator.style.display = "none";
-  }
+  // mode buttons
+  btnObserve.onclick = () => { mode = 0; render(); };
+  btnSlide.onclick   = () => { mode = 1; render(); };
+  btnTest.onclick    = () => { mode = 2; render(); };
+
+  // reset
+  btnReset.onclick = () => {
+    S = 0.6;
+    testBits.length = 0;
+    render();
+  };
+
+  render();
 </script>
 
 </body>
