@@ -1,98 +1,135 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-
-<title>Collapse</title>
-
-<style>
-  * {
-    -webkit-tap-highlight-color: transparent;
-    -webkit-user-select: none;
-    user-select: none;
-    box-sizing: border-box;
-  }
-
-  body {
-    margin: 0;
-    background: #000;
-    color: #e6e6e6;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 100vh;
-  }
-
-  .wrap {
-    width: 90%;
-    max-width: 420px;
-    text-align: center;
-  }
-
-  .reader {
-    background: #111;
-    border-radius: 22px;
-    padding: 30px 0;
-    font-size: 48px;
-    margin-bottom: 22px;
-    transition: color 80ms linear;
-  }
-
-  .btn {
-    background: #1a1a1a;
-    border-radius: 22px;
-    padding: 22px 0;
-    margin: 14px 0;
-    font-size: 22px;
-    color: #e6e6e6;
-  }
-
-  .btn:active {
-    background: #222;
-  }
-
-  .meta {
-    font-size: 13px;
-    opacity: 0.4;
-    margin-top: 8px;
-  }
-</style>
-</head>
-
-<body>
-<div class="wrap">
-
-  <div class="reader" id="reader">0.000</div>
-
-  <div class="btn" id="tap">TAP</div>
-  <div class="btn" id="end">× END</div>
-
-  <div class="meta" id="meta"></div>
-
-</div>
-
 <script>
-let lastTap = null;
-let targetInterval = null;
+/* =========================
+   CONFIG
+========================= */
+const MIN_WINDOW = 150;     // ms
+const MAX_WINDOW = 900;
+const BASE_WINDOW = 300;
 
-let windowMs = 200;
-const MIN_WINDOW = 80;
-const MAX_WINDOW = 420;
+const DISPLAY_ALPHA = 0.92; // inertia
+const EXPAND_RATE = 0.4;
+const CONTRACT_RATE = 0.12;
 
-let score = 0.0;
-let lastScore = null;
+/* =========================
+   STATE
+========================= */
+let sessionActive = false;
 
-function clamp(v, a, b) {
-  return Math.max(a, Math.min(b, v));
+let corpus = [];           // full session memory
+let windowed = [];         // adaptive slice
+
+let windowSize = BASE_WINDOW;
+
+let displayValue = 0.5;
+let lastDisplay = 0.5;
+
+let lastTapTime = null;
+
+/* =========================
+   HELPERS
+========================= */
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+const mean = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
+
+const std = arr => {
+  const m = mean(arr);
+  return Math.sqrt(mean(arr.map(x => (x - m) ** 2)));
+};
+
+/* =========================
+   SESSION CONTROLS
+========================= */
+function startSession() {
+  sessionActive = true;
+
+  corpus = [];
+  windowed = [];
+
+  windowSize = BASE_WINDOW;
+  lastTapTime = null;
+
+  displayValue = 0.5;
+  lastDisplay = 0.5;
+
+  updateDisplay();
 }
 
-function now() {
-  return performance.now();
+function endSession() {
+  sessionActive = false;
 }
 
-function formatScore(v) {
-  // Increase precision automatically when changes are small
-  if (Math.abs(v - (lastScore ?? v))
+/* =========================
+   TAP
+========================= */
+function tap() {
+  if (!sessionActive) return;
+
+  const now = performance.now();
+
+  if (lastTapTime !== null) {
+    const delta = now - lastTapTime;
+
+    corpus.push(delta);
+
+    // windowed corpus (adaptive)
+    windowed.push(delta);
+    windowed = windowed.filter(d => d < windowSize);
+
+    if (windowed.length >= 3) {
+      const instability = std(windowed);
+
+      // adaptive window (INVISIBLE)
+      if (instability > 30) {
+        windowSize = clamp(
+          windowSize + instability * EXPAND_RATE,
+          MIN_WINDOW,
+          MAX_WINDOW
+        );
+      } else {
+        windowSize = clamp(
+          windowSize - windowSize * CONTRACT_RATE,
+          MIN_WINDOW,
+          MAX_WINDOW
+        );
+      }
+
+      // normalized estimate (lower delta = better)
+      const estimate = clamp(
+        1 - mean(windowed) / windowSize,
+        0,
+        1
+      );
+
+      // inertial display update (NO JUMPS)
+      displayValue =
+        DISPLAY_ALPHA * displayValue +
+        (1 - DISPLAY_ALPHA) * estimate;
+
+      updateDisplay();
+    }
+  }
+
+  lastTapTime = now;
+}
+
+/* =========================
+   DISPLAY
+========================= */
+function updateDisplay() {
+  const el = document.getElementById("reader");
+
+  const delta = displayValue - lastDisplay;
+
+  el.textContent = displayValue.toFixed(3);
+
+  // STRICT red / green logic
+  if (delta > 0) {
+    el.style.color = "#2ecc71"; // green
+  } else if (delta < 0) {
+    el.style.color = "#e74c3c"; // red
+  }
+
+  lastDisplay = displayValue;
+}
+</script>
