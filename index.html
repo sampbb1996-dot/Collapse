@@ -3,11 +3,16 @@
 <head>
   <meta charset="utf-8" />
   <title>Relative Timing</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+
+  <!-- lock zoom -->
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 
   <style>
-    * {
-      box-sizing: border-box;
+    * { box-sizing: border-box; }
+
+    html {
+      -webkit-text-size-adjust: 100%;
     }
 
     body {
@@ -23,16 +28,23 @@
 
     .card {
       background: #111;
+      width: min(90vw, 320px);
       padding: 32px 24px;
       border-radius: 24px;
-      width: min(90vw, 320px);
       text-align: center;
+    }
+
+    .value-wrap {
+      height: 3.6rem;           /* fixed vertical reserve */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 24px;
     }
 
     .value {
       font-size: 3rem;
-      line-height: 1.2;
-      margin-bottom: 24px;
+      line-height: 1;
       font-variant-numeric: tabular-nums;
     }
 
@@ -57,7 +69,10 @@
 
 <body>
   <div class="card">
-    <div id="display" class="value">0.0000</div>
+    <div class="value-wrap">
+      <div id="display" class="value">0.0000</div>
+    </div>
+
     <button onclick="tap()">tap</button>
     <button onclick="resetAll()">reset</button>
     <div class="label">relative timing signal</div>
