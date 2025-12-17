@@ -2,16 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Collapse — Stable Non-Certainty</title>
+  <title>Collapse — Relative %</title>
 
   <meta name="viewport"
         content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 
   <style>
-    * {
-      box-sizing: border-box;
-      -webkit-tap-highlight-color: transparent;
-    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
     html, body {
       margin: 0;
@@ -23,7 +20,6 @@
       font-family: Arial, sans-serif;
       color: white;
       user-select: none;
-      -webkit-user-select: none;
       touch-action: manipulation;
     }
 
@@ -61,59 +57,27 @@
 <body>
 
 <div class="box">
-  <div id="value">—</div>
+  <div id="value">0%</div>
   <div id="tap" class="btn">TAP</div>
   <div id="reset" class="btn">RESET</div>
-  <div class="hint">Nothing reaches certainty.</div>
+  <div class="hint">Relative stability</div>
 </div>
 
 <script>
-  // -----------------------
-  // INTERNAL STATE
-  // -----------------------
-  let belief = 0;              // unbounded
   let lastTap = null;
   let lastInterval = null;
+
+  let score = 0; // relative %, centered at 0
 
   const valueEl = document.getElementById("value");
   const tapEl = document.getElementById("tap");
   const resetEl = document.getElementById("reset");
 
-  // -----------------------
-  // SAFE PROJECTION
-  // -----------------------
-  const EPS = 0.001;           // epistemic gap
-
-  function sigmoid(x) {
-    // numerically stable sigmoid
-    if (x >= 0) {
-      const z = Math.exp(-x);
-      return 1 / (1 + z);
-    } else {
-      const z = Math.exp(x);
-      return z / (1 + z);
-    }
-  }
-
-  function project(b) {
-    const p = sigmoid(b);
-    return EPS + (1 - 2 * EPS) * p;
-  }
-
-  function format(v) {
-    // absolute safety: no negatives, no zero, no one
-    const safe = Math.min(1 - EPS, Math.max(EPS, v));
-    return safe.toFixed(3);
-  }
-
   function render() {
-    const v = project(belief);
-    valueEl.textContent = format(v);
+    const rounded = Math.round(score);
+    valueEl.textContent = `${rounded}%`;
   }
 
-  // -----------------------
-  // INTERACTION
-  // -----------------------
   tapEl.addEventListener("touchend", e => {
     e.preventDefault();
 
@@ -123,11 +87,11 @@
       const interval = (now - lastTap) / 1000;
 
       if (lastInterval !== null) {
-        const deviation = Math.abs(interval - lastInterval);
-        const signal = 0.05 - deviation;
+        const deviation = interval - lastInterval;
 
-        // update belief (not bounded)
-        belief += signal;
+        // relative adjustment (self-scaling)
+        score += (-deviation * 100);
+        score *= 0.9; // natural decay, keeps it relative
       }
 
       lastInterval = interval;
@@ -139,7 +103,7 @@
 
   resetEl.addEventListener("touchend", e => {
     e.preventDefault();
-    belief = 0;
+    score = 0;
     lastTap = null;
     lastInterval = null;
     render();
