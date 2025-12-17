@@ -56,4 +56,151 @@
       margin:8px 0 22px;
     }
 
-    .
+    .btn{
+      width:100%;
+      height:64px;
+      margin:10px 0;
+      border-radius:36px;
+      border:1px solid var(--border);
+      background:var(--btn);
+      color:var(--text);
+      font-size:18px;
+      font-weight:600;
+      cursor:pointer;
+    }
+
+    .label{
+      margin-top:14px;
+      font-size:14px;
+      color:var(--muted);
+    }
+
+    .hint{
+      margin-top:8px;
+      font-size:13px;
+      color:var(--muted);
+      min-height:16px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="panel">
+    <div id="value" class="value">—</div>
+
+    <button id="tap" class="btn">tap</button>
+    <button id="reset" class="btn">reset</button>
+
+    <div class="label">relative timing signal</div>
+    <div id="hint" class="hint"></div>
+  </div>
+
+<script>
+(() => {
+  // =========================
+  // Collapse core (unchanged)
+  // =========================
+
+  const EPS = 0.001;
+  const MIN_DT = 90;
+  const MAX_DT = 4000;
+  const INIT_BASELINE = 450;
+  const EMA_ALPHA = 0.12;
+  const GUARD = 0.60;
+  const K = 3.6;
+  const CAL_TAPS = 6;
+
+  let lastTap = null;
+  let baseline = null;
+  let valid = 0;
+  let score = 0.5;
+
+  const valueEl = document.getElementById("value");
+  const hintEl = document.getElementById("hint");
+  const tapBtn = document.getElementById("tap");
+  const resetBtn = document.getElementById("reset");
+
+  const clamp = (x,a,b) => Math.max(a, Math.min(b,x));
+
+  function deviation(dt, base){
+    return Math.abs(Math.log(dt / base));
+  }
+
+  function sigmoid(x){
+    return 1 / (1 + Math.exp(-x));
+  }
+
+  function remap(s){
+    return 1 - Math.pow(1 - s, 2);
+  }
+
+  function render(msg=""){
+    if (valid < CAL_TAPS){
+      valueEl.textContent = "—";
+      hintEl.textContent = `calibrating (${CAL_TAPS - valid})`;
+      if (msg) hintEl.textContent = msg;
+      return;
+    }
+
+    // display-only precision increase
+    valueEl.textContent = score.toFixed(4);
+    hintEl.textContent = msg;
+  }
+
+  function reset(){
+    lastTap = null;
+    baseline = null;
+    valid = 0;
+    score = 0.5;
+    render("calibrating");
+  }
+
+  function onTap(){
+    const now = performance.now();
+
+    if (!lastTap){
+      lastTap = now;
+      baseline = INIT_BASELINE;
+      render();
+      return;
+    }
+
+    const dt = now - lastTap;
+    lastTap = now;
+
+    if (dt < MIN_DT){
+      render("too fast");
+      return;
+    }
+
+    const base = baseline ?? INIT_BASELINE;
+    const dev = deviation(dt, base);
+
+    score = clamp(
+      remap(sigmoid(-K * dev)),
+      EPS,
+      1 - EPS
+    );
+
+    if (dt <= MAX_DT){
+      const r = dt / base;
+      if (r > (1 - GUARD) && r < (1 + GUARD)){
+        baseline = (1 - EMA_ALPHA) * base + EMA_ALPHA * dt;
+      }
+    }
+
+    valid++;
+    render();
+  }
+
+  tapBtn.addEventListener("touchstart", e => { e.preventDefault(); onTap(); }, {passive:false});
+  tapBtn.addEventListener("click", e => { e.preventDefault(); onTap(); });
+
+  resetBtn.addEventListener("touchstart", e => { e.preventDefault(); reset(); }, {passive:false});
+  resetBtn.addEventListener("click", e => { e.preventDefault(); reset(); });
+
+  reset();
+})();
+</script>
+</body>
+</html>
