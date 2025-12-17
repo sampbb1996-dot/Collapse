@@ -2,14 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Collapse — Relative Timing Error</title>
+  <title>Collapse — Normalized Timing Drift</title>
 
   <meta name="viewport"
         content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 
   <style>
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-
     html, body {
       margin: 0;
       height: 100%;
@@ -22,7 +21,6 @@
       user-select: none;
       touch-action: manipulation;
     }
-
     .box {
       background: rgba(0,0,0,0.45);
       padding: 32px;
@@ -30,12 +28,7 @@
       text-align: center;
       min-width: 260px;
     }
-
-    #value {
-      font-size: 64px;
-      margin-bottom: 24px;
-    }
-
+    #value { font-size: 64px; margin-bottom: 24px; }
     .btn {
       display: block;
       margin: 12px auto;
@@ -46,12 +39,7 @@
       color: #000;
       border-radius: 999px;
     }
-
-    .hint {
-      margin-top: 18px;
-      font-size: 14px;
-      opacity: 0.85;
-    }
+    .hint { margin-top: 18px; font-size: 14px; opacity: 0.85; }
   </style>
 </head>
 <body>
@@ -60,24 +48,25 @@
   <div id="value">0.0%</div>
   <div id="tap" class="btn">TAP</div>
   <div id="reset" class="btn">RESET</div>
-  <div class="hint">Instantaneous relative timing error</div>
+  <div class="hint">Normalized relative drift</div>
 </div>
 
 <script>
   let lastTap = null;
-  let lastInterval = null;
+  let expectedInterval = null;
 
-  // smoothed relative error (%)
-  let errorEMA = 0;
-  const alpha = 0.25; // memory strength (0 = none, 1 = instant)
+  let drift = 0;               // signed, normalized %
+  const alpha = 0.15;          // smoothing for display
+  const beta  = 0.05;          // learning rate for expectation
+  const scale = 20;            // compresses raw deviation into % space
 
   const valueEl = document.getElementById("value");
   const tapEl = document.getElementById("tap");
   const resetEl = document.getElementById("reset");
 
   function render() {
-    const sign = errorEMA > 0 ? "+" : "";
-    valueEl.textContent = `${sign}${errorEMA.toFixed(1)}%`;
+    const sign = drift > 0 ? "+" : "";
+    valueEl.textContent = `${sign}${drift.toFixed(1)}%`;
   }
 
   tapEl.addEventListener("touchend", e => {
@@ -88,15 +77,20 @@
     if (lastTap !== null) {
       const interval = (now - lastTap) / 1000;
 
-      if (lastInterval !== null && lastInterval > 0) {
-        // instantaneous relative error
-        const relError = (interval - lastInterval) / lastInterval * 100;
+      if (expectedInterval === null) {
+        expectedInterval = interval;
+      } else {
+        // update expected rhythm slowly
+        expectedInterval =
+          (1 - beta) * expectedInterval + beta * interval;
 
-        // exponential smoothing (NOT accumulation)
-        errorEMA = alpha * relError + (1 - alpha) * errorEMA;
+        // normalized deviation (compressed)
+        const raw = (interval - expectedInterval) / expectedInterval;
+        const normalized = raw * scale;
+
+        // smooth displayed drift
+        drift = alpha * normalized + (1 - alpha) * drift;
       }
-
-      lastInterval = interval;
     }
 
     lastTap = now;
@@ -106,8 +100,8 @@
   resetEl.addEventListener("touchend", e => {
     e.preventDefault();
     lastTap = null;
-    lastInterval = null;
-    errorEMA = 0;
+    expectedInterval = null;
+    drift = 0;
     render();
   }, { passive: false });
 
