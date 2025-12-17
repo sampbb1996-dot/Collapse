@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 
 <title>Collapse</title>
 
@@ -33,15 +34,16 @@
 
   .reader {
     background: #111;
-    border-radius: 18px;
-    padding: 26px 0;
+    border-radius: 22px;
+    padding: 30px 0;
     font-size: 48px;
-    margin-bottom: 20px;
+    margin-bottom: 22px;
+    transition: color 80ms linear;
   }
 
   .btn {
     background: #1a1a1a;
-    border-radius: 18px;
+    border-radius: 22px;
     padding: 22px 0;
     margin: 14px 0;
     font-size: 22px;
@@ -54,92 +56,43 @@
 
   .meta {
     font-size: 13px;
-    opacity: 0.45;
+    opacity: 0.4;
     margin-top: 8px;
   }
 </style>
 </head>
 
 <body>
-  <div class="wrap">
-    <div class="reader" id="reader">—</div>
+<div class="wrap">
 
-    <div class="btn" id="tap">TAP</div>
-    <div class="btn" id="start">START</div>
-    <div class="btn" id="end">× END</div>
+  <div class="reader" id="reader">0.000</div>
 
-    <div class="meta" id="meta"></div>
-  </div>
+  <div class="btn" id="tap">TAP</div>
+  <div class="btn" id="end">× END</div>
+
+  <div class="meta" id="meta"></div>
+
+</div>
 
 <script>
 let lastTap = null;
 let targetInterval = null;
 
-let windowMs = 200;           // adaptive window
+let windowMs = 200;
 const MIN_WINDOW = 80;
 const MAX_WINDOW = 420;
 
-const STABILITY_GAIN = 0.92;  // tighten rate
-const INSTABILITY_GAIN = 1.12; // widen rate
+let score = 0.0;
+let lastScore = null;
+
+function clamp(v, a, b) {
+  return Math.max(a, Math.min(b, v));
+}
 
 function now() {
   return performance.now();
 }
 
-function tap() {
-  const t = now();
-
-  if (lastTap === null) {
-    lastTap = t;
-    return;
-  }
-
-  const delta = t - lastTap;
-  lastTap = t;
-
-  if (targetInterval === null) {
-    targetInterval = delta;
-    updateUI(1.0);
-    return;
-  }
-
-  // distance from expected rhythm
-  const error = Math.abs(delta - targetInterval);
-
-  // normalize to window
-  let score = 1 - (error / windowMs);
-  score = Math.max(0, Math.min(1, score));
-
-  // adaptive window logic
-  if (score < 0.6) {
-    windowMs = Math.min(MAX_WINDOW, windowMs * INSTABILITY_GAIN);
-  } else {
-    windowMs = Math.max(MIN_WINDOW, windowMs * STABILITY_GAIN);
-  }
-
-  // slowly adapt target rhythm
-  targetInterval = targetInterval * 0.9 + delta * 0.1;
-
-  updateUI(score);
-}
-
-function updateUI(score) {
-  document.getElementById("reader").textContent = score.toFixed(3);
-  document.getElementById("meta").textContent =
-    `window ±${Math.round(windowMs)} ms`;
-}
-
-function reset() {
-  lastTap = null;
-  targetInterval = null;
-  windowMs = 200;
-  document.getElementById("reader").textContent = "—";
-  document.getElementById("meta").textContent = "";
-}
-
-document.getElementById("tap").onclick = tap;
-document.getElementById("start").onclick = tap;
-document.getElementById("end").onclick = reset;
-</script>
-</body>
-</html>
+function formatScore(v) {
+  // Increase precision automatically when changes are small
+  if (Math.abs(v - (lastScore ?? v))
