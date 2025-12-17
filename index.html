@@ -1,45 +1,95 @@
-const MAX_WINDOW = 20;
-const ALPHA = 0.2;
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Relative Timing</title>
+  <style>
+    body {
+      background: #000;
+      color: #fff;
+      font-family: system-ui, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+    .card {
+      background: #111;
+      padding: 40px;
+      border-radius: 20px;
+      text-align: center;
+      width: 280px;
+    }
+    .value {
+      font-size: 48px;
+      margin-bottom: 30px;
+    }
+    button {
+      width: 100%;
+      padding: 16px;
+      margin: 10px 0;
+      font-size: 18px;
+      border-radius: 999px;
+      border: none;
+      background: #222;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
 
-let lastTap = null;
-let window = [];
-let mean = null;
+  <div class="card">
+    <div id="value" class="value">0.0000</div>
+    <button onclick="tap()">tap</button>
+    <button onclick="reset()">reset</button>
+    <div style="opacity:0.4;margin-top:10px;">relative timing signal</div>
+  </div>
 
-function onTap(time) {
-  if (lastTap === null) {
-    lastTap = time;
-    mean = 0;
-    window = [0];
-    return { interval: 0, percent: 0 };
-  }
+  <script>
+    const MAX_WINDOW = 20;
+    const ALPHA = 0.2;
 
-  const interval = time - lastTap;
-  lastTap = time;
+    let lastTap = null;
+    let windowVals = [];
+    let mean = null;
 
-  // smooth
-  mean = mean === null
-    ? interval
-    : ALPHA * interval + (1 - ALPHA) * mean;
+    function tap() {
+      const now = performance.now();
 
-  // IMPORTANT: use mean, not interval
-  window.push(mean);
-  if (window.length > MAX_WINDOW) window.shift();
+      if (lastTap === null) {
+        lastTap = now;
+        mean = 0;
+        windowVals = [0];
+        render(0);
+        return;
+      }
 
-  if (window.length < 2) {
-    return { interval: mean, percent: 0 };
-  }
+      const interval = now - lastTap;
+      lastTap = now;
 
-  const min = Math.min(...window);
-  const max = Math.max(...window);
+      mean = mean === null
+        ? interval
+        : ALPHA * interval + (1 - ALPHA) * mean;
 
-  if (min === max) {
-    return { interval: mean, percent: 0 };
-  }
+      windowVals.push(mean);
+      if (windowVals.length > MAX_WINDOW) windowVals.shift();
 
-  const percent =
-    Math.min(100,
-      Math.max(0, ((mean - min) / (max - min)) * 100)
-    );
+      render(mean / 1000); // seconds
+    }
 
-  return { interval: mean, percent };
-}
+    function reset() {
+      lastTap = null;
+      windowVals = [];
+      mean = null;
+      render(0);
+    }
+
+    function render(value) {
+      document.getElementById("value").textContent =
+        value.toFixed(4);
+    }
+  </script>
+
+</body>
+</html>
