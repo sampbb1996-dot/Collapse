@@ -3,27 +3,27 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Substrate</title>
+  <title>Observer</title>
   <style>
     html, body {
       margin: 0;
       padding: 0;
       width: 100%;
       height: 100%;
-      background: #121212; /* dark mode, not black */
+      background: #121212; /* dark mode, not pure black */
       display: flex;
-      align-items: center;
       justify-content: center;
+      align-items: center;
       overflow: hidden;
     }
 
     #shape {
-      width: 120px;
-      height: 120px;
-      background: #ff8c00; /* orange */
-      border-radius: 18px;
+      width: 140px;
+      height: 140px;
+      border-radius: 32px;
+      background: #ff9500; /* orange */
+      transition: opacity 0.25s ease;
       opacity: 1;
-      transition: opacity 0.25s linear;
     }
   </style>
 </head>
@@ -32,33 +32,23 @@
   <div id="shape"></div>
 
   <script>
-    // A-present probability (starts stable)
-    let p = 0.75;
+    const shape = document.getElementById("shape");
 
-    // whether A is currently present
-    let present = true;
+    // probability that A remains present
+    let stability = 0.75; // starts biased toward presence
+
+    // fixed tick interval (observation-friendly)
+    const TICK_MS = 900;
 
     function tick() {
-      // small unbiased noise
-      p += (Math.random() - 0.5) * 0.08;
-
-      // pull back toward steady A
-      p += (0.75 - p) * 0.02;
-
-      // clamp
-      p = Math.max(0.05, Math.min(0.95, p));
-
-      // decide state
-      present = Math.random() < p;
-
-      // render
-      document.getElementById("shape").style.opacity =
-        present ? "1" : "0";
-
+      const present = Math.random() < stability;
+      shape.style.opacity = present ? "1" : "0";
     }
 
-    // fixed interval (time matters only for observation)
-    setInterval(tick, 800);
+    // start immediately in steady A
+    shape.style.opacity = "1";
+
+    setInterval(tick, TICK_MS);
   </script>
 
 </body>
