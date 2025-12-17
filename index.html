@@ -4,42 +4,52 @@
   <meta charset="utf-8" />
   <title>Relative Timing</title>
 
-  <!-- lock zoom -->
   <meta name="viewport"
         content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 
   <style>
     * { box-sizing: border-box; }
 
-    html {
-      -webkit-text-size-adjust: 100%;
-    }
-
-    body {
+    html, body {
       margin: 0;
-      min-height: 100vh;
+      height: 100%;
+      overflow: hidden;                 /* no scrolling */
       background: #000;
       color: #fff;
       font-family: system-ui, -apple-system, sans-serif;
+      -webkit-text-size-adjust: 100%;
+      touch-action: manipulation;
+    }
+
+    .screen {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .tap-area {
+      flex: 1;                          /* most of the screen */
       display: flex;
       align-items: center;
       justify-content: center;
+      background: #000;
     }
 
     .card {
       background: #111;
-      width: min(90vw, 320px);
+      width: min(90vw, 360px);
       padding: 32px 24px;
       border-radius: 24px;
       text-align: center;
+      pointer-events: none;             /* taps go through */
     }
 
     .value-wrap {
-      height: 3.6rem;           /* fixed vertical reserve */
+      height: 3.6rem;
       display: flex;
       align-items: center;
       justify-content: center;
-      margin-bottom: 24px;
+      margin-bottom: 16px;
     }
 
     .value {
@@ -48,34 +58,46 @@
       font-variant-numeric: tabular-nums;
     }
 
+    .label {
+      font-size: 0.75rem;
+      opacity: 0.4;
+    }
+
+    .reset-bar {
+      padding: 16px;
+      background: #000;
+    }
+
     button {
       width: 100%;
-      padding: 14px 0;
-      margin: 8px 0;
+      padding: 16px 0;
       font-size: 1rem;
       border-radius: 999px;
       border: none;
       background: #222;
       color: #fff;
     }
-
-    .label {
-      margin-top: 12px;
-      font-size: 0.75rem;
-      opacity: 0.4;
-    }
   </style>
 </head>
 
 <body>
-  <div class="card">
-    <div class="value-wrap">
-      <div id="display" class="value">0.0000</div>
+  <div class="screen">
+
+    <!-- tap anywhere here -->
+    <div class="tap-area" onclick="tap()">
+      <div class="card">
+        <div class="value-wrap">
+          <div id="display" class="value">0.0000</div>
+        </div>
+        <div class="label">relative timing signal</div>
+      </div>
     </div>
 
-    <button onclick="tap()">tap</button>
-    <button onclick="resetAll()">reset</button>
-    <div class="label">relative timing signal</div>
+    <!-- reset fixed at bottom -->
+    <div class="reset-bar">
+      <button onclick="resetAll()">reset</button>
+    </div>
+
   </div>
 
   <script>
