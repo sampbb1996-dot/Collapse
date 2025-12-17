@@ -1,15 +1,76 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>Collapse</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <style>
+    body {
+      margin: 0;
+      height: 100vh;
+      background: #0e0e0e;
+      color: #ffffff;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .container {
+      text-align: center;
+      width: 100%;
+      max-width: 400px;
+    }
+
+    .value {
+      font-size: 4rem;
+      font-weight: 600;
+      margin-bottom: 1.5rem;
+      letter-spacing: 0.05em;
+    }
+
+    .buttons {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+    }
+
+    button {
+      background: #1f1f1f;
+      color: #fff;
+      border: 1px solid #333;
+      padding: 0.75rem 1.25rem;
+      font-size: 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    button:active {
+      transform: scale(0.97);
+    }
+
+    .hint {
+      margin-top: 1.5rem;
+      font-size: 0.8rem;
+      opacity: 0.6;
+    }
+  </style>
 </head>
 <body>
 
-  <div id="reader">0.500</div>
+  <div class="container">
+    <div id="reader" class="value">0.500</div>
 
-  <button id="tapBtn">Tap</button>
-  <button id="endBtn">End</button>
+    <div class="buttons">
+      <button id="tapBtn">Tap</button>
+      <button id="endBtn">Reset</button>
+    </div>
+
+    <div class="hint">
+      Stability increases value. Irregularity collapses it.
+    </div>
+  </div>
 
   <script>
     document.addEventListener("DOMContentLoaded", () => {
@@ -21,9 +82,15 @@
       const tapBtn = document.getElementById("tapBtn");
       const endBtn = document.getElementById("endBtn");
 
-      if (!reader || !tapBtn || !endBtn) return;
+      function clamp(v) {
+        return Math.max(0, Math.min(1, v));
+      }
 
-      tapBtn.onclick = () => {
+      function updateDisplay() {
+        reader.textContent = value.toFixed(3);
+      }
+
+      tapBtn.addEventListener("click", () => {
         const now = performance.now();
 
         if (lastTap !== null) {
@@ -31,6 +98,10 @@
 
           if (lastInterval !== null) {
             const deviation = Math.abs(interval - lastInterval);
+
+            // Core mechanic:
+            // regular rhythm → positive drift
+            // irregular rhythm → collapse
             value += (0.05 - deviation) * 0.5;
           }
 
@@ -38,16 +109,16 @@
         }
 
         lastTap = now;
-        value = Math.max(0, Math.min(1, value));
-        reader.textContent = value.toFixed(3);
-      };
+        value = clamp(value);
+        updateDisplay();
+      });
 
-      endBtn.onclick = () => {
+      endBtn.addEventListener("click", () => {
         value = 0.5;
         lastTap = null;
         lastInterval = null;
-        reader.textContent = "0.500";
-      };
+        updateDisplay();
+      });
     });
   </script>
 
