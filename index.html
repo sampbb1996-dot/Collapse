@@ -1,85 +1,233 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Collapse</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8">
+<title>CORE — Collapse</title>
 
-  <style>
-    body {
-      margin: 0;
-      height: 100vh;
-      background: #000;
-      color: #fff;
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      gap: 16px;
-    }
+<meta name="viewport"
+      content="width=device-width,
+               initial-scale=1.0,
+               maximum-scale=1.0,
+               user-scalable=no">
 
-    .display {
-      width: 80%;
-      padding: 16px;
-      text-align: center;
-      font-size: 22px;
-      border-radius: 12px;
-      background: #111;
-    }
+<style>
+html,body{
+  height:100%;
+  margin:0;
+  background:#000;
+  color:#fff;
+  font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+  overflow:hidden;
+  overscroll-behavior:none;
+  touch-action:manipulation;
+  user-select:none;
+}
 
-    button {
-      width: 80%;
-      padding: 18px;
-      font-size: 18px;
-      border-radius: 14px;
-      border: none;
-      background: #222;
-      color: #fff;
-      cursor: pointer;
-    }
+#app{
+  height:100%;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:center;
+  gap:14px;
+  padding:16px;
+  box-sizing:border-box;
+}
 
-    button:active {
-      background: #333;
-    }
-  </style>
+.panel{
+  width:min(520px,92vw);
+  background:#111;
+  border-radius:14px;
+  box-shadow:inset 0 0 0 1px #222;
+  padding:16px;
+  box-sizing:border-box;
+  text-align:center;
+}
+
+#scalar{
+  font-size:34px;
+  letter-spacing:0.5px;
+}
+
+#stimulus{
+  width:min(520px,92vw);
+  height:min(45vh,360px);
+  background:#0b0b0b;
+  border-radius:14px;
+  box-shadow:inset 0 0 0 1px #222;
+  position:relative;
+}
+
+#flash{
+  position:absolute;
+  inset:0;
+  background:rgba(255,255,255,0.06);
+  opacity:0;
+  transition:opacity 120ms linear;
+  pointer-events:none;
+}
+
+.row{
+  width:min(520px,92vw);
+  display:flex;
+  gap:10px;
+}
+
+button{
+  flex:1;
+  padding:16px;
+  font-size:18px;
+  border-radius:14px;
+  border:none;
+  background:#222;
+  color:#fff;
+  -webkit-tap-highlight-color:transparent;
+}
+
+button:active{ background:#333; }
+button.primary{ background:#2b2b2b; }
+</style>
 </head>
+
 <body>
+<div id="app">
 
-  <div id="display" class="display">—</div>
+  <div class="panel">
+    <div id="scalar">0.000</div>
+  </div>
 
-  <button onclick="tap()">TAP</button>
-  <button onclick="start()">START</button>
-  <button onclick="end()">× END</button>
+  <div id="stimulus">
+    <div id="flash"></div>
+  </div>
 
-  <script>
-    let running = false
-    let count = 0
+  <div class="row">
+    <button id="start" class="primary">START</button>
+    <button id="end">× END</button>
+  </div>
 
-    function start() {
-      running = true
-      count = 0
-      update("STARTED")
+</div>
+
+<script>
+/*
+ CORE — ceiling corpus
+ Interaction:
+   single tap  -> channel 0
+   double tap  -> channel 1
+ No explicit questions. No labels.
+ Corpus is structural, invisible, adaptive.
+*/
+
+let running=false;
+let awaiting=false;
+let tapTimer=null;
+let firstTap=0;
+let trialStart=0;
+
+const DOUBLE=260;
+const MAXWIN=40;
+let history=[];
+let difficulty=0.2;
+
+const scalar=document.getElementById("scalar");
+const stim=document.getElementById("stimulus");
+const flash=document.getElementById("flash");
+
+function clamp(x,a,b){return Math.max(a,Math.min(b,x));}
+function now(){return performance.now();}
+
+function flashTap(){
+  flash.style.opacity="1";
+  setTimeout(()=>flash.style.opacity="0",90);
+}
+
+/* ---- ceiling primitives (latent) ---- */
+const PRIMS=[
+  ()=>Math.random()<0.5,                // identity
+  ()=>Math.random()<0.5,                // negation
+  ()=>Math.random()<0.5,                // symmetry
+  ()=>Math.random()<0.5,                // ordering
+  ()=>Math.random()<0.5,                // magnitude
+  ()=>Math.random()<0.5,                // parity
+  ()=>Math.random()<0.5                 // containment
+];
+
+let currentCorrect=0;
+
+function nextTrial(){
+  currentCorrect = PRIMS[Math.floor(Math.random()*PRIMS.length)]() ? 1 : 0;
+  trialStart=now();
+}
+
+/* ---- scalar computation ---- */
+function updateScalar(){
+  if(history.length===0){ scalar.textContent="0.000"; return; }
+  const w=history.slice(-MAXWIN);
+  const acc=w.filter(x=>x.ok).length/w.length;
+  const rt=w.reduce((a,b)=>a+b.rt,0)/w.length;
+  const speed=Math.exp(-rt/900);
+  const s=clamp(acc*0.6+speed*0.4,0,1);
+  scalar.textContent=s.toFixed(3);
+}
+
+/* ---- adaptation ---- */
+function adapt(){
+  const w=history.slice(-20);
+  if(w.length<8)return;
+  const acc=w.filter(x=>x.ok).length/w.length;
+  const rt=w.reduce((a,b)=>a+b.rt,0)/w.length;
+  if(acc>0.85 && rt<900) difficulty+=0.03;
+  if(acc<0.65 || rt>1400) difficulty-=0.04;
+  difficulty=clamp(difficulty,0,1);
+}
+
+/* ---- response ---- */
+function respond(choice){
+  if(!running)return;
+  const rt=now()-trialStart;
+  const ok=(choice===currentCorrect);
+  history.push({ok,rt});
+  if(history.length>400)history.shift();
+  updateScalar();
+  adapt();
+  nextTrial();
+}
+
+/* ---- tap logic ---- */
+stim.addEventListener("pointerdown",e=>{
+  if(!running)return;
+  e.preventDefault();
+  flashTap();
+  const t=now();
+  if(!awaiting){
+    awaiting=true;
+    firstTap=t;
+    tapTimer=setTimeout(()=>{
+      awaiting=false;
+      respond(0);
+    },DOUBLE);
+  }else{
+    if(t-firstTap<=DOUBLE){
+      clearTimeout(tapTimer);
+      awaiting=false;
+      respond(1);
     }
+  }
+},{passive:false});
 
-    function tap() {
-      if (!running) {
-        update("NOT RUNNING")
-        return
-      }
-      count++
-      update("TAP " + count)
-    }
+/* ---- controls ---- */
+document.getElementById("start").onclick=()=>{
+  running=true;
+  history=[];
+  updateScalar();
+  nextTrial();
+};
 
-    function end() {
-      running = false
-      update("ENDED (" + count + ")")
-    }
+document.getElementById("end").onclick=()=>{
+  running=false;
+  awaiting=false;
+  if(tapTimer)clearTimeout(tapTimer);
+};
 
-    function update(text) {
-      document.getElementById("display").textContent = text
-    }
-  </script>
-
+</script>
 </body>
 </html>
