@@ -1,33 +1,40 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta charset="UTF-8" />
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+/>
+
+<title>Timing Reader</title>
 
 <style>
+/* ===== HARD STOP SCROLL (iOS SAFE) ===== */
 html, body {
   margin: 0;
   padding: 0;
   height: 100%;
+  width: 100%;
   overflow: hidden !important;
   position: fixed;
-  width: 100%;
   background: #000;
   overscroll-behavior: none;
   touch-action: manipulation;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
+/* ===== LAYOUT ===== */
 .app {
   height: 100%;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  gap: 20px;
+  gap: 18px;
 }
 
+/* ===== READER ===== */
 #reader {
   width: 80%;
   padding: 28px 0;
@@ -35,17 +42,22 @@ html, body {
   font-size: 56px;
   background: #111;
   border-radius: 22px;
-  color: white;
+  color: #fff;
 }
 
+/* ===== BUTTONS ===== */
 button {
   width: 80%;
   padding: 18px 0;
   font-size: 22px;
   background: #111;
-  color: white;
+  color: #fff;
   border: none;
   border-radius: 18px;
+}
+
+button:active {
+  background: #222;
 }
 </style>
 </head>
@@ -54,47 +66,116 @@ button {
 <div class="app">
   <div id="reader">0.500</div>
   <button onclick="tap()">TAP</button>
-  <button onclick="tap()">START</button>
   <button onclick="endSession()">× END</button>
 </div>
 
 <script>
-console.log("JS LOADED");
+/* =========================
+   CONFIG
+========================= */
+const DISPLAY_ALPHA = 0.9;      // inertia
+const BASE_WINDOW = 300;
+const MIN_WINDOW = 150;
+const MAX_WINDOW = 900;
+const EXPAND_RATE = 0.4;
+const CONTRACT_RATE = 0.12;
 
-let display = 0.5;
-let last = 0.5;
-let lastTap = null;
+/* =========================
+   STATE
+========================= */
+let sessionActive = true;
 
+let windowSize = BASE_WINDOW;
+let windowed = [];
+
+let displayValue = 0.5;
+let lastDisplay = 0.5;
+
+let lastTapTime = null;
+
+/* =========================
+   HELPERS
+========================= */
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const mean = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
+
+/* =========================
+   TAP
+========================= */
 function tap() {
+  if (!sessionActive) return;
+
   const now = performance.now();
 
-  if (lastTap === null) {
-    lastTap = now;
-    update();
+  // first tap just initializes timing
+  if (lastTapTime === null) {
+    lastTapTime = now;
+    updateDisplay();
     return;
   }
 
-  const delta = now - lastTap;
-  lastTap = now;
+  const delta = now - lastTapTime;
+  lastTapTime = now;
 
-  const estimate = Math.max(0, Math.min(1, 1 - delta / 400));
-  display = 0.9 * display + 0.1 * estimate;
+  windowed.push(delta);
+  windowed = windowed.filter(d => d < windowSize);
 
-  update();
+  const avg = mean(windowed);
+
+  // instability (variance)
+  const variance = mean(windowed.map(d => (d - avg) ** 2));
+  const instability = Math.sqrt(variance);
+
+  // adaptive window (invisible)
+  if (instability > 30) {
+    windowSize = clamp(
+      windowSize + instability * EXPAND_RATE,
+      MIN_WINDOW,
+      MAX_WINDOW
+    );
+  } else {
+    windowSize = clamp(
+      windowSize - windowSize * CONTRACT_RATE,
+      MIN_WINDOW,
+      MAX_WINDOW
+    );
+  }
+
+  // normalized estimate (lower delta = better)
+  const estimate = clamp(1 - avg / windowSize, 0, 1);
+
+  // inertial update (no jumps)
+  displayValue =
+    DISPLAY_ALPHA * displayValue +
+    (1 - DISPLAY_ALPHA) * estimate;
+
+  updateDisplay();
 }
 
-function update() {
-  const el = document.getElementById("reader");
-  const d = display - last;
-
-  el.textContent = display.toFixed(3);
-  el.style.color = d >= 0 ? "#2ecc71" : "#e74c3c";
-
-  last = display;
-}
-
+/* =========================
+   END
+========================= */
 function endSession() {
-  lastTap = null;
+  sessionActive = false;
+}
+
+/* =========================
+   DISPLAY
+========================= */
+function updateDisplay() {
+  const el = document.getElementById("reader");
+  const delta = displayValue - lastDisplay;
+
+  el.textContent = displayValue.toFixed(3);
+
+  // strict red / green only
+  if (delta > 0) {
+    el.style.color = "#2ecc71"; // green
+  } else if (delta < 0) {
+    el.style.color = "#e74c3c"; // red
+  }
+
+  lastDisplay = displayValue;
 }
 </script>
 </body>
