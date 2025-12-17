@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Collapse — Relative Timing Signal</title>
+  <title>Collapse — Relative Timing Drift</title>
 
   <meta name="viewport"
         content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
@@ -60,10 +60,10 @@
 <body>
 
 <div class="box">
-  <div id="value">0%</div>
+  <div id="value">0.0%</div>
   <div id="tap" class="btn">TAP</div>
   <div id="reset" class="btn">RESET</div>
-  <div class="hint">Relative temporal stability</div>
+  <div class="hint">Signed relative drift</div>
 </div>
 
 <script>
@@ -73,8 +73,8 @@
   let lastTap = null;
   let lastInterval = null;
 
-  // relative instability signal (percent)
-  let instability = 0;
+  // signed relative drift (%)
+  let drift = 0;
 
   const valueEl = document.getElementById("value");
   const tapEl = document.getElementById("tap");
@@ -84,7 +84,8 @@
   // RENDER
   // -----------------------------
   function render() {
-    valueEl.textContent = `${Math.round(instability)}%`;
+    const sign = drift > 0 ? "+" : "";
+    valueEl.textContent = `${sign}${drift.toFixed(1)}%`;
   }
 
   // -----------------------------
@@ -99,14 +100,14 @@
       const interval = (now - lastTap) / 1000;
 
       if (lastInterval !== null) {
-        // relative deviation (signed)
+        // relative signed deviation
         const deviation = (interval - lastInterval) / lastInterval;
 
-        // update instability
-        instability += deviation * 100;
+        // update drift
+        drift += deviation * 100;
 
-        // decay keeps it relative, not cumulative
-        instability *= 0.85;
+        // decay toward zero (keeps sign meaningful)
+        drift *= 0.9;
       }
 
       lastInterval = interval;
@@ -120,7 +121,7 @@
     e.preventDefault();
     lastTap = null;
     lastInterval = null;
-    instability = 0;
+    drift = 0;
     render();
   }, { passive: false });
 
