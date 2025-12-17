@@ -1,174 +1,145 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport"
-  content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 
-<title>Timing</title>
+<title>Collapse</title>
 
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #000;
-  color: #fff;
-  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-  touch-action: manipulation;
-}
+  * {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+    box-sizing: border-box;
+  }
 
-* {
-  -webkit-tap-highlight-color: transparent;
-  -webkit-user-select: none;
-  user-select: none;
-}
+  body {
+    margin: 0;
+    background: #000;
+    color: #e6e6e6;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
 
-.container {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 24px;
-}
+  .wrap {
+    width: 90%;
+    max-width: 420px;
+    text-align: center;
+  }
 
-.panel {
-  width: 86%;
-  max-width: 420px;
-  padding: 30px;
-  border-radius: 18px;
-  background: #141414;
-  text-align: center;
-  font-size: 48px;
-  transition: color 0.25s ease;
-}
+  .reader {
+    background: #111;
+    border-radius: 18px;
+    padding: 26px 0;
+    font-size: 48px;
+    margin-bottom: 20px;
+  }
 
-.btn {
-  width: 86%;
-  max-width: 420px;
-  padding: 22px;
-  border-radius: 18px;
-  background: #1f1f1f;
-  text-align: center;
-  font-size: 20px;
-}
+  .btn {
+    background: #1a1a1a;
+    border-radius: 18px;
+    padding: 22px 0;
+    margin: 14px 0;
+    font-size: 22px;
+    color: #e6e6e6;
+  }
 
-.btn:active {
-  background: #2a2a2a;
-}
+  .btn:active {
+    background: #222;
+  }
+
+  .meta {
+    font-size: 13px;
+    opacity: 0.45;
+    margin-top: 8px;
+  }
 </style>
 </head>
 
 <body>
-<div class="container">
+  <div class="wrap">
+    <div class="reader" id="reader">—</div>
 
-  <div id="score" class="panel">0%</div>
+    <div class="btn" id="tap">TAP</div>
+    <div class="btn" id="start">START</div>
+    <div class="btn" id="end">× END</div>
 
-  <div id="tap" class="btn">TAP</div>
-  <div id="start" class="btn">START</div>
-
-</div>
+    <div class="meta" id="meta"></div>
+  </div>
 
 <script>
-/* ================= CORE STATE ================= */
-
-let running = false;
 let lastTap = null;
-let intervals = [];
+let targetInterval = null;
 
-let adaptiveWindow = 240;      // start wide (max signal retention)
-const ceilingWindow = 45;      // domain ceiling (hard anchor)
-const minWindow = 35;          // safety floor
+let windowMs = 200;           // adaptive window
+const MIN_WINDOW = 80;
+const MAX_WINDOW = 420;
 
-let lastScore = 0;
+const STABILITY_GAIN = 0.92;  // tighten rate
+const INSTABILITY_GAIN = 1.12; // widen rate
 
-/* ================= HELPERS ================= */
-
-function mean(arr) {
-  return arr.reduce((a,b)=>a+b,0) / arr.length;
+function now() {
+  return performance.now();
 }
 
-function std(arr, m) {
-  return Math.sqrt(
-    arr.reduce((a,b)=>a+(b-m)*(b-m),0) / arr.length
-  );
-}
+function tap() {
+  const t = now();
 
-function clamp(v, min, max) {
-  return Math.max(min, Math.min(max, v));
-}
+  if (lastTap === null) {
+    lastTap = t;
+    return;
+  }
 
-/* ================= CORE LOGIC ================= */
+  const delta = t - lastTap;
+  lastTap = t;
 
-function updateScore() {
-  if (intervals.length < 4) return;
+  if (targetInterval === null) {
+    targetInterval = delta;
+    updateUI(1.0);
+    return;
+  }
 
-  const m = mean(intervals);
-  const s = std(intervals, m);
+  // distance from expected rhythm
+  const error = Math.abs(delta - targetInterval);
 
-  // Stability = variance relative to current envelope
-  let stability = 1 - (s / adaptiveWindow);
-  stability = clamp(stability, 0, 1);
+  // normalize to window
+  let score = 1 - (error / windowMs);
+  score = Math.max(0, Math.min(1, score));
 
-  const score = Math.round(stability * 100);
-  const el = document.getElementById("score");
-
-  // Directional color only
-  if (score >= lastScore) {
-    el.style.color = "#4caf50"; // green
+  // adaptive window logic
+  if (score < 0.6) {
+    windowMs = Math.min(MAX_WINDOW, windowMs * INSTABILITY_GAIN);
   } else {
-    el.style.color = "#f44336"; // red
+    windowMs = Math.max(MIN_WINDOW, windowMs * STABILITY_GAIN);
   }
 
-  el.textContent = score + "%";
-  lastScore = score;
+  // slowly adapt target rhythm
+  targetInterval = targetInterval * 0.9 + delta * 0.1;
 
-  /* ---------------- Adaptive window logic ----------------
-     - Instability → expand envelope (preserve signal)
-     - Stability   → tighten envelope (increase resolution)
-     ------------------------------------------------------ */
-
-  if (s > adaptiveWindow * 0.6) {
-    adaptiveWindow *= 1.10;   // expand quickly when unstable
-  } else {
-    adaptiveWindow *= 0.97;   // tighten slowly when stable
-  }
-
-  adaptiveWindow = clamp(adaptiveWindow, ceilingWindow, 400);
+  updateUI(score);
 }
 
-/* ================= EVENTS ================= */
+function updateUI(score) {
+  document.getElementById("reader").textContent = score.toFixed(3);
+  document.getElementById("meta").textContent =
+    `window ±${Math.round(windowMs)} ms`;
+}
 
-document.getElementById("tap").onclick = () => {
-  if (!running) return;
-
-  const now = performance.now();
-
-  if (lastTap !== null) {
-    const delta = now - lastTap;
-    intervals.push(delta);
-
-    if (intervals.length > 20) {
-      intervals.shift();
-    }
-
-    updateScore();
-  }
-
-  lastTap = now;
-};
-
-document.getElementById("start").onclick = () => {
-  running = true;
+function reset() {
   lastTap = null;
-  intervals = [];
-  adaptiveWindow = 240;
-  lastScore = 0;
+  targetInterval = null;
+  windowMs = 200;
+  document.getElementById("reader").textContent = "—";
+  document.getElementById("meta").textContent = "";
+}
 
-  const el = document.getElementById("score");
-  el.textContent = "0%";
-  el.style.color = "#4caf50";
-};
+document.getElementById("tap").onclick = tap;
+document.getElementById("start").onclick = tap;
+document.getElementById("end").onclick = reset;
 </script>
 </body>
 </html>
