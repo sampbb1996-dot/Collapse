@@ -1,128 +1,143 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>A</title>
 
 <style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    height: 100%;
-    background: #000;
-    color: #fff;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-    overflow: hidden;
-  }
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+  font-family: system-ui, sans-serif;
+}
 
-  #stage {
-    position: fixed;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    touch-action: manipulation;
-  }
+#stage {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+}
 
-  #a {
-    width: 80px;
-    height: 80px;
-    border-radius: 16px;
-    background: white;
-    opacity: 1;
-    transition: opacity 120ms linear;
-  }
+#A {
+  width: 80px;
+  height: 80px;
+  border-radius: 16px;
+  background: #fff;
+  opacity: 0;
+  transform: scale(0.85);
+  filter: blur(0px);
+  transition:
+    opacity 180ms linear,
+    transform 180ms ease-out,
+    filter 180ms linear;
+}
 
-  #stats {
-    position: fixed;
-    top: 16px;
-    width: 100%;
-    text-align: center;
-    font-size: 14px;
-    opacity: 0.6;
-  }
-
-  #reset {
-    position: fixed;
-    bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 14px 28px;
-    border-radius: 999px;
-    background: #222;
-    color: #fff;
-    font-size: 16px;
-    border: none;
-  }
+#reset {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 14px 28px;
+  border-radius: 999px;
+  background: #222;
+  color: #fff;
+  border: none;
+  font-size: 16px;
+}
 </style>
 </head>
+
 <body>
 
-<div id="stats">correct: 100%</div>
-
 <div id="stage">
-  <div id="a"></div>
+  <div id="A"></div>
 </div>
 
 <button id="reset">reset</button>
 
 <script>
-  let stability = 1.0;        // internal, hidden
-  let present = true;
+/*
+FINAL STRUCTURE
 
-  let taps = 0;
-  let correct = 0;
+- System advances autonomously (fixed interval)
+- Tap = optional perturbation
+- Watching is valid
+- No instruction, no scoring, no urgency
+*/
 
-  const A = document.getElementById("a");
-  const stats = document.getElementById("stats");
-  const resetBtn = document.getElementById("reset");
+// ----- fixed corpus -----
+const PERIOD = 7;
+const survivesIn = new Set([1, 2, 4]);
 
-  function updateUI() {
-    A.style.opacity = present ? 1 : 0;
-    const pct = taps === 0 ? 100 : Math.round((correct / taps) * 100);
-    stats.textContent = `correct: ${pct}%`;
+// ----- state -----
+let phase = 0;
+let present = true;
+let confidence = 0.4; // internal, hidden
+
+const A = document.getElementById("A");
+const resetBtn = document.getElementById("reset");
+
+// ----- step (autonomous) -----
+function step() {
+  phase = (phase + 1) % PERIOD;
+  const survives = survivesIn.has(phase);
+
+  // confidence evolves only from structure, not time pressure
+  if (survives) {
+    confidence = Math.min(1, confidence + 0.04);
+  } else {
+    confidence = Math.max(0, confidence - 0.06);
   }
 
-  function tap() {
-    taps++;
-
-    // structural disturbance
-    const delta = (Math.random() - 0.5) * 0.25;
-    stability += delta;
-
-    // gentle pull toward neutral
-    stability += (present ? 0.02 : -0.02);
-
-    // clamp internal state
-    stability = Math.max(0, Math.min(1, stability));
-
-    // state transition
-    if (present && stability < 0.3) present = false;
-    if (!present && stability > 0.7) present = true;
-
-    if (present) correct++;
-
-    updateUI();
-  }
-
-  let locked = false;
-  document.getElementById("stage").addEventListener("click", () => {
-    if (locked) return;
-    locked = true;
-    tap();
-    setTimeout(() => locked = false, 60); // prevents hold spam
-  });
-
-  resetBtn.onclick = () => {
-    stability = 1.0;
+  // persistence with inertia
+  if (survives || confidence > 0.6) {
     present = true;
-    taps = 0;
-    correct = 0;
-    updateUI();
-  };
+  } else {
+    present = false;
+  }
 
-  updateUI();
+  render();
+}
+
+// ----- optional perturbation -----
+function perturb() {
+  // small structural nudge, nothing dramatic
+  confidence = Math.max(0, confidence - 0.08);
+  render();
+}
+
+// ----- render -----
+function render() {
+  A.style.opacity = present ? 0.6 + confidence * 0.4 : 0;
+  A.style.transform = `scale(${0.9 + confidence * 0.15})`;
+  A.style.filter = `blur(${(1 - confidence) * 1.5}px)`;
+}
+
+// ----- input -----
+let locked = false;
+document.getElementById("stage").addEventListener("click", () => {
+  if (locked) return;
+  locked = true;
+  perturb();
+  setTimeout(() => locked = false, 120);
+});
+
+resetBtn.onclick = () => {
+  phase = 0;
+  confidence = 0.4;
+  present = true;
+  render();
+};
+
+// ----- autonomous cadence -----
+setInterval(step, 1000); // fixed, boring, neutral
+
+render();
 </script>
 
 </body>
