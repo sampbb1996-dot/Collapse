@@ -1,154 +1,85 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Collapse</title>
+  <meta charset="UTF-8" />
+  <title>Collapse</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-<style>
-html, body {
-    margin: 0;
-    padding: 0;
-    height: 100%;
-    background: #0b0b0b;
-    color: #e6e6e6;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-    user-select: none;
-    touch-action: manipulation;
-}
-
-#app {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 24px;
-}
-
-#value {
-    width: 80%;
-    max-width: 320px;
-    padding: 16px;
-    border-radius: 10px;
-    background: #1a1a1a;
-    font-size: 28px;
-    text-align: center;
-    box-shadow: inset 0 0 0 1px #2a2a2a;
-}
-
-button {
-    width: 80%;
-    max-width: 320px;
-    padding: 18px;
-    font-size: 18px;
-    border-radius: 12px;
-    border: none;
-    background: #2a2a2a;
-    color: #e6e6e6;
-}
-
-button:active {
-    background: #3a3a3a;
-}
-
-.hidden {
-    display: none;
-}
-</style>
-</head>
-
-<body>
-<div id="app">
-
-    <div id="value">—</div>
-
-    <button id="tap" disabled>TAP</button>
-    <button id="start">START</button>
-    <button id="end">× END</button>
-
-</div>
-
-<script>
-/*
-    Collapse Sensor
-    ----------------
-    Measures decisiveness via tap timing variance.
-    No explicit task.
-    No correctness.
-    Only structure.
-*/
-
-let running = false;
-let lastTap = null;
-let intervals = [];
-
-const valueEl = document.getElementById("value");
-const tapBtn = document.getElementById("tap");
-const startBtn = document.getElementById("start");
-const endBtn = document.getElementById("end");
-
-function resetSession() {
-    lastTap = null;
-    intervals = [];
-    valueEl.textContent = "—";
-}
-
-function clamp(x, min = 0, max = 1) {
-    return Math.max(min, Math.min(max, x));
-}
-
-function computeHotness() {
-    if (intervals.length < 3) return null;
-
-    // Compute coefficient of variation (std / mean)
-    const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-    const variance = intervals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / intervals.length;
-    const std = Math.sqrt(variance);
-
-    if (mean === 0) return null;
-
-    const cv = std / mean;
-
-    // Invert + squash into [0,1]
-    const hot = clamp(1 / (1 + cv * 6));
-
-    return hot;
-}
-
-tapBtn.addEventListener("pointerdown", () => {
-    if (!running) return;
-
-    const now = performance.now();
-
-    if (lastTap !== null) {
-        const delta = now - lastTap;
-        intervals.push(delta);
-
-        // Keep window bounded (prevents drift)
-        if (intervals.length > 40) {
-            intervals.shift();
-        }
-
-        const hot = computeHotness();
-        if (hot !== null) {
-            valueEl.textContent = hot.toFixed(3);
-        }
+  <style>
+    body {
+      margin: 0;
+      height: 100vh;
+      background: #000;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
     }
 
-    lastTap = now;
-});
+    .display {
+      width: 80%;
+      padding: 16px;
+      text-align: center;
+      font-size: 22px;
+      border-radius: 12px;
+      background: #111;
+    }
 
-startBtn.addEventListener("click", () => {
-    running = true;
-    resetSession();
-    tapBtn.disabled = false;
-});
+    button {
+      width: 80%;
+      padding: 18px;
+      font-size: 18px;
+      border-radius: 14px;
+      border: none;
+      background: #222;
+      color: #fff;
+      cursor: pointer;
+    }
 
-endBtn.addEventListener("click", () => {
-    running = false;
-    tapBtn.disabled = true;
-});
-</script>
+    button:active {
+      background: #333;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="display" class="display">—</div>
+
+  <button onclick="tap()">TAP</button>
+  <button onclick="start()">START</button>
+  <button onclick="end()">× END</button>
+
+  <script>
+    let running = false
+    let count = 0
+
+    function start() {
+      running = true
+      count = 0
+      update("STARTED")
+    }
+
+    function tap() {
+      if (!running) {
+        update("NOT RUNNING")
+        return
+      }
+      count++
+      update("TAP " + count)
+    }
+
+    function end() {
+      running = false
+      update("ENDED (" + count + ")")
+    }
+
+    function update(text) {
+      document.getElementById("display").textContent = text
+    }
+  </script>
+
 </body>
 </html>
