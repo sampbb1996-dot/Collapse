@@ -13,7 +13,7 @@
     html, body {
       margin: 0;
       height: 100%;
-      overflow: hidden;                 /* no scrolling */
+      overflow: hidden; /* absolutely no scroll */
       background: #000;
       color: #fff;
       font-family: system-ui, -apple-system, sans-serif;
@@ -21,54 +21,36 @@
       touch-action: manipulation;
     }
 
-    .screen {
-      height: 100%;
+    /* full screen */
+    .app {
+      position: fixed;
+      inset: 0;
       display: flex;
       flex-direction: column;
     }
 
-    .tap-area {
-      flex: 1;                          /* most of the screen */
+    /* tap anywhere here */
+    .tap-zone {
+      flex: 1;
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #000;
-    }
-
-    .card {
-      background: #111;
-      width: min(90vw, 360px);
-      padding: 32px 24px;
-      border-radius: 24px;
-      text-align: center;
-      pointer-events: none;             /* taps go through */
-    }
-
-    .value-wrap {
-      height: 3.6rem;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 16px;
     }
 
     .value {
-      font-size: 3rem;
+      font-size: 4rem;
       line-height: 1;
       font-variant-numeric: tabular-nums;
+      pointer-events: none; /* taps pass through */
     }
 
-    .label {
-      font-size: 0.75rem;
-      opacity: 0.4;
-    }
-
-    .reset-bar {
+    /* reset area */
+    .reset-zone {
       padding: 16px;
       background: #000;
     }
 
-    button {
+    .reset-zone button {
       width: 100%;
       padding: 16px 0;
       font-size: 1rem;
@@ -81,32 +63,25 @@
 </head>
 
 <body>
-  <div class="screen">
+  <div class="app">
 
-    <!-- tap anywhere here -->
-    <div class="tap-area" onclick="tap()">
-      <div class="card">
-        <div class="value-wrap">
-          <div id="display" class="value">0.0000</div>
-        </div>
-        <div class="label">relative timing signal</div>
-      </div>
+    <!-- TAP ANYWHERE -->
+    <div class="tap-zone" onclick="tap()">
+      <div id="display" class="value">0.0000</div>
     </div>
 
-    <!-- reset fixed at bottom -->
-    <div class="reset-bar">
+    <!-- RESET ONLY -->
+    <div class="reset-zone">
       <button onclick="resetAll()">reset</button>
     </div>
 
   </div>
 
   <script>
-    const MAX_WINDOW = 20;
     const ALPHA = 0.15;
 
     let lastTap = null;
     let mean = null;
-    let windowVals = [];
 
     function tap() {
       const now = performance.now();
@@ -114,7 +89,6 @@
       if (lastTap === null) {
         lastTap = now;
         mean = 0;
-        windowVals = [0];
         render(0);
         return;
       }
@@ -126,16 +100,12 @@
         ? interval
         : ALPHA * interval + (1 - ALPHA) * mean;
 
-      windowVals.push(mean);
-      if (windowVals.length > MAX_WINDOW) windowVals.shift();
-
       render(mean / 1000);
     }
 
     function resetAll() {
       lastTap = null;
       mean = null;
-      windowVals = [];
       render(0);
     }
 
