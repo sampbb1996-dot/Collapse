@@ -1,144 +1,51 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>A</title>
-
-<style>
-html, body {
-  margin: 0;
-  height: 100%;
-  background: #000;
-  overflow: hidden;
-  font-family: system-ui, sans-serif;
-}
-
-#stage {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  touch-action: manipulation;
-}
-
-#A {
-  width: 80px;
-  height: 80px;
-  border-radius: 16px;
-  background: #fff;
-  opacity: 0;
-  transform: scale(0.85);
-  filter: blur(0px);
-  transition:
-    opacity 180ms linear,
-    transform 180ms ease-out,
-    filter 180ms linear;
-}
-
-#reset {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 14px 28px;
-  border-radius: 999px;
-  background: #222;
-  color: #fff;
-  border: none;
-  font-size: 16px;
-}
-</style>
-</head>
-
-<body>
-
-<div id="stage">
-  <div id="A"></div>
-</div>
-
-<button id="reset">reset</button>
-
 <script>
-/*
-FINAL STRUCTURE
+let presence = 0.6
+let annotations = []
+const tickInterval = 1000
 
-- System advances autonomously (fixed interval)
-- Tap = optional perturbation
-- Watching is valid
-- No instruction, no scoring, no urgency
-*/
+const shape = document.getElementById("shape")
+const score = document.getElementById("score")
 
-// ----- fixed corpus -----
-const PERIOD = 7;
-const survivesIn = new Set([1, 2, 4]);
+function evolve() {
+  // baseline decay
+  presence *= 0.98
 
-// ----- state -----
-let phase = 0;
-let present = true;
-let confidence = 0.4; // internal, hidden
+  // baseline noise
+  presence += (Math.random() - 0.5) * 0.02
 
-const A = document.getElementById("A");
-const resetBtn = document.getElementById("reset");
-
-// ----- step (autonomous) -----
-function step() {
-  phase = (phase + 1) % PERIOD;
-  const survives = survivesIn.has(phase);
-
-  // confidence evolves only from structure, not time pressure
-  if (survives) {
-    confidence = Math.min(1, confidence + 0.04);
-  } else {
-    confidence = Math.max(0, confidence - 0.06);
-  }
-
-  // persistence with inertia
-  if (survives || confidence > 0.6) {
-    present = true;
-  } else {
-    present = false;
-  }
-
-  render();
+  clamp()
+  render()
 }
 
-// ----- optional perturbation -----
-function perturb() {
-  // small structural nudge, nothing dramatic
-  confidence = Math.max(0, confidence - 0.08);
-  render();
+function advance(annotation) {
+  // interaction = variance only
+  presence += (Math.random() - 0.5) * 0.15
+
+  if (annotation !== null) {
+    annotations.push(annotation)
+    score.textContent = `annotations: ${annotations.length}`
+  }
+
+  clamp()
+  render()
 }
 
-// ----- render -----
+function clamp() {
+  presence = Math.max(0.05, Math.min(1, presence))
+}
+
 function render() {
-  A.style.opacity = present ? 0.6 + confidence * 0.4 : 0;
-  A.style.transform = `scale(${0.9 + confidence * 0.15})`;
-  A.style.filter = `blur(${(1 - confidence) * 1.5}px)`;
+  shape.style.opacity = presence
 }
 
-// ----- input -----
-let locked = false;
-document.getElementById("stage").addEventListener("click", () => {
-  if (locked) return;
-  locked = true;
-  perturb();
-  setTimeout(() => locked = false, 120);
-});
+document.body.addEventListener("click", e => {
+  if (e.target.tagName === "BUTTON") return
+  advance(null)
+})
 
-resetBtn.onclick = () => {
-  phase = 0;
-  confidence = 0.4;
-  present = true;
-  render();
-};
+document.getElementById("yes").onclick = () => advance(1)
+document.getElementById("no").onclick = () => advance(0)
 
-// ----- autonomous cadence -----
-setInterval(step, 1000); // fixed, boring, neutral
-
-render();
+setInterval(evolve, tickInterval)
+render()
 </script>
-
-</body>
-</html>
