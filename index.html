@@ -13,7 +13,6 @@ html, body {
   background: #000;
   color: #fff;
   font-family: system-ui, -apple-system, sans-serif;
-  -webkit-text-size-adjust: 100%;
 }
 
 #zone {
@@ -46,7 +45,7 @@ html, body {
 </head>
 
 <body>
-<div id="zone" onclick="tap()">
+<div id="zone">
   <div id="value">0.0000</div>
 </div>
 <button id="reset">reset</button>
@@ -54,38 +53,47 @@ html, body {
 <script>
 let times = [];
 let signal = 0;
-const ALPHA = 0.2;   // smoothing
-const DECAY = 0.98;  // relax toward baseline
+const ALPHA = 0.2;
+const DECAY = 0.98;
+
+let touching = false;
+
+const zone = document.getElementById("zone");
+
+zone.addEventListener("pointerdown", e => {
+  touching = true;
+});
+
+zone.addEventListener("pointerup", e => {
+  if (!touching) return;
+  touching = false;
+  tap();
+});
+
+zone.addEventListener("pointercancel", () => touching = false);
 
 function tap() {
   const t = performance.now();
   times.push(t);
+
   if (times.length < 4) {
-    render(signal *= DECAY);
+    signal *= DECAY;
+    render(signal);
     return;
   }
 
-  // last three intervals
-  const a = times[times.length - 1] - times[times.length - 2];
-  const b = times[times.length - 2] - times[times.length - 3];
-  const c = times[times.length - 3] - times[times.length - 4];
+  const a = times.at(-1) - times.at(-2);
+  const b = times.at(-2) - times.at(-3);
+  const c = times.at(-3) - times.at(-4);
 
-  // structural consistency (ratio-of-ratios)
   const r1 = a / b;
   const r2 = b / c;
   const error = Math.abs(r1 - r2);
 
-  // smooth + decay toward zero
   signal = ALPHA * error + (1 - ALPHA) * signal;
   signal *= DECAY;
 
   render(signal);
-}
-
-function resetAll() {
-  times = [];
-  signal = 0;
-  render(0);
 }
 
 function render(v) {
@@ -93,7 +101,11 @@ function render(v) {
     v.toFixed(4);
 }
 
-document.getElementById("reset").onclick = resetAll;
+document.getElementById("reset").onclick = () => {
+  times = [];
+  signal = 0;
+  render(0);
+};
 </script>
 </body>
 </html>
