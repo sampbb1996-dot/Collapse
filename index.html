@@ -1,110 +1,96 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Consistency</title>
+<meta charset="utf-8">
+<meta name="viewport"
+  content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<style>
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
 
-  <style>
-    html, body {
-      margin: 0;
-      height: 100%;
-      overflow: hidden;
-      background: #000;
-      color: #fff;
-      font-family: system-ui, -apple-system, sans-serif;
-      -webkit-text-size-adjust: 100%;
-    }
+#zone {
+  position: fixed;
+  inset: 0;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 
-    .app {
-      position: fixed;
-      inset: 0;
-      display: flex;
-      flex-direction: column;
-    }
+#value {
+  font-size: 4rem;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
 
-    .tap-zone {
-      flex: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .value {
-      font-size: 4rem;
-      font-variant-numeric: tabular-nums;
-      line-height: 1;
-      pointer-events: none;
-    }
-
-    .reset-zone {
-      padding: 16px;
-    }
-
-    button {
-      width: 100%;
-      padding: 16px 0;
-      font-size: 1rem;
-      border-radius: 999px;
-      border: none;
-      background: #222;
-      color: #fff;
-    }
-  </style>
+#reset {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  right: 16px;
+  padding: 16px;
+  border-radius: 999px;
+  background: #222;
+  border: none;
+  color: #fff;
+  font-size: 1rem;
+}
+</style>
 </head>
 
 <body>
-  <div class="app">
-    <div class="tap-zone" onclick="tap()">
-      <div id="display" class="value">1.0000</div>
-    </div>
+<div id="zone">
+  <div id="value">0.0000</div>
+</div>
+<button id="reset">reset</button>
 
-    <div class="reset-zone">
-      <button onclick="resetAll()">reset</button>
-    </div>
-  </div>
+<script>
+let x = 0;              // balance state
+let u = 0;              // control input
+const k = 2.5;          // damping (stability)
+let lastT = performance.now();
 
-  <script>
-    let lastTap = null;
-    let lastInterval = null;
+function step(t) {
+  const dt = (t - lastT) / 1000;
+  lastT = t;
 
-    function tap() {
-      const now = performance.now();
+  // dynamics: ẋ = u - kx
+  x += (u - k * x) * dt;
 
-      if (lastTap === null) {
-        lastTap = now;
-        lastInterval = null;
-        render(1);
-        return;
-      }
+  document.getElementById("value").textContent =
+    x.toFixed(4);
 
-      const interval = now - lastTap;
-      lastTap = now;
+  requestAnimationFrame(step);
+}
 
-      if (lastInterval === null) {
-        lastInterval = interval;
-        render(1);
-        return;
-      }
+requestAnimationFrame(step);
 
-      const ratio = interval / lastInterval;
-      lastInterval = interval;
+const zone = document.getElementById("zone");
 
-      render(ratio);
-    }
+zone.addEventListener("touchstart", handle);
+zone.addEventListener("touchmove", handle);
+zone.addEventListener("touchend", () => u = 0);
 
-    function resetAll() {
-      lastTap = null;
-      lastInterval = null;
-      render(1);
-    }
+function handle(e) {
+  const touch = e.touches[0];
+  const rect = zone.getBoundingClientRect();
+  const mid = rect.left + rect.width / 2;
+  u = (touch.clientX - mid) / (rect.width / 2);
+  u = Math.max(-1, Math.min(1, u));
+}
 
-    function render(v) {
-      document.getElementById("display").textContent =
-        v.toFixed(4);
-    }
-  </script>
+document.getElementById("reset").onclick = () => {
+  x = 0;
+  u = 0;
+};
+</script>
 </body>
 </html>
