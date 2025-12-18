@@ -3,111 +3,113 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Mean / Noise</title>
-
+<title>Mean</title>
 <style>
-  html, body {
+html, body {
     margin: 0;
     padding: 0;
-    background: black;
+    background: #000;
     overflow: hidden;
-    touch-action: manipulation;
-  }
-
-  canvas {
+    height: 100%;
+}
+canvas {
     display: block;
-  }
-
-  #audioBtn {
+}
+#btn {
     position: fixed;
-    bottom: 28px;
+    bottom: 40px;
     left: 50%;
     transform: translateX(-50%);
-    padding: 14px 22px;
-    border-radius: 18px;
+    padding: 16px 28px;
+    border-radius: 22px;
     border: none;
-    background: #222;
-    color: #ddd;
+    background: rgba(255,255,255,0.15);
+    color: #eee;
     font-size: 16px;
-  }
+}
 </style>
 </head>
 <body>
 
 <canvas id="c"></canvas>
-<button id="audioBtn">Enable Audio</button>
+<button id="btn">Enable Audio</button>
 
 <script>
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
+const btn = document.getElementById("btn");
 
 function resize() {
-  // CSS size
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-
-  // Device pixel ratio
-  const dpr = window.devicePixelRatio || 1;
-
-  // Backing store
-  canvas.width = w * dpr;
-  canvas.height = h * dpr;
-
-  // Visual size
-  canvas.style.width = w + "px";
-  canvas.style.height = h + "px";
-
-  // SINGLE scaling (this is the fix)
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
 }
-
 window.addEventListener("resize", resize);
 resize();
 
-// ---- DRAW LOOP ----
+// ---- AUDIO ----
+let audioCtx, osc, gain;
+let audioOn = false;
+
+btn.onclick = () => {
+    if (audioOn) return;
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    osc = audioCtx.createOscillator();
+    gain = audioCtx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.value = 180;          // soft frequency
+    gain.gain.value = 0.0001;           // start almost silent
+
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+
+    audioOn = true;
+    btn.textContent = "Audio Enabled";
+};
+
+// ---- VISUAL ----
+let t = 0;
 
 function draw() {
-  const w = canvas.width / (window.devicePixelRatio || 1);
-  const h = canvas.height / (window.devicePixelRatio || 1);
+    t += 0.002;
 
-  ctx.clearRect(0, 0, w, h);
+    const w = canvas.width;
+    const h = canvas.height;
+    const cx = w / 2;
+    const cy = h / 2;
 
-  const cx = w / 2;
-  const cy = h / 2;
+    ctx.fillStyle = "rgba(0,0,0,0.08)";
+    ctx.fillRect(0, 0, w, h);
 
-  const lineLength = h * 0.65;
-  const lineWidth = Math.max(6, w * 0.015);
+    const breath = 0.5 + 0.5 * Math.sin(t);
+    const length = h * (0.35 + 0.05 * breath);
+    const width  = 6 + 1.5 * breath;
 
-  const y1 = cy - lineLength / 2;
-  const y2 = cy + lineLength / 2;
+    const grad = ctx.createLinearGradient(cx, cy - length, cx, cy + length);
+    grad.addColorStop(0, "rgba(235,235,235,0)");
+    grad.addColorStop(0.5, "rgba(235,235,235,0.9)");
+    grad.addColorStop(1, "rgba(235,235,235,0)");
 
-  // Gradient fade to infinity
-  const grad = ctx.createLinearGradient(cx, y1, cx, y2);
-  grad.addColorStop(0.0, "rgba(255,255,255,0)");
-  grad.addColorStop(0.15, "rgba(255,255,255,0.25)");
-  grad.addColorStop(0.5, "rgba(255,255,255,0.85)");
-  grad.addColorStop(0.85, "rgba(255,255,255,0.25)");
-  grad.addColorStop(1.0, "rgba(255,255,255,0)");
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = width;
+    ctx.lineCap = "round";
 
-  ctx.strokeStyle = grad;
-  ctx.lineWidth = lineWidth;
-  ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - length);
+    ctx.lineTo(cx, cy + length);
+    ctx.stroke();
 
-  ctx.beginPath();
-  ctx.moveTo(cx, y1);
-  ctx.lineTo(cx, y2);
-  ctx.stroke();
+    // ---- AUDIO MAPPING ----
+    if (audioOn && gain) {
+        gain.gain.value = 0.01 * breath;   // extremely gentle
+    }
 
-  requestAnimationFrame(draw);
+    requestAnimationFrame(draw);
 }
 
 draw();
-
-// ---- AUDIO PLACEHOLDER (SAFE) ----
-document.getElementById("audioBtn").onclick = () => {
-  // intentionally empty for now
-  document.getElementById("audioBtn").textContent = "Audio Enabled";
-};
 </script>
 
 </body>
