@@ -1,21 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Calibrating</title>
+<style>
+  html,body{
+    margin:0;
+    padding:0;
+    height:100%;
+    background:#070708; /* deep near-black */
+    overflow:hidden;
+    touch-action:manipulation;
+    -webkit-user-select:none;
+    user-select:none;
+  }
+  canvas{
+    position:fixed;
+    inset:0;
+    width:100vw;
+    height:100vh;
+    display:block;
+    background:#070708; /* force black even if canvas clears */
+  }
+  #ui{
+    position:fixed;
+    left:0; right:0;
+    bottom: env(safe-area-inset-bottom);
+    padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
+    display:flex;
+    justify-content:center;
+    pointer-events:none; /* only button receives */
+  }
+  #audioBtn{
+    pointer-events:auto;
+    padding:16px 22px;
+    border-radius:20px;
+    border:1px solid rgba(255,255,255,0.10);
+    background:rgba(20,20,22,0.80);
+    color:rgba(245,245,240,0.92);
+    font: 600 18px/1 system-ui,-apple-system,Segoe UI,Roboto,Arial;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+  }
+  /* After enabled, move button away & fade it out (still tappable briefly) */
+  #audioBtn.enabled{
+    opacity:0.12;
+    transform: translateY(90px);
+    transition: opacity 900ms ease, transform 900ms ease;
+  }
+  #hint{
+    position:fixed;
+    top: calc(10px + env(safe-area-inset-top));
+    left: calc(10px + env(safe-area-inset-left));
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.35);
+    color: rgba(245,245,240,0.55);
+    font: 500 12px/1 system-ui,-apple-system,Segoe UI,Roboto,Arial;
+    letter-spacing: 0.02em;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hint">calibrating</div>
+
+<div id="ui">
+  <button id="audioBtn">Enable Audio</button>
+</div>
+
 <script>
-/* =========================
-   AUDIO ENABLE — NO UI
-========================= */
-let audioEnabled = false;
+(() => {
+  "use strict";
 
-async function enableAudioOnce() {
-  if (audioEnabled) return;
-  audioEnabled = true;
+  // -----------------------------
+  // Canvas / DPR-safe setup
+  // -----------------------------
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
 
-  // Hook audio here if needed
-  // e.g. audioCtx.resume()
+  let W = 0, H = 0, DPR = 1;
 
-  document.removeEventListener("pointerdown", enableAudioOnce);
-  document.removeEventListener("touchstart", enableAudioOnce);
-}
+  function resize(){
+    DPR = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    W = Math.floor(window.innerWidth * DPR);
+    H = Math.floor(window.innerHeight * DPR);
+    canvas.width = W;
+    canvas.height = H;
 
-// iOS requires a user gesture
-document.addEventListener("pointerdown", enableAudioOnce, { once: true });
-document.addEventListener("touchstart", enableAudioOnce, { once: true });
-</script>
+    // Force a known baseline every resize (prevents "white refresh" on iOS)
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.fillStyle = "#070708";
+    ctx.fillRect(0,0,W,H);
+  }
+
+  window.addEventListener("resize", resize, { passive:true });
+  // iOS sometimes fires "orientationchange" without resize timing
+  window.addEventListener("orientationchange", () => setTimeout(resize, 50), { passive:true });
+
+  resize();
+
+  // -----------------------------
+  // Visual model: central line that fades in BOTH:
+  //   - length (ends fade to infinity)
+  //   - width (edges fade)
+  // Off-white core.
+  // Sub-perceptual tilt drift ("degenerate spiral" hint).
+  // -----------------------------
+  const OFFWHITE = { r: 245, g: 245, b: 236 }; // slightly warm off-white
+
+  // "state" in [0,1] controls filled fraction (like your bar)
+  let state = 0.52;
+
+  // Very slow tilt drift (radians). Keep sub-perceptual.
+  let theta = 0;
+  let thetaVel = 0;
+
+  // Drift driver (no arbitrary hard tempo; just slow, low-amplitude wander)
+  function updateTilt(dt){
+    // tiny random walk with damping
+    const noise = (Math.random()*2 - 1);
+    thetaVel = (thetaVel * 0.995) + noise * 0.00002;   // extremely small
+    thetaVel = Math.max(-0.0012, Math.min(0.0012, thetaVel));
+    theta += thetaVel * dt;
+    // clamp to a very small angle range (sub-perceptual)
+    const maxAngle = 0.08; // ~4.6 degrees
+    theta = Math.max(-maxAngle, Math.min(maxAngle, theta));
+  }
+
+  // Optional taps: gently nudge state toward stability (not required)
+  let lastTap = 0;
+  window.addEventListener("pointerdown", (e) => {
+    // ignore taps on the button
+    if (e.target && e.target.id === "audioBtn") return;
+    const now = performance.now();
+    const dt = (now - lastTap) / 1000;
+    lastTap = now;
+
+    // If taps are spaced (not spam), slightly raise state; if spam, decay.
+    if (dt > 0.20 && dt < 2.5) state = Math.min(1, state + 0.01);
+    else state = Math.max(0, state - 0.01);
+  }, { passive:true });
+
+  function rgba(r,g,b,a){ return `rgba(${r|0},${g|0},${b|0},${a})`; }
+
+  function drawPillLine(cx, cy, length, thickness, fillFrac, angle){
+    // Background always black
+    ctx.fillStyle = "#070708";
+    ctx.fillRect(0,0,W,H);
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+
+    // Geometry (vertical in local space)
+    const halfLen = length * 0.5;
+    const x0 = -thickness * 0.5;
+    const y0 = -halfLen;
+    const w = thickness;
+    const h = length;
+    const radius = Math.max(1, thickness * 0.5);
+
+    // Helper: rounded rect path
+    function rr(x,y,w,h,r){
+      ctx.beginPath();
+      ctx.moveTo(x+r,y);
+      ctx.lineTo(x+w-r,y);
+      ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+      ctx.lineTo(x+w,y+h-r);
+      ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+      ctx.lineTo(x+r,y+h);
+      ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+      ctx.lineTo(x,y+r);
+      ctx.quadraticCurveTo(x,y,x+r,y);
+      ctx.closePath();
+    }
+
+    // ----- Track (dark ghost)
+    rr(x0,y0,w,h,radius);
+    ctx.fillStyle = "rgba(255,255,255,0.07)";
+    ctx.fill();
+
+    // ----- Fill region (bottom to top)
+    const fillH = Math.max(0, Math.min(1, fillFrac)) * h;
+    const fy0 = y0 + (h - fillH);
+
+    // Create fill gradient that fades:
+    // - at the ends (length fade to "infinity")
+    // - at the width edges (soft edges)
+    // We'll do it by clipping to rounded rect, then painting a composite gradient.
+
+    ctx.save();
+    rr(x0,y0,w,h,radius);
+    ctx.clip();
+
+    // Base off-white layer with vertical end-fade
+    const gradV = ctx.createLinearGradient(0, y0, 0, y0 + h);
+    gradV.addColorStop(0.00, rgba(OFFWHITE.r, OFFWHITE.g, OFFWHITE.b, 0.00));
+    gradV.addColorStop(0.10, rgba(OFFWHITE.r, OFFWHITE.g, OFFWHITE.b, 0.55));
+    gradV.addColorStop(0.50, rgba(OFFWHITE.r, OFFWHITE.g, OFFWHITE.b, 0.75));
+    gradV.addColorStop(0.90, rgba(OFFWHITE.r, OFFWHITE.g, OFFWHITE.b, 0.55));
+    gradV.addColorStop(1.00, rgba(OFFWHITE.r, OFFWHITE.g, OFFWHITE.b, 0.00));
+
+    // Width fade (edges)
+    const gradH = ctx.createLinearGradient(x0, 0, x0 + w, 0);
+    gradH.addColorStop(0.00, rgba(OFFWHITE.r, OFFWHITE.g, OFFWHITE.b, 0.00));
+    gradH.addColorStop(0.18, rgba(OFFWHITE.r, OFFWHITE.g, OFFWHITE.b, 0.70));
+    gradH.addColorStop(0.50, rgba(OFFWHITE.r, OFFWHITE.g, OFFWHITE.b, 0.92));
+    gradH.addColorStop(0.82, rgba(OFFWHITE.r, OFFWHITE.g, OFFWHITE.b, 0.70));
+    gradH.addColorStop(1.00, rgba(OFFWHITE.r, OFFWHITE.g, OFFWHITE.b, 0.00));
+
+    // Fill ONLY the active segment (like a bar)
+    ctx.beginPath();
+    ctx.rect(x0, fy0, w, fillH);
+    ctx.clip();
+
+    // Paint vertical fade then multiply by horizontal fade using globalCompositeOperation
+    ctx.fillStyle = gradV;
+    ctx.fillRect(x0, y0, w, h);
+
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = gradH;
+    ctx.fillRect(x0, y0, w, h);
+
+    // Soft glow (subtle, not bright)
+    ctx.globalCompositeOperation = "screen";
+    ctx.shadowColor = "rgba(245,245,236,0.18)";
+    ctx.shadowBlur = 26 * DPR;
+    ctx.fillStyle = "rgba(245,245,236,0.12)";
+    ctx.fillRect(x0, fy0, w, fillH);
+
+    ctx.restore(); // clip restore
+
+    // Center spine (very faint reference)
+    ctx.globalAlpha = 0.10;
+    ctx.strokeStyle = "rgba(245,245,236,0.45)";
+    ctx.lineWidth = Math.max(1, 1.2 * DPR);
+    ctx.beginPath();
+    ctx.moveTo(0, y0 + 10);
+    ctx.lineTo(0, y0 + h - 10);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    ctx.restore();
+  }
+
+  // -----------------------------
+  // Audio: iOS-safe. Must start on gesture.
+  // Tie to state + subtle tilt.
+  // -----------------------------
+  let audioOn = false;
+  let AC = null, osc = null, gain = null, lp = null;
+
+  async function enableAudio(){
+    if (audioOn) return;
+    audioOn = true;
+
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    AC = new AudioCtx();
+
+    // iOS: resume required after user gesture
+    if (AC.state !== "running") {
+      try { await AC.resume(); } catch(e) {}
+    }
+
+    osc = AC.createOscillator();
+    gain = AC.createGain();
+    lp = AC.createBiquadFilter();
+
+    osc.type = "sine";
+    lp.type = "lowpass";
+
+    // start quiet; we ramp up gently
+    gain.gain.setValueAtTime(0.0001, AC.currentTime);
+
+    osc.connect(lp);
+    lp.connect(gain);
+    gain.connect(AC.destination);
+
+    osc.start();
+
+    // quick ramp to audible-but-soft
+    const t = AC.currentTime;
+    gain.gain.linearRampToValueAtTime(0.05, t + 0.35);
+
+    // button UI: move it away and dim it (still visible for status)
+    const btn = document.getElementById("audioBtn");
+    btn.textContent = "Audio Enabled";
+    btn.classList.add("enabled");
+
+    // also move the whole UI away from center visually by keeping it low
+    // (already bottom anchored)
+  }
+
+  const audioBtn = document.getElementById("audioBtn");
+  audioBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    enableAudio();
+  });
+
+  // -----------------------------
+  // Main loop
+  // -----------------------------
+  let lastT = performance.now();
+
+  function loop(tNow){
+    const dt = Math.min(0.05, (tNow - lastT) / 1000);
+    lastT = tNow;
+
+    // Very slow autonomous drift of state (keeps it alive without tapping)
+    // (no obvious cycle; tiny wander with soft pull to mid)
+    const pull = (0.5 - state) * 0.02;
+    const jitter = (Math.random()*2 - 1) * 0.003;
+    state = Math.max(0, Math.min(1, state + (pull + jitter) * dt));
+
+    updateTilt(dt);
+
+    // Draw
+    const cx = W * 0.5;
+    const cy = H * 0.5;
+
+    // size: keep thin enough for precision, thick enough for phone
+    const length = Math.min(H, W) * 0.78;
+    const thickness = Math.max(12 * DPR, Math.min(W,H) * 0.028);
+
+    drawPillLine(cx, cy, length, thickness, state, theta);
+
+    // Update audio if enabled
+    if (audioOn && AC && osc && gain && lp) {
+      const baseHz = 190;              // stable, not annoying
+      const spanHz = 360;              // controlled range
+      const hz = baseHz + spanHz * state;
+
+      // tiny modulation from tilt (sub-perceptual)
+      const tiltMod = 1 + (theta * 0.25);
+      const targetHz = Math.max(60, Math.min(1200, hz * tiltMod));
+
+      const at = AC.currentTime;
+      osc.frequency.setTargetAtTime(targetHz, at, 0.04);
+
+      // filter follows for smoothness
+      const cutoff = Math.max(250, Math.min(5000, targetHz * 3.2));
+      lp.frequency.setTargetAtTime(cutoff, at, 0.06);
+    }
+
+    requestAnimationFrame(loop);
+  }
+
+  requestAnimationFrame(loop);
+
+  // -----------------------------
+  // Extra iOS safety: if page becomes hidden, keep visuals correct;
+  // audio may be suspended by OS — we try to resume on visibility.
+  // -----------------------------
+  document.addEventListener("visibilitychange", async () => {
+    // force redraw baseline to avoid white flash on return
+    ctx.fillStyle = "#070708";
+    ctx.fillRect(0,0,W,H);
+
+    if (audioOn && AC && document.visibilityState === "visible
