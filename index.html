@@ -4,7 +4,6 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Field</title>
-
 <style>
   html, body {
     margin: 0;
@@ -13,92 +12,107 @@
     overflow: hidden;
     touch-action: manipulation;
   }
-  canvas {
-    display: block;
-  }
+  canvas { display:block; }
 </style>
 </head>
-
 <body>
 <canvas id="c"></canvas>
 
 <script>
 /* =========================
-   CORE STATE
+   STATE
 ========================= */
-
-let p = 0.5;                 // latent state
-const decay = 0.0015;        // pull back to equilibrium
+let p = 0.5;                 // latent [0..1]
+const decay = 0.0015;        // pull toward 0.5
 const noiseStrength = 0.02;  // intrinsic randomness
 
 /* =========================
-   CANVAS SETUP
+   CANVAS
 ========================= */
-
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+const ctx = canvas.getContext("2d", { alpha: false });
 
 function resize() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 }
-window.addEventListener("resize", resize);
+addEventListener("resize", resize);
 resize();
 
 /* =========================
-   AUDIO (mobile-safe)
+   AUDIO (iOS-safe)
 ========================= */
-
 let audioCtx = null;
 let osc = null;
+let filter = null;
 let gain = null;
 let audioUnlocked = false;
 
-function initAudio() {
+function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
+  // Oscillator -> lowpass -> gain -> destination
   osc = audioCtx.createOscillator();
+  filter = audioCtx.createBiquadFilter();
   gain = audioCtx.createGain();
 
   osc.type = "sine";
-  osc.frequency.value = 220;
-  gain.gain.value = 0;
+  filter.type = "lowpass";
 
-  osc.connect(gain).connect(audioCtx.destination);
+  // start silent; we’ll open it right after resume
+  gain.gain.value = 0.0;
+
+  osc.connect(filter);
+  filter.connect(gain);
+  gain.connect(audioCtx.destination);
+
   osc.start();
 
-  audioCtx.resume();
+  // MUST be inside gesture; resume + ramp gain so you *hear it*
+  audioCtx.resume().then(() => {
+    const t = audioCtx.currentTime;
+    gain.gain.cancelScheduledValues(t);
+    gain.gain.setValueAtTime(0.0, t);
+    gain.gain.linearRampToValueAtTime(0.08, t + 0.05); // audible
+  });
 }
 
 /* =========================
-   INPUT
+   INPUT (tap anywhere)
 ========================= */
+function onUserTap(e) {
+  e.preventDefault();
+  unlockAudio();
 
-document.body.addEventListener("pointerdown", () => {
-  initAudio();
-
-  // minimal, noisy influence
+  // small noisy perturbation per tap (optional)
   p += (Math.random() - 0.5) * 0.05;
   p = Math.max(0, Math.min(1, p));
-});
+}
+
+// iOS Safari: touchstart is the most reliable unlock gesture
+document.addEventListener("touchstart", onUserTap, { passive: false });
+document.addEventListener("mousedown", onUserTap);
 
 /* =========================
-   NOISE RENDER
+   RENDER (noise field)
 ========================= */
-
 function renderNoise() {
-  const img = ctx.createImageData(canvas.width, canvas.height);
+  const w = canvas.width, h = canvas.height;
+  const img = ctx.createImageData(w, h);
   const d = img.data;
 
-  const baseR = 150 + p * 70;
-  const baseG = 120 + p * 40;
-  const baseB = 60  + p * 20;
+  // warm dark-mode palette, tied to p
+  const baseR = 140 + p * 80;
+  const baseG = 110 + p * 55;
+  const baseB =  55 + p * 25;
+
+  const amp = 38 * (0.35 + p); // noise contrast tied to p
 
   for (let i = 0; i < d.length; i += 4) {
-    const n = (Math.random() - 0.5) * 40 * (0.3 + p);
+    const n = (Math.random() - 0.5) * amp;
     d[i]     = baseR + n;
     d[i + 1] = baseG + n;
     d[i + 2] = baseB + n;
@@ -111,22 +125,30 @@ function renderNoise() {
 /* =========================
    UPDATE LOOP
 ========================= */
-
 function step() {
-  // intrinsic evolution
+  // autonomous evolution (always drifts toward 0.5)
   p += (Math.random() - 0.5) * noiseStrength;
   p += (0.5 - p) * decay;
   p = Math.max(0, Math.min(1, p));
 
   renderNoise();
 
-  if (audioUnlocked) {
-    osc.frequency.value = 180 + p * 480;
-    gain.gain.value = 0.03 + p * 0.08;
+  // bind audio to p
+  if (audioUnlocked && audioCtx) {
+    const t = audioCtx.currentTime;
+
+    // frequency + filter move with p (clearly audible)
+    const freq = 140 + p * 520;        // 140..660 Hz
+    const cutoff = 400 + p * 2800;     // 400..3200 Hz
+    const vol = 0.03 + p * 0.07;       // 0.03..0.10
+
+    osc.frequency.setTargetAtTime(freq, t, 0.02);
+    filter.frequency.setTargetAtTime(cutoff, t, 0.03);
+    gain.gain.setTargetAtTime(vol, t, 0.04);
   }
 }
 
-// slow, non-informative cadence
+// steady cadence; not “gamey”
 setInterval(step, 700);
 renderNoise();
 </script>
