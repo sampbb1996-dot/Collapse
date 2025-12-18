@@ -3,60 +3,58 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Substrate</title>
+<title>Field</title>
 
 <style>
   html, body {
     margin: 0;
-    width: 100%;
-    height: 100%;
-    background: #1f1f1f;
+    padding: 0;
+    background: #2a2a2a;
     overflow: hidden;
     touch-action: manipulation;
   }
-
-  #field {
-    position: fixed;
-    inset: 0;
-    background: rgb(90, 90, 90);
-    transition: background 120ms linear;
+  canvas {
+    display: block;
   }
 </style>
 </head>
 
 <body>
-<div id="field"></div>
+<canvas id="c"></canvas>
 
 <script>
-/* -------------------------
-   STATE
--------------------------- */
+/* =========================
+   CORE STATE
+========================= */
 
-let p = 0.5;            // core state (0..1), starts unbiased
-const decay = 0.002;    // pull back toward 0.5
-const noise = 0.015;    // inherent uncertainty
+let p = 0.5;                 // latent state
+const decay = 0.0015;        // pull back to equilibrium
+const noiseStrength = 0.02;  // intrinsic randomness
 
-/* -------------------------
-   VISUAL
--------------------------- */
+/* =========================
+   CANVAS SETUP
+========================= */
 
-const field = document.getElementById("field");
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
 
-function renderVisual() {
-  const v = Math.floor(80 + p * 140);
-  field.style.background = `rgb(${v}, ${v * 0.85}, ${v * 0.35})`;
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
 }
+window.addEventListener("resize", resize);
+resize();
 
-/* -------------------------
-   AUDIO (created ONCE)
--------------------------- */
+/* =========================
+   AUDIO (mobile-safe)
+========================= */
 
 let audioCtx = null;
 let osc = null;
 let gain = null;
 let audioUnlocked = false;
 
-function unlockAudio() {
+function initAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
 
@@ -66,8 +64,8 @@ function unlockAudio() {
   gain = audioCtx.createGain();
 
   osc.type = "sine";
-  osc.frequency.value = 200;
-  gain.gain.value = 0; // start silent
+  osc.frequency.value = 220;
+  gain.gain.value = 0;
 
   osc.connect(gain).connect(audioCtx.destination);
   osc.start();
@@ -75,44 +73,62 @@ function unlockAudio() {
   audioCtx.resume();
 }
 
-/* -------------------------
-   EVOLUTION
--------------------------- */
-
-function step() {
-  // intrinsic drift
-  p += (Math.random() - 0.5) * noise;
-  p += (0.5 - p) * decay;
-
-  p = Math.max(0, Math.min(1, p));
-
-  renderVisual();
-
-  if (audioUnlocked) {
-    osc.frequency.value = 180 + p * 520;
-    gain.gain.value = 0.04 + p * 0.12;
-  }
-}
-
-/* -------------------------
+/* =========================
    INPUT
--------------------------- */
+========================= */
 
-// First tap: unlock audio (nothing else)
-document.body.addEventListener("pointerdown", unlockAudio, { once: true });
-
-// Subsequent taps: weak, noisy perturbation
 document.body.addEventListener("pointerdown", () => {
-  p += (Math.random() - 0.5) * 0.08;
+  initAudio();
+
+  // minimal, noisy influence
+  p += (Math.random() - 0.5) * 0.05;
   p = Math.max(0, Math.min(1, p));
 });
 
-/* -------------------------
-   LOOP
--------------------------- */
+/* =========================
+   NOISE RENDER
+========================= */
 
-setInterval(step, 600);
-renderVisual();
+function renderNoise() {
+  const img = ctx.createImageData(canvas.width, canvas.height);
+  const d = img.data;
+
+  const baseR = 150 + p * 70;
+  const baseG = 120 + p * 40;
+  const baseB = 60  + p * 20;
+
+  for (let i = 0; i < d.length; i += 4) {
+    const n = (Math.random() - 0.5) * 40 * (0.3 + p);
+    d[i]     = baseR + n;
+    d[i + 1] = baseG + n;
+    d[i + 2] = baseB + n;
+    d[i + 3] = 255;
+  }
+
+  ctx.putImageData(img, 0, 0);
+}
+
+/* =========================
+   UPDATE LOOP
+========================= */
+
+function step() {
+  // intrinsic evolution
+  p += (Math.random() - 0.5) * noiseStrength;
+  p += (0.5 - p) * decay;
+  p = Math.max(0, Math.min(1, p));
+
+  renderNoise();
+
+  if (audioUnlocked) {
+    osc.frequency.value = 180 + p * 480;
+    gain.gain.value = 0.03 + p * 0.08;
+  }
+}
+
+// slow, non-informative cadence
+setInterval(step, 700);
+renderNoise();
 </script>
 </body>
 </html>
