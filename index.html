@@ -3,48 +3,56 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Mean + Noise</title>
+<title>Specificity</title>
 <style>
   html, body {
     margin: 0;
     height: 100%;
-    background: #2b2b2b;
+    background: #000;
     overflow: hidden;
     touch-action: manipulation;
   }
   canvas { display: block; }
-  #audioBtn {
+  #status {
     position: fixed;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 14px 22px;
-    border-radius: 18px;
-    border: none;
-    background: #ff9800;
-    color: #111;
-    font-size: 16px;
+    bottom: 16px;
+    width: 100%;
+    text-align: center;
+    color: #666;
+    font-family: system-ui, sans-serif;
+    font-size: 12px;
   }
 </style>
 </head>
 <body>
 
 <canvas id="c"></canvas>
-<button id="audioBtn">Enable Audio</button>
+<div id="status">calibrating</div>
 
 <script>
 /* -------------------------
-   STATE
+   STATE (HIDDEN)
 -------------------------- */
 
-// latent mean (what matters)
-let m = 0.5;          // equilibrium
-// instantaneous state (what you perceive)
+// latent calibration (slow, hidden)
+let mean = 0.5;
+
+// perceived state (fast, noisy)
 let x = 0.5;
 
-const meanDecay = 0.0006;   // m → 0.5
-const pullToMean = 0.04;    // x → m
-const noiseAmp = 0.08;      // local variance
+// noise + pull parameters
+let noiseAmp = 0.06;
+const pull = 0.03;
+const meanDecay = 0.0004;
+
+// calibration tracking
+let lastX = x;
+let variance = 0;
+let samples = 0;
+
+// stop conditions
+let unstableCount = 0;
+let stableCount = 0;
 
 /* -------------------------
    CANVAS
@@ -61,88 +69,87 @@ addEventListener("resize", resize);
 resize();
 
 /* -------------------------
-   AUDIO
+   INPUT (PERTURBS UNCERTAINTY ONLY)
 -------------------------- */
-
-let audioCtx, noiseNode, gainNode;
-let audioEnabled = false;
-
-function initAudio() {
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
-
-  noiseNode = audioCtx.createBufferSource();
-  noiseNode.buffer = buffer;
-  noiseNode.loop = true;
-
-  gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0;
-
-  noiseNode.connect(gainNode).connect(audioCtx.destination);
-  noiseNode.start();
-}
-
-/* -------------------------
-   INPUT
--------------------------- */
-
-document.getElementById("audioBtn").onclick = () => {
-  if (!audioEnabled) {
-    initAudio();
-    audioEnabled = true;
-    document.getElementById("audioBtn").remove();
-  }
-};
 
 document.body.addEventListener("pointerdown", () => {
-  if (!audioEnabled) return;
-  // taps nudge the MEAN, not raw noise
-  m += (Math.random() - 0.5) * 0.08;
-  m = Math.max(0, Math.min(1, m));
+  // input increases uncertainty slightly
+  noiseAmp += 0.005;
 });
 
 /* -------------------------
-   UPDATE + RENDER
+   UPDATE LOOP
 -------------------------- */
 
 function step() {
-  // mean relaxes back to 0.5
-  m += (0.5 - m) * meanDecay;
 
-  // instantaneous state fluctuates but is pulled to mean
+  // latent mean drifts slowly back to neutral
+  mean += (0.5 - mean) * meanDecay;
+
+  // noisy surface state
   x += (Math.random() - 0.5) * noiseAmp;
-  x += (m - x) * pullToMean;
+  x += (mean - x) * pull;
   x = Math.max(0, Math.min(1, x));
 
-  // audio follows instantaneous state
-  if (audioEnabled) {
-    gainNode.gain.value = 0.25 * x;
+  // track variance of perception
+  const dx = x - lastX;
+  variance = 0.98 * variance + 0.02 * dx * dx;
+  lastX = x;
+
+  samples++;
+
+  // adaptive gating
+  if (variance > 0.002) {
+    unstableCount++;
+    noiseAmp *= 0.98; // dampen
+  } else {
+    stableCount++;
   }
 
-  // visual noise centered on x
+  // stop conditions
+  if (unstableCount > 300) {
+    end("stopped (noise)");
+    return;
+  }
+  if (stableCount > 1200) {
+    end("complete");
+    return;
+  }
+
+  render();
+  requestAnimationFrame(step);
+}
+
+/* -------------------------
+   RENDER
+-------------------------- */
+
+function render() {
   const img = ctx.createImageData(canvas.width, canvas.height);
   const d = img.data;
 
-  const baseR = 150 + x * 70;
-  const baseG = 120 + x * 40;
-  const baseB = 60  + x * 20;
+  const base = 40 + x * 60;
 
   for (let i = 0; i < d.length; i += 4) {
-    const n = (Math.random() - 0.5) * 50;
-    d[i]     = baseR + n;
-    d[i + 1] = baseG + n;
-    d[i + 2] = baseB + n;
-    d[i + 3] = 255;
+    const n = (Math.random() - 0.5) * 30;
+    d[i] = d[i+1] = d[i+2] = base + n;
+    d[i+3] = 255;
   }
 
   ctx.putImageData(img, 0, 0);
-  requestAnimationFrame(step);
 }
+
+/* -------------------------
+   END
+-------------------------- */
+
+function end(msg) {
+  document.getElementById("status").textContent = msg;
+}
+
+/* -------------------------
+   START
+-------------------------- */
 
 step();
 </script>
