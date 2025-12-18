@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Specificity</title>
+
 <style>
   html, body {
     margin: 0;
@@ -12,10 +13,12 @@
     overflow: hidden;
     touch-action: manipulation;
   }
-  canvas { display: block; }
+  canvas {
+    display: block;
+  }
   #hint {
     position: fixed;
-    bottom: 14px;
+    bottom: 12px;
     width: 100%;
     text-align: center;
     font-family: system-ui, sans-serif;
@@ -24,6 +27,7 @@
   }
 </style>
 </head>
+
 <body>
 
 <canvas id="c"></canvas>
@@ -31,16 +35,21 @@
 
 <script>
 /* =========================
-   STATE
+   CORE STATE
 ========================= */
 
-let mean = 0.5;          // latent invariant
-let x = 0.5;             // surface state
+// latent invariant (slow)
+let mean = 0.5;
 
+// perceived surface state (fast)
+let x = 0.5;
+
+// dynamics
 let noiseAmp = 0.06;
 const pull = 0.03;
 const meanDecay = 0.0004;
 
+// stability tracking
 let lastX = x;
 let variance = 0;
 
@@ -62,7 +71,10 @@ resize();
    AUDIO
 ========================= */
 
-let audioCtx, noiseNode, gainNode, filterNode;
+let audioCtx;
+let noiseSource;
+let gainNode;
+let filterNode;
 let audioStarted = false;
 
 function startAudio() {
@@ -74,18 +86,22 @@ function startAudio() {
     data[i] = Math.random() * 2 - 1;
   }
 
-  noiseNode = audioCtx.createBufferSource();
-  noiseNode.buffer = buffer;
-  noiseNode.loop = true;
+  noiseSource = audioCtx.createBufferSource();
+  noiseSource.buffer = buffer;
+  noiseSource.loop = true;
 
   filterNode = audioCtx.createBiquadFilter();
   filterNode.type = "lowpass";
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0;
+  gainNode.gain.value = 0.2; // audible baseline
 
-  noiseNode.connect(filterNode).connect(gainNode).connect(audioCtx.destination);
-  noiseNode.start();
+  noiseSource
+    .connect(filterNode)
+    .connect(gainNode)
+    .connect(audioCtx.destination);
+
+  noiseSource.start();
   audioStarted = true;
 }
 
@@ -95,7 +111,7 @@ function startAudio() {
 
 document.body.addEventListener("pointerdown", () => {
   if (!audioStarted) startAudio();
-  noiseAmp += 0.008; // destabilize
+  noiseAmp += 0.008; // destabilization only
 });
 
 /* =========================
@@ -103,17 +119,21 @@ document.body.addEventListener("pointerdown", () => {
 ========================= */
 
 function step() {
+  // mean relaxes slowly
   mean += (0.5 - mean) * meanDecay;
 
+  // noisy surface update
   x += (Math.random() - 0.5) * noiseAmp;
   x += (mean - x) * pull;
   x = Math.max(0, Math.min(1, x));
 
+  // variance tracking
   const dx = x - lastX;
   variance = 0.98 * variance + 0.02 * dx * dx;
   lastX = x;
 
-  noiseAmp *= 0.999; // slow natural recovery
+  // natural recovery
+  noiseAmp *= 0.999;
 
   updateAudio();
   render();
@@ -128,12 +148,14 @@ function step() {
 function updateAudio() {
   if (!audioStarted) return;
 
-  // volume tied to instability, not success
   const instability = Math.min(1, variance * 400);
+
+  // loudness tracks instability
   gainNode.gain.value = 0.15 + instability * 0.35;
 
-  // filter cutoff tied to latent mean stability
-  filterNode.frequency.value = 300 + (1 - instability) * 900;
+  // spectral roughness tracks instability
+  filterNode.frequency.value =
+    300 + (1 - instability) * 900;
 }
 
 /* =========================
@@ -143,18 +165,21 @@ function updateAudio() {
 function render() {
   const img = ctx.createImageData(canvas.width, canvas.height);
   const d = img.data;
+
   const centerY = canvas.height * mean;
 
   for (let y = 0; y < canvas.height; y++) {
-    const structural = Math.exp(-Math.abs(y - centerY) / (canvas.height * 0.25));
+    const structural =
+      Math.exp(-Math.abs(y - centerY) / (canvas.height * 0.25));
 
     for (let xPix = 0; xPix < canvas.width; xPix++) {
       const i = (y * canvas.width + xPix) * 4;
+
       const n = (Math.random() - 0.5) * 40;
       const base = 30 + structural * 55 + x * 20;
 
-      d[i] = d[i+1] = d[i+2] = base + n;
-      d[i+3] = 255;
+      d[i] = d[i + 1] = d[i + 2] = base + n;
+      d[i + 3] = 255;
     }
   }
 
@@ -167,5 +192,6 @@ function render() {
 
 step();
 </script>
+
 </body>
 </html>
