@@ -3,32 +3,27 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Bound Noise</title>
+<title>Mean + Noise</title>
 <style>
   html, body {
     margin: 0;
-    padding: 0;
     height: 100%;
     background: #2b2b2b;
     overflow: hidden;
     touch-action: manipulation;
   }
-
-  canvas {
-    display: block;
-  }
-
+  canvas { display: block; }
   #audioBtn {
     position: fixed;
-    bottom: 24px;
+    bottom: 20px;
     left: 50%;
     transform: translateX(-50%);
     padding: 14px 22px;
-    font-size: 16px;
-    border-radius: 20px;
+    border-radius: 18px;
     border: none;
     background: #ff9800;
     color: #111;
+    font-size: 16px;
   }
 </style>
 </head>
@@ -38,33 +33,46 @@
 <button id="audioBtn">Enable Audio</button>
 
 <script>
-/* ---------- canvas ---------- */
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
+/* -------------------------
+   STATE
+-------------------------- */
+
+// latent mean (what matters)
+let m = 0.5;          // equilibrium
+// instantaneous state (what you perceive)
+let x = 0.5;
+
+const meanDecay = 0.0006;   // m → 0.5
+const pullToMean = 0.04;    // x → m
+const noiseAmp = 0.08;      // local variance
+
+/* -------------------------
+   CANVAS
+-------------------------- */
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
 
 function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
 }
-window.addEventListener('resize', resize);
+addEventListener("resize", resize);
 resize();
 
-/* ---------- state ---------- */
-let intensity = 0.5;        // baseline 50/50
-const decay = 0.002;        // slow return to baseline
-let audioEnabled = false;
+/* -------------------------
+   AUDIO
+-------------------------- */
 
-/* ---------- audio ---------- */
 let audioCtx, noiseNode, gainNode;
+let audioEnabled = false;
 
 function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-  const bufferSize = audioCtx.sampleRate;
-  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
-
-  for (let i = 0; i < bufferSize; i++) {
+  for (let i = 0; i < data.length; i++) {
     data[i] = Math.random() * 2 - 1;
   }
 
@@ -75,53 +83,68 @@ function initAudio() {
   gainNode = audioCtx.createGain();
   gainNode.gain.value = 0;
 
-  noiseNode.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
+  noiseNode.connect(gainNode).connect(audioCtx.destination);
   noiseNode.start();
 }
 
-/* ---------- input ---------- */
-document.getElementById('audioBtn').onclick = () => {
+/* -------------------------
+   INPUT
+-------------------------- */
+
+document.getElementById("audioBtn").onclick = () => {
   if (!audioEnabled) {
     initAudio();
     audioEnabled = true;
-    document.getElementById('audioBtn').remove();
+    document.getElementById("audioBtn").remove();
   }
 };
 
-document.body.addEventListener('pointerdown', () => {
+document.body.addEventListener("pointerdown", () => {
   if (!audioEnabled) return;
-  intensity = Math.min(1, intensity + 0.08);
+  // taps nudge the MEAN, not raw noise
+  m += (Math.random() - 0.5) * 0.08;
+  m = Math.max(0, Math.min(1, m));
 });
 
-/* ---------- render loop ---------- */
-function draw() {
-  // decay toward baseline
-  if (intensity > 0.5) intensity -= decay;
-  if (intensity < 0.5) intensity += decay;
+/* -------------------------
+   UPDATE + RENDER
+-------------------------- */
 
-  // audio follows intensity
+function step() {
+  // mean relaxes back to 0.5
+  m += (0.5 - m) * meanDecay;
+
+  // instantaneous state fluctuates but is pulled to mean
+  x += (Math.random() - 0.5) * noiseAmp;
+  x += (m - x) * pullToMean;
+  x = Math.max(0, Math.min(1, x));
+
+  // audio follows instantaneous state
   if (audioEnabled) {
-    gainNode.gain.value = intensity * 0.25;
+    gainNode.gain.value = 0.25 * x;
   }
 
-  // draw noise
+  // visual noise centered on x
   const img = ctx.createImageData(canvas.width, canvas.height);
   const d = img.data;
 
+  const baseR = 150 + x * 70;
+  const baseG = 120 + x * 40;
+  const baseB = 60  + x * 20;
+
   for (let i = 0; i < d.length; i += 4) {
-    const n = (Math.random() * intensity) * 255;
-    d[i]     = 255;          // orange
-    d[i + 1] = 152 + n * 0.2;
-    d[i + 2] = 0;
+    const n = (Math.random() - 0.5) * 50;
+    d[i]     = baseR + n;
+    d[i + 1] = baseG + n;
+    d[i + 2] = baseB + n;
     d[i + 3] = 255;
   }
 
   ctx.putImageData(img, 0, 0);
-  requestAnimationFrame(draw);
+  requestAnimationFrame(step);
 }
 
-draw();
+step();
 </script>
 </body>
 </html>
