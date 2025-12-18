@@ -1,54 +1,89 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Audio Unlock</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>State</title>
 <style>
   html, body {
     margin: 0;
     width: 100%;
     height: 100%;
-    background: #1c1c1c;
+    background: #181818;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #fff;
-    font-family: system-ui, sans-serif;
   }
-  button {
-    font-size: 20px;
-    padding: 20px 28px;
-    border-radius: 14px;
-    border: none;
-    background: #ff9500;
-    color: #000;
+
+  #field {
+    position: absolute;
+    inset: 0;
+    background: #181818;
+  }
+
+  #circle {
+    width: 200px;
+    height: 200px;
+    border-radius: 50%;
+    background: #ff9f0a;
+    opacity: 0;
   }
 </style>
 </head>
 <body>
 
-<button id="start">tap to begin</button>
+<div id="field"></div>
+<div id="circle"></div>
 
 <script>
-let ctx, osc, gain;
+let state = Math.random() < 0.5 ? 1 : 0;
+let bias = 0;
 
-document.getElementById("start").addEventListener("touchstart", () => {
-  if (!ctx) {
-    ctx = new (window.AudioContext || window.webkitAudioContext)();
-    gain = ctx.createGain();
-    gain.gain.value = 0.15;
-    gain.connect(ctx.destination);
+const circle = document.getElementById("circle");
 
-    osc = ctx.createOscillator();
-    osc.type = "sine";
-    osc.frequency.value = 220;
-    osc.connect(gain);
-    osc.start();
-  }
+// --- AUDIO ---
+const ctx = new (window.AudioContext || window.webkitAudioContext)();
+const osc = ctx.createOscillator();
+const gain = ctx.createGain();
 
+osc.type = "sine";
+osc.frequency.value = 220;
+gain.gain.value = 0;
+
+osc.connect(gain);
+gain.connect(ctx.destination);
+osc.start();
+
+// unlock audio on first touch
+document.body.addEventListener("touchstart", () => {
   ctx.resume();
 }, { once: true });
+
+// --- EVOLUTION ---
+function step() {
+  // drift back toward 50/50 if nothing meaningful happens
+  bias *= 0.98;
+
+  const p = 0.5 + bias;
+  state = Math.random() < p ? 1 : 0;
+
+  // visual
+  circle.style.opacity = state;
+
+  // audio
+  gain.gain.setTargetAtTime(state ? 0.15 : 0, ctx.currentTime, 0.05);
+
+  // slow, steady evolution
+  setTimeout(step, 600);
+}
+
+// --- INPUT ---
+document.body.addEventListener("touchstart", () => {
+  // input slightly counteracts decay but adds noise
+  bias += (Math.random() - 0.5) * 0.1;
+});
+
+step();
 </script>
 
 </body>
