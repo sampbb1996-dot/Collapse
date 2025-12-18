@@ -1,165 +1,253 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Calibration</title>
-<style>
-  html, body {
-    margin: 0;
-    height: 100%;
-    background: #000;
-    overflow: hidden;
-    touch-action: manipulation;
-  }
-
-  #wrap {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-  }
-
-  canvas {
-    display: block;
-  }
-
-  button {
-    position: fixed;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    padding: 22px 28px;
-    font-size: 18px;
-    border-radius: 22px;
-    border: none;
-    background: #777;
-    color: #000;
-  }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Scalar Drift Instrument</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      touch-action: manipulation;
+    }
+    #wrap {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    canvas { display: block; }
+    #startBtn {
+      position: fixed;
+      left: 50%;
+      bottom: 22px;
+      transform: translateX(-50%);
+      padding: 14px 18px;
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 16px;
+      background: rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.9);
+      font-size: 15px;
+      backdrop-filter: blur(8px);
+    }
+    #startBtn:active { transform: translateX(-50%) scale(0.98); }
+  </style>
 </head>
 <body>
-
-<div id="wrap">
-  <canvas id="c"></canvas>
-</div>
-
-<button id="start">START</button>
+  <div id="wrap">
+    <canvas id="c"></canvas>
+  </div>
+  <button id="startBtn">Enable Audio</button>
 
 <script>
-/* =====================
-   CANVAS (square, centered)
-===================== */
-const c = document.getElementById("c");
-const ctx = c.getContext("2d");
+/* =========================================================
+   SCALAR BAR INSTRUMENT
+   - Primary: 1D bar (x in [0,1])
+   - Hidden: binary latent state S ∈ {M,F} sampled on fixed ticks
+   - Support: near-threshold broadband noise (no rhythm, no ticks)
+   ========================================================= */
+
+/* -------------------------
+   PARAMETERS (tune lightly)
+-------------------------- */
+const TICK_SEC = 1.8;            // fixed tick interval (1–3s)
+const ALPHA = 0.14;              // mean pull strength per tick
+const NOISE_SIGMA = 0.020;       // per-tick noise on x (small)
+const MU_M = 0.46;               // mean target when S=M
+const MU_F = 0.54;               // mean target when S=F
+
+// latent drift: p = P(S=M), drifts slowly toward 0.5 (minutes scale)
+const P_RELAX = 0.002;           // per tick: p += (0.5-p)*P_RELAX
+const P_JITTER = 0.003;          // per tick: tiny random walk jitter
+
+// micro tick acknowledgement: tiny opacity pulse on tick
+const PULSE_DECAY = 0.14;        // per frame
+const PULSE_STRENGTH = 0.10;     // added alpha at tick (subtle)
+
+// visuals (keep minimal)
+const BAR_W_FRAC = 0.72;         // bar width relative to screen
+const BAR_H = 12;                // px
+const BAR_RADIUS = 8;            // rounded ends
+const BASE_ALPHA = 0.55;         // baseline bar opacity
+const BG_ALPHA = 1.0;
+
+/* -------------------------
+   STATE
+-------------------------- */
+let x = 0.50;          // visible scalar [0,1]
+let p = 0.50;          // latent probability P(S=M)
+let pulse = 0.0;       // tick acknowledgement pulse
+let lastTick = performance.now();
+
+/* -------------------------
+   CANVAS
+-------------------------- */
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d", { alpha: true });
 
 function resize() {
-  const size = Math.min(innerWidth, innerHeight);
-  c.width = size;
-  c.height = size;
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  canvas.width = Math.floor(innerWidth * dpr);
+  canvas.height = Math.floor(innerHeight * dpr);
+  canvas.style.width = innerWidth + "px";
+  canvas.style.height = innerHeight + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 addEventListener("resize", resize);
 resize();
 
-/* =====================
-   TIME-OF-DAY DRIFT
-===================== */
-function dayFraction() {
-  const d = new Date();
-  const s =
-    d.getHours() * 3600 +
-    d.getMinutes() * 60 +
-    d.getSeconds() +
-    d.getMilliseconds() / 1000;
-  return s / 86400;
+/* -------------------------
+   AUDIO (sub-threshold noise)
+   - iOS requires user gesture to start AudioContext
+-------------------------- */
+let audioCtx = null;
+let noiseSrc = null;
+let gainNode = null;
+let audioEnabled = false;
+
+function createWhiteNoiseBuffer(ctx, seconds = 2.0) {
+  const sr = ctx.sampleRate;
+  const length = Math.floor(sr * seconds);
+  const buffer = ctx.createBuffer(1, length, sr);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+  return buffer;
 }
 
-function daylight01() {
-  const p = dayFraction();
-  return 0.5 - 0.5 * Math.cos(2 * Math.PI * p);
-}
-
-/* =====================
-   SHARED STATE
-===================== */
-let level = 0.5;
-let noise = 0.04;
-const pull = 0.01;
-
-/* =====================
-   AUDIO (tap-only start)
-===================== */
-let audioCtx, src, gain, filter;
-
-function startAudio() {
+function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  audioCtx.resume();
 
-  const buf = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const buffer = createWhiteNoiseBuffer(audioCtx, 2.0);
+  noiseSrc = audioCtx.createBufferSource();
+  noiseSrc.buffer = buffer;
+  noiseSrc.loop = true;
 
-  src = audioCtx.createBufferSource();
-  src.buffer = buf;
-  src.loop = true;
+  // subtle continuous support noise. Does NOT encode state or ticks.
+  gainNode = audioCtx.createGain();
+  gainNode.gain.value = 0.0; // fade in gently after start
 
-  filter = audioCtx.createBiquadFilter();
-  filter.type = "lowpass";
+  noiseSrc.connect(gainNode).connect(audioCtx.destination);
+  noiseSrc.start();
 
-  gain = audioCtx.createGain();
-
-  src.connect(filter).connect(gain).connect(audioCtx.destination);
-  src.start();
+  // gentle fade to near-threshold level
+  const now = audioCtx.currentTime;
+  gainNode.gain.setValueAtTime(0.0, now);
+  gainNode.gain.linearRampToValueAtTime(0.02, now + 1.2); // keep low
 }
 
-/* =====================
-   INPUT
-===================== */
-document.body.addEventListener("pointerdown", () => {
-  if (!gain) return;
-  noise += 0.012;
-});
-
-/* =====================
-   LOOP
-===================== */
-function loop() {
-  const day = daylight01();
-  const baseline = 0.42 + day * 0.16;
-
-  level += (baseline - level) * pull;
-  level += (Math.random() - 0.5) * noise;
-  level = Math.max(0, Math.min(1, level));
-
-  noise *= 0.995;
-
-  // AUDIO MAP
-  if (gain) {
-    gain.gain.value = 0.22 + level * 0.45;
-    filter.frequency.value = 300 + level * 1400;
-  }
-
-  // VISUAL MAP (square field)
-  const tile = 14;
-  for (let y = 0; y < c.height; y += tile) {
-    for (let x = 0; x < c.width; x += tile) {
-      const v = 60 + level * 160 + (Math.random() - 0.5) * 40;
-      ctx.fillStyle = `rgb(${v},${v},${v})`;
-      ctx.fillRect(x, y, tile, tile);
+document.getElementById("startBtn").onclick = async () => {
+  try {
+    if (!audioEnabled) {
+      initAudio();
+      audioEnabled = true;
+      document.getElementById("startBtn").remove();
     }
+  } catch (e) {
+    // If audio fails, we still run visuals. No further UI.
+    document.getElementById("startBtn").textContent = "Audio unavailable";
+    setTimeout(() => document.getElementById("startBtn")?.remove(), 1200);
   }
+};
 
-  requestAnimationFrame(loop);
+/* -------------------------
+   RNG helpers
+-------------------------- */
+function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+
+// approx gaussian via sum of uniforms
+function randn() {
+  let s = 0;
+  for (let i = 0; i < 6; i++) s += Math.random();
+  return (s - 3) / 1.224744871; // normalize approx
 }
 
-/* =====================
-   START
-===================== */
-document.getElementById("start").onclick = () => {
-  startAudio();
-  document.getElementById("start").remove();
-  loop();
-};
+/* -------------------------
+   TICK UPDATE (fixed interval)
+-------------------------- */
+function tick() {
+  // drift p slowly
+  p += (0.5 - p) * P_RELAX;
+  p += (Math.random() - 0.5) * P_JITTER;
+  p = clamp01(p);
+
+  // sample latent state S ~ Bernoulli(p)
+  const S_is_M = Math.random() < p;
+
+  // map latent to mean target
+  const mu = S_is_M ? MU_M : MU_F;
+
+  // visible scalar update
+  x = x + ALPHA * (mu - x) + NOISE_SIGMA * randn();
+  x = clamp01(x);
+
+  // tiny acknowledgement pulse
+  pulse = Math.min(1, pulse + PULSE_STRENGTH);
+}
+
+/* -------------------------
+   RENDER
+-------------------------- */
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, h / 2, w / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+function draw() {
+  const now = performance.now();
+  const dt = now - lastTick;
+
+  // fixed ticks
+  if (dt >= TICK_SEC * 1000) {
+    // catch up if the tab stalled
+    const n = Math.floor(dt / (TICK_SEC * 1000));
+    for (let i = 0; i < Math.min(3, n); i++) tick();
+    lastTick += n * (TICK_SEC * 1000);
+  }
+
+  // decay pulse
+  pulse *= (1 - PULSE_DECAY);
+
+  // clear
+  ctx.globalAlpha = BG_ALPHA;
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, innerWidth, innerHeight);
+
+  // bar geometry
+  const barW = innerWidth * BAR_W_FRAC;
+  const barH = BAR_H;
+  const bx = (innerWidth - barW) / 2;
+  const by = (innerHeight - barH) / 2;
+
+  // background track (very faint)
+  ctx.globalAlpha = 0.14;
+  ctx.fillStyle = "#fff";
+  roundRect(ctx, bx, by, barW, barH, BAR_RADIUS);
+  ctx.fill();
+
+  // filled portion
+  const fillW = Math.max(barH, barW * x); // keep rounded cap visible
+  ctx.globalAlpha = BASE_ALPHA + pulse * 0.18; // micro tick ack
+  ctx.fillStyle = "#fff";
+  roundRect(ctx, bx, by, fillW, barH, BAR_RADIUS);
+  ctx.fill();
+
+  // optional: minimal center dot (commented out)
+  // ctx.globalAlpha = 0.10;
+  // ctx.beginPath(); ctx.arc(innerWidth/2, innerHeight/2, 2, 0, Math.PI*2); ctx.fill();
+
+  requestAnimationFrame(draw);
+}
+
+draw();
 </script>
 </body>
 </html>
