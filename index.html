@@ -13,50 +13,40 @@
     touch-action: manipulation;
   }
   canvas { display: block; }
-  #status {
+  #hint {
     position: fixed;
-    bottom: 16px;
+    bottom: 14px;
     width: 100%;
     text-align: center;
-    color: #666;
     font-family: system-ui, sans-serif;
-    font-size: 12px;
+    font-size: 11px;
+    color: #555;
   }
 </style>
 </head>
 <body>
 
 <canvas id="c"></canvas>
-<div id="status">calibrating</div>
+<div id="hint">tap increases instability</div>
 
 <script>
-/* -------------------------
-   STATE (HIDDEN)
--------------------------- */
+/* =========================
+   STATE
+========================= */
 
-// latent calibration (slow, hidden)
-let mean = 0.5;
+let mean = 0.5;          // latent invariant
+let x = 0.5;             // surface state
 
-// perceived state (fast, noisy)
-let x = 0.5;
-
-// noise + pull parameters
 let noiseAmp = 0.06;
 const pull = 0.03;
 const meanDecay = 0.0004;
 
-// calibration tracking
 let lastX = x;
 let variance = 0;
-let samples = 0;
 
-// stop conditions
-let unstableCount = 0;
-let stableCount = 0;
-
-/* -------------------------
+/* =========================
    CANVAS
--------------------------- */
+========================= */
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -68,88 +58,112 @@ function resize() {
 addEventListener("resize", resize);
 resize();
 
-/* -------------------------
-   INPUT (PERTURBS UNCERTAINTY ONLY)
--------------------------- */
+/* =========================
+   AUDIO
+========================= */
+
+let audioCtx, noiseNode, gainNode, filterNode;
+let audioStarted = false;
+
+function startAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
+
+  noiseNode = audioCtx.createBufferSource();
+  noiseNode.buffer = buffer;
+  noiseNode.loop = true;
+
+  filterNode = audioCtx.createBiquadFilter();
+  filterNode.type = "lowpass";
+
+  gainNode = audioCtx.createGain();
+  gainNode.gain.value = 0;
+
+  noiseNode.connect(filterNode).connect(gainNode).connect(audioCtx.destination);
+  noiseNode.start();
+  audioStarted = true;
+}
+
+/* =========================
+   INPUT
+========================= */
 
 document.body.addEventListener("pointerdown", () => {
-  // input increases uncertainty slightly
-  noiseAmp += 0.005;
+  if (!audioStarted) startAudio();
+  noiseAmp += 0.008; // destabilize
 });
 
-/* -------------------------
+/* =========================
    UPDATE LOOP
--------------------------- */
+========================= */
 
 function step() {
-
-  // latent mean drifts slowly back to neutral
   mean += (0.5 - mean) * meanDecay;
 
-  // noisy surface state
   x += (Math.random() - 0.5) * noiseAmp;
   x += (mean - x) * pull;
   x = Math.max(0, Math.min(1, x));
 
-  // track variance of perception
   const dx = x - lastX;
   variance = 0.98 * variance + 0.02 * dx * dx;
   lastX = x;
 
-  samples++;
+  noiseAmp *= 0.999; // slow natural recovery
 
-  // adaptive gating
-  if (variance > 0.002) {
-    unstableCount++;
-    noiseAmp *= 0.98; // dampen
-  } else {
-    stableCount++;
-  }
-
-  // stop conditions
-  if (unstableCount > 300) {
-    end("stopped (noise)");
-    return;
-  }
-  if (stableCount > 1200) {
-    end("complete");
-    return;
-  }
-
+  updateAudio();
   render();
+
   requestAnimationFrame(step);
 }
 
-/* -------------------------
-   RENDER
--------------------------- */
+/* =========================
+   AUDIO MAPPING
+========================= */
+
+function updateAudio() {
+  if (!audioStarted) return;
+
+  // volume tied to instability, not success
+  const instability = Math.min(1, variance * 400);
+  gainNode.gain.value = 0.15 + instability * 0.35;
+
+  // filter cutoff tied to latent mean stability
+  filterNode.frequency.value = 300 + (1 - instability) * 900;
+}
+
+/* =========================
+   VISUAL
+========================= */
 
 function render() {
   const img = ctx.createImageData(canvas.width, canvas.height);
   const d = img.data;
+  const centerY = canvas.height * mean;
 
-  const base = 40 + x * 60;
+  for (let y = 0; y < canvas.height; y++) {
+    const structural = Math.exp(-Math.abs(y - centerY) / (canvas.height * 0.25));
 
-  for (let i = 0; i < d.length; i += 4) {
-    const n = (Math.random() - 0.5) * 30;
-    d[i] = d[i+1] = d[i+2] = base + n;
-    d[i+3] = 255;
+    for (let xPix = 0; xPix < canvas.width; xPix++) {
+      const i = (y * canvas.width + xPix) * 4;
+      const n = (Math.random() - 0.5) * 40;
+      const base = 30 + structural * 55 + x * 20;
+
+      d[i] = d[i+1] = d[i+2] = base + n;
+      d[i+3] = 255;
+    }
   }
 
   ctx.putImageData(img, 0, 0);
 }
 
-/* -------------------------
-   END
--------------------------- */
-
-function end(msg) {
-  document.getElementById("status").textContent = msg;
-}
-
-/* -------------------------
+/* =========================
    START
--------------------------- */
+========================= */
 
 step();
 </script>
