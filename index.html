@@ -1,32 +1,159 @@
 <!DOCTYPE html>
-<html>
-<body style="margin:0;background:black">
-<button id="b" style="font-size:20px;padding:20px;margin:40px">
-  TAP FOR SOUND
-</button>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calibration</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+    touch-action: manipulation;
+  }
+  canvas { display: block; }
+  button {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    padding: 22px 28px;
+    font-size: 18px;
+    border-radius: 22px;
+    border: none;
+    background: #777;
+    color: #000;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+<button id="start">START</button>
 
 <script>
-let ctx, src, gain;
+/* =====================
+   CANVAS (iOS-safe)
+===================== */
+const c = document.getElementById("c");
+const ctx = c.getContext("2d");
 
-document.getElementById("b").onclick = () => {
-  ctx = new (window.AudioContext || window.webkitAudioContext)();
-  ctx.resume();
+function resize() {
+  c.width = innerWidth;
+  c.height = innerHeight;
+}
+addEventListener("resize", resize);
+resize();
 
-  const buf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+/* =====================
+   TIME-OF-DAY DRIFT
+   - local clock only
+   - no location
+   - no sensing
+===================== */
+function dayFraction() {
+  const d = new Date();
+  const s =
+    d.getHours() * 3600 +
+    d.getMinutes() * 60 +
+    d.getSeconds() +
+    d.getMilliseconds() / 1000;
+  return s / 86400; // 0..1
+}
+
+// smooth daily wave: lowest ~midnight, highest ~midday
+function daylight01() {
+  const p = dayFraction();
+  return 0.5 - 0.5 * Math.cos(2 * Math.PI * p);
+}
+
+/* =====================
+   SHARED STATE
+===================== */
+let level = 0.5;      // shared scalar (audio + visual)
+let noise = 0.04;     // turbulence (decays)
+const pull = 0.01;    // slow pull to daily baseline
+
+/* =====================
+   AUDIO (must start on tap)
+===================== */
+let audioCtx, src, gain, filter;
+
+function startAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  audioCtx.resume();
+
+  const buf = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
   const d = buf.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = Math.random()*2-1;
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
 
-  src = ctx.createBufferSource();
+  src = audioCtx.createBufferSource();
   src.buffer = buf;
   src.loop = true;
 
-  gain = ctx.createGain();
-  gain.gain.value = 0.3;
+  filter = audioCtx.createBiquadFilter();
+  filter.type = "lowpass";
 
-  src.connect(gain).connect(ctx.destination);
+  gain = audioCtx.createGain();
+
+  src.connect(filter).connect(gain).connect(audioCtx.destination);
   src.start();
+}
 
-  document.getElementById("b").innerText = "PLAYING";
+/* =====================
+   INPUT
+   - taps add turbulence only
+===================== */
+document.body.addEventListener("pointerdown", () => {
+  if (!gain) return;
+  noise += 0.012;
+});
+
+/* =====================
+   LOOP
+===================== */
+function loop() {
+  // daily baseline (agnostic drift)
+  const day = daylight01();              // 0..1
+  const baseline = 0.42 + day * 0.16;    // 0.42..0.58
+
+  // pull toward baseline
+  level += (baseline - level) * pull;
+
+  // turbulence
+  level += (Math.random() - 0.5) * noise;
+  level = Math.max(0, Math.min(1, level));
+
+  // decay turbulence
+  noise *= 0.995;
+
+  // AUDIO MAP
+  if (gain) {
+    gain.gain.value = 0.22 + level * 0.45;
+    filter.frequency.value = 300 + level * 1400;
+  }
+
+  // VISUAL MAP (tile-based grain)
+  const tile = 14;
+  for (let y = 0; y < c.height; y += tile) {
+    for (let x = 0; x < c.width; x += tile) {
+      const v = 60 + level * 160 + (Math.random() - 0.5) * 40;
+      ctx.fillStyle = `rgb(${v},${v},${v})`;
+      ctx.fillRect(x, y, tile, tile);
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+
+/* =====================
+   START
+===================== */
+document.getElementById("start").onclick = () => {
+  startAudio();
+  document.getElementById("start").remove();
+  loop();
 };
 </script>
 </body>
