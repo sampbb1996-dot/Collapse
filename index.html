@@ -3,113 +3,135 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Mean</title>
+<title>Centered Field (Tilt Drift)</title>
 <style>
-html, body {
+  html, body {
     margin: 0;
-    padding: 0;
+    height: 100%;
     background: #000;
     overflow: hidden;
-    height: 100%;
-}
-canvas {
-    display: block;
-}
-#btn {
-    position: fixed;
-    bottom: 40px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 16px 28px;
-    border-radius: 22px;
-    border: none;
-    background: rgba(255,255,255,0.15);
-    color: #eee;
-    font-size: 16px;
-}
+    touch-action: manipulation;
+  }
+  canvas { display: block; }
 </style>
 </head>
 <body>
 
 <canvas id="c"></canvas>
-<button id="btn">Enable Audio</button>
 
 <script>
+/* =========================
+   CANVAS (single DPR strategy)
+========================= */
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
-const btn = document.getElementById("btn");
+
+let dpr = 1, vw = 0, vh = 0;
 
 function resize() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+  vw = window.innerWidth;
+  vh = window.innerHeight;
+  dpr = window.devicePixelRatio || 1;
+
+  canvas.width = Math.floor(vw * dpr);
+  canvas.height = Math.floor(vh * dpr);
+  canvas.style.width = vw + "px";
+  canvas.style.height = vh + "px";
+
+  // draw in CSS pixels
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
-window.addEventListener("resize", resize);
+addEventListener("resize", resize);
 resize();
 
-// ---- AUDIO ----
-let audioCtx, osc, gain;
-let audioOn = false;
+/* =========================
+   VISUAL CONSTANTS
+========================= */
+const FG = [235, 235, 235];          // off-white
+const BASE_WIDTH = 10;               // base line width
+const MAX_ALPHA = 0.85;              // center alpha
+const TRACK_ALPHA = 0.08;            // faint track
 
-btn.onclick = () => {
-    if (audioOn) return;
+// "fade to infinity" feel: long line + ends to ~0
+const LINE_LEN = 1.25;               // multiplier of screen height
 
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    osc = audioCtx.createOscillator();
-    gain = audioCtx.createGain();
+/* =========================
+   SUB-PERCEPTUAL TILT DRIFT
+   - bounded random walk with mean reversion
+   - does NOT create a visible "rotation task"
+========================= */
+let theta = 0;                        // radians
+const THETA_MAX = (0.9 * Math.PI) / 180;  // ±0.9° (small)
+const THETA_DRIFT = 0.00008;          // random walk speed
+const THETA_RELAX = 0.00006;          // pull back to 0
 
-    osc.type = "sine";
-    osc.frequency.value = 180;          // soft frequency
-    gain.gain.value = 0.0001;           // start almost silent
+let lastT = performance.now();
 
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.start();
+/* =========================
+   HELPERS
+========================= */
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-    audioOn = true;
-    btn.textContent = "Audio Enabled";
-};
+/* =========================
+   RENDER
+========================= */
+function draw(now) {
+  const dt = Math.min(50, now - lastT); // ms cap
+  lastT = now;
 
-// ---- VISUAL ----
-let t = 0;
+  // --- update tilt (sub-perceptual) ---
+  // random walk + mean reversion
+  theta += (Math.random() - 0.5) * THETA_DRIFT * dt;
+  theta += (0 - theta) * THETA_RELAX * dt;
+  theta = clamp(theta, -THETA_MAX, THETA_MAX);
 
-function draw() {
-    t += 0.002;
+  // --- clear background (fixed) ---
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, vw, vh);
 
-    const w = canvas.width;
-    const h = canvas.height;
-    const cx = w / 2;
-    const cy = h / 2;
+  // --- geometry ---
+  const cx = vw / 2;
+  const cy = vh / 2;
 
-    ctx.fillStyle = "rgba(0,0,0,0.08)";
-    ctx.fillRect(0, 0, w, h);
+  const halfLen = (vh * LINE_LEN) / 2;
 
-    const breath = 0.5 + 0.5 * Math.sin(t);
-    const length = h * (0.35 + 0.05 * breath);
-    const width  = 6 + 1.5 * breath;
+  // endpoints of the tilted line
+  const dx = Math.sin(theta) * halfLen;
+  const dy = Math.cos(theta) * halfLen;
 
-    const grad = ctx.createLinearGradient(cx, cy - length, cx, cy + length);
-    grad.addColorStop(0, "rgba(235,235,235,0)");
-    grad.addColorStop(0.5, "rgba(235,235,235,0.9)");
-    grad.addColorStop(1, "rgba(235,235,235,0)");
+  const x1 = cx - dx, y1 = cy - dy;
+  const x2 = cx + dx, y2 = cy + dy;
 
-    ctx.strokeStyle = grad;
-    ctx.lineWidth = width;
-    ctx.lineCap = "round";
+  // faint track (same axis, lower alpha)
+  ctx.lineCap = "round";
+  ctx.lineWidth = BASE_WIDTH;
+  ctx.strokeStyle = `rgba(${FG[0]},${FG[1]},${FG[2]},${TRACK_ALPHA})`;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
 
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - length);
-    ctx.lineTo(cx, cy + length);
-    ctx.stroke();
+  // "fade to infinity": alpha peaks at center, decays toward ends
+  const grad = ctx.createLinearGradient(x1, y1, x2, y2);
+  grad.addColorStop(0.00, `rgba(${FG[0]},${FG[1]},${FG[2]},0.0)`);
+  grad.addColorStop(0.18, `rgba(${FG[0]},${FG[1]},${FG[2]},${0.22 * MAX_ALPHA})`);
+  grad.addColorStop(0.50, `rgba(${FG[0]},${FG[1]},${FG[2]},${1.00 * MAX_ALPHA})`);
+  grad.addColorStop(0.82, `rgba(${FG[0]},${FG[1]},${FG[2]},${0.22 * MAX_ALPHA})`);
+  grad.addColorStop(1.00, `rgba(${FG[0]},${FG[1]},${FG[2]},0.0)`);
 
-    // ---- AUDIO MAPPING ----
-    if (audioOn && gain) {
-        gain.gain.value = 0.01 * breath;   // extremely gentle
-    }
+  // slight width emphasis at center without a "pulse"
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = BASE_WIDTH * 1.05;
 
-    requestAnimationFrame(draw);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+
+  requestAnimationFrame(draw);
 }
 
-draw();
+requestAnimationFrame(draw);
 </script>
 
 </body>
