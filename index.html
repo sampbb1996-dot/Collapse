@@ -1,159 +1,21 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Centered Field (Calibrated)</title>
-
-<style>
-  html, body {
-    margin: 0;
-    height: 100%;
-    background: #000;
-    overflow: hidden;
-    touch-action: manipulation;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  }
-
-  canvas {
-    display: block;
-  }
-
-  /* Minimal peripheral control */
-  #audioBtn {
-    position: fixed;
-    bottom: 16px;
-    left: 16px;
-    padding: 8px 12px;
-    font-size: 13px;
-    border-radius: 12px;
-    border: none;
-    background: rgba(255,255,255,0.08);
-    color: rgba(255,255,255,0.6);
-    backdrop-filter: blur(6px);
-    transition: opacity 1.2s ease;
-  }
-
-  #audioBtn.hidden {
-    opacity: 0;
-    pointer-events: none;
-  }
-</style>
-</head>
-<body>
-
-<canvas id="c"></canvas>
-<button id="audioBtn">Enable audio</button>
-
 <script>
 /* =========================
-   CANVAS SETUP
+   AUDIO ENABLE — NO UI
 ========================= */
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+let audioEnabled = false;
 
-let vw, vh, dpr;
+async function enableAudioOnce() {
+  if (audioEnabled) return;
+  audioEnabled = true;
 
-function resize() {
-  vw = window.innerWidth;
-  vh = window.innerHeight;
-  dpr = window.devicePixelRatio || 1;
+  // Hook audio here if needed
+  // e.g. audioCtx.resume()
 
-  canvas.width = vw * dpr;
-  canvas.height = vh * dpr;
-  canvas.style.width = vw + "px";
-  canvas.style.height = vh + "px";
-
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-}
-addEventListener("resize", resize);
-resize();
-
-/* =========================
-   VISUAL PARAMETERS
-========================= */
-const FG = [235,235,235];      // off-white
-const BASE_WIDTH = 10;
-const MAX_ALPHA = 0.85;
-const TRACK_ALPHA = 0.07;
-const LINE_LEN = 1.3;
-
-/* =========================
-   TILT DRIFT (degenerate spiral)
-========================= */
-let theta = 0;
-const THETA_MAX = 0.9 * Math.PI / 180;
-const DRIFT = 0.00008;
-const RELAX = 0.00006;
-
-let lastT = performance.now();
-
-/* =========================
-   RENDER LOOP
-========================= */
-function draw(now) {
-  const dt = Math.min(50, now - lastT);
-  lastT = now;
-
-  // Sub-perceptual angular drift
-  theta += (Math.random() - 0.5) * DRIFT * dt;
-  theta += -theta * RELAX * dt;
-  theta = Math.max(-THETA_MAX, Math.min(THETA_MAX, theta));
-
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, vw, vh);
-
-  const cx = vw / 2;
-  const cy = vh / 2;
-  const halfLen = (vh * LINE_LEN) / 2;
-
-  const dx = Math.sin(theta) * halfLen;
-  const dy = Math.cos(theta) * halfLen;
-
-  const x1 = cx - dx, y1 = cy - dy;
-  const x2 = cx + dx, y2 = cy + dy;
-
-  ctx.lineCap = "round";
-
-  // Faint axis
-  ctx.strokeStyle = `rgba(${FG[0]},${FG[1]},${FG[2]},${TRACK_ALPHA})`;
-  ctx.lineWidth = BASE_WIDTH;
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.stroke();
-
-  // Main faded line
-  const g = ctx.createLinearGradient(x1, y1, x2, y2);
-  g.addColorStop(0.0, `rgba(${FG[0]},${FG[1]},${FG[2]},0)`);
-  g.addColorStop(0.18, `rgba(${FG[0]},${FG[1]},${FG[2]},0.22)`);
-  g.addColorStop(0.5, `rgba(${FG[0]},${FG[1]},${FG[2]},${MAX_ALPHA})`);
-  g.addColorStop(0.82, `rgba(${FG[0]},${FG[1]},${FG[2]},0.22)`);
-  g.addColorStop(1.0, `rgba(${FG[0]},${FG[1]},${FG[2]},0)`);
-
-  ctx.strokeStyle = g;
-  ctx.lineWidth = BASE_WIDTH * 1.05;
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.stroke();
-
-  requestAnimationFrame(draw);
+  document.removeEventListener("pointerdown", enableAudioOnce);
+  document.removeEventListener("touchstart", enableAudioOnce);
 }
 
-requestAnimationFrame(draw);
-
-/* =========================
-   AUDIO ENABLE (minimal)
-========================= */
-const btn = document.getElementById("audioBtn");
-
-btn.onclick = async () => {
-  // placeholder: hook up audio here if needed
-  btn.textContent = "Audio enabled";
-  setTimeout(() => btn.classList.add("hidden"), 600);
-};
+// iOS requires a user gesture
+document.addEventListener("pointerdown", enableAudioOnce, { once: true });
+document.addEventListener("touchstart", enableAudioOnce, { once: true });
 </script>
-
-</body>
-</html>
