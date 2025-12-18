@@ -1,97 +1,83 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
-  <title>Scalar Drift Instrument</title>
-  <style>
-    html, body {
-      margin: 0;
-      height: 100%;
-      background: #000;
-      overflow: hidden;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      touch-action: manipulation;
-    }
-    #wrap {
-      height: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    canvas { display: block; }
-    #startBtn {
-      position: fixed;
-      left: 50%;
-      bottom: 22px;
-      transform: translateX(-50%);
-      padding: 14px 18px;
-      border: 1px solid rgba(255,255,255,0.18);
-      border-radius: 16px;
-      background: rgba(255,255,255,0.08);
-      color: rgba(255,255,255,0.9);
-      font-size: 15px;
-      backdrop-filter: blur(8px);
-    }
-    #startBtn:active { transform: translateX(-50%) scale(0.98); }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Scalar Drift Instrument</title>
+
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+    touch-action: manipulation;
+  }
+  canvas {
+    display: block;
+  }
+  #audioBtn {
+    position: fixed;
+    bottom: 22px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 14px 18px;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.18);
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.9);
+    font-size: 15px;
+    backdrop-filter: blur(8px);
+  }
+</style>
 </head>
+
 <body>
-  <div id="wrap">
-    <canvas id="c"></canvas>
-  </div>
-  <button id="startBtn">Enable Audio</button>
+<canvas id="c"></canvas>
+<button id="audioBtn">Enable Audio</button>
 
 <script>
 /* =========================================================
-   SCALAR BAR INSTRUMENT
-   - Primary: 1D bar (x in [0,1])
-   - Hidden: binary latent state S ∈ {M,F} sampled on fixed ticks
-   - Support: near-threshold broadband noise (no rhythm, no ticks)
-   ========================================================= */
+   CORE PARAMETERS — DO NOT OVER-TUNE
+========================================================= */
 
-/* -------------------------
-   PARAMETERS (tune lightly)
--------------------------- */
-const TICK_SEC = 1.8;            // fixed tick interval (1–3s)
-const ALPHA = 0.14;              // mean pull strength per tick
-const NOISE_SIGMA = 0.020;       // per-tick noise on x (small)
-const MU_M = 0.46;               // mean target when S=M
-const MU_F = 0.54;               // mean target when S=F
+// Fixed tick
+const TICK_SECONDS = 1.8;
 
-// latent drift: p = P(S=M), drifts slowly toward 0.5 (minutes scale)
-const P_RELAX = 0.002;           // per tick: p += (0.5-p)*P_RELAX
-const P_JITTER = 0.003;          // per tick: tiny random walk jitter
+// Visible scalar
+let x = 0.5;
 
-// micro tick acknowledgement: tiny opacity pulse on tick
-const PULSE_DECAY = 0.14;        // per frame
-const PULSE_STRENGTH = 0.10;     // added alpha at tick (subtle)
+// Latent binary probability P(M)
+let p = 0.5;
 
-// visuals (keep minimal)
-const BAR_W_FRAC = 0.72;         // bar width relative to screen
-const BAR_H = 12;                // px
-const BAR_RADIUS = 8;            // rounded ends
-const BASE_ALPHA = 0.55;         // baseline bar opacity
-const BG_ALPHA = 1.0;
+// Hidden means (small separation)
+const MU_M = 0.46;
+const MU_F = 0.54;
 
-/* -------------------------
-   STATE
--------------------------- */
-let x = 0.50;          // visible scalar [0,1]
-let p = 0.50;          // latent probability P(S=M)
-let pulse = 0.0;       // tick acknowledgement pulse
-let lastTick = performance.now();
+// Dynamics
+const MEAN_PULL = 0.14;
+const NOISE_AMPLITUDE = 0.018;
 
-/* -------------------------
-   CANVAS
--------------------------- */
+// Latent drift (minutes scale)
+const P_RELAX = 0.002;
+const P_JITTER = 0.003;
+
+// Tick acknowledgement
+let pulse = 0;
+const PULSE_STRENGTH = 0.12;
+const PULSE_DECAY = 0.15;
+
+/* =========================================================
+   CANVAS SETUP
+========================================================= */
+
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d", { alpha: true });
+const ctx = canvas.getContext("2d");
 
 function resize() {
-  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-  canvas.width = Math.floor(innerWidth * dpr);
-  canvas.height = Math.floor(innerHeight * dpr);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = innerWidth * dpr;
+  canvas.height = innerHeight * dpr;
   canvas.style.width = innerWidth + "px";
   canvas.style.height = innerHeight + "px";
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -99,150 +85,121 @@ function resize() {
 addEventListener("resize", resize);
 resize();
 
-/* -------------------------
-   AUDIO (sub-threshold noise)
-   - iOS requires user gesture to start AudioContext
--------------------------- */
-let audioCtx = null;
-let noiseSrc = null;
-let gainNode = null;
-let audioEnabled = false;
+/* =========================================================
+   AUDIO — SUB-THRESHOLD SUPPORT ONLY
+========================================================= */
 
-function createWhiteNoiseBuffer(ctx, seconds = 2.0) {
-  const sr = ctx.sampleRate;
-  const length = Math.floor(sr * seconds);
-  const buffer = ctx.createBuffer(1, length, sr);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
-  return buffer;
-}
+let audioCtx, noiseNode, gainNode;
+let audioEnabled = false;
 
 function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-  const buffer = createWhiteNoiseBuffer(audioCtx, 2.0);
-  noiseSrc = audioCtx.createBufferSource();
-  noiseSrc.buffer = buffer;
-  noiseSrc.loop = true;
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
 
-  // subtle continuous support noise. Does NOT encode state or ticks.
+  noiseNode = audioCtx.createBufferSource();
+  noiseNode.buffer = buffer;
+  noiseNode.loop = true;
+
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.0; // fade in gently after start
+  gainNode.gain.value = 0;
 
-  noiseSrc.connect(gainNode).connect(audioCtx.destination);
-  noiseSrc.start();
+  noiseNode.connect(gainNode).connect(audioCtx.destination);
+  noiseNode.start();
 
-  // gentle fade to near-threshold level
-  const now = audioCtx.currentTime;
-  gainNode.gain.setValueAtTime(0.0, now);
-  gainNode.gain.linearRampToValueAtTime(0.02, now + 1.2); // keep low
+  // Gentle fade-in to near-threshold
+  gainNode.gain.linearRampToValueAtTime(0.02, audioCtx.currentTime + 1.2);
 }
 
-document.getElementById("startBtn").onclick = async () => {
-  try {
-    if (!audioEnabled) {
-      initAudio();
-      audioEnabled = true;
-      document.getElementById("startBtn").remove();
-    }
-  } catch (e) {
-    // If audio fails, we still run visuals. No further UI.
-    document.getElementById("startBtn").textContent = "Audio unavailable";
-    setTimeout(() => document.getElementById("startBtn")?.remove(), 1200);
+document.getElementById("audioBtn").onclick = () => {
+  if (!audioEnabled) {
+    initAudio();
+    audioEnabled = true;
+    document.getElementById("audioBtn").remove();
   }
 };
 
-/* -------------------------
-   RNG helpers
--------------------------- */
-function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+/* =========================================================
+   UTILS
+========================================================= */
 
-// approx gaussian via sum of uniforms
+function clamp(v) {
+  return Math.max(0, Math.min(1, v));
+}
+
+// Approx Gaussian noise
 function randn() {
   let s = 0;
   for (let i = 0; i < 6; i++) s += Math.random();
-  return (s - 3) / 1.224744871; // normalize approx
+  return (s - 3) / 1.22;
 }
 
-/* -------------------------
-   TICK UPDATE (fixed interval)
--------------------------- */
+/* =========================================================
+   TICK UPDATE (HIDDEN LOGIC)
+========================================================= */
+
+let lastTick = performance.now();
+
 function tick() {
-  // drift p slowly
+  // Drift latent probability
   p += (0.5 - p) * P_RELAX;
   p += (Math.random() - 0.5) * P_JITTER;
-  p = clamp01(p);
+  p = clamp(p);
 
-  // sample latent state S ~ Bernoulli(p)
-  const S_is_M = Math.random() < p;
+  // Sample hidden state
+  const isM = Math.random() < p;
+  const mu = isM ? MU_M : MU_F;
 
-  // map latent to mean target
-  const mu = S_is_M ? MU_M : MU_F;
+  // Update visible scalar
+  x += MEAN_PULL * (mu - x);
+  x += NOISE_AMPLITUDE * randn();
+  x = clamp(x);
 
-  // visible scalar update
-  x = x + ALPHA * (mu - x) + NOISE_SIGMA * randn();
-  x = clamp01(x);
-
-  // tiny acknowledgement pulse
+  // Subtle tick acknowledgement
   pulse = Math.min(1, pulse + PULSE_STRENGTH);
 }
 
-/* -------------------------
-   RENDER
--------------------------- */
-function roundRect(ctx, x, y, w, h, r) {
-  const rr = Math.min(r, h / 2, w / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + rr, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rr);
-  ctx.arcTo(x + w, y + h, x, y + h, rr);
-  ctx.arcTo(x, y + h, x, y, rr);
-  ctx.arcTo(x, y, x + w, y, rr);
-  ctx.closePath();
-}
+/* =========================================================
+   RENDER LOOP
+========================================================= */
 
 function draw() {
   const now = performance.now();
-  const dt = now - lastTick;
-
-  // fixed ticks
-  if (dt >= TICK_SEC * 1000) {
-    // catch up if the tab stalled
-    const n = Math.floor(dt / (TICK_SEC * 1000));
-    for (let i = 0; i < Math.min(3, n); i++) tick();
-    lastTick += n * (TICK_SEC * 1000);
+  if (now - lastTick >= TICK_SECONDS * 1000) {
+    tick();
+    lastTick += TICK_SECONDS * 1000;
   }
 
-  // decay pulse
   pulse *= (1 - PULSE_DECAY);
 
-  // clear
-  ctx.globalAlpha = BG_ALPHA;
+  // Clear
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, innerWidth, innerHeight);
 
-  // bar geometry
-  const barW = innerWidth * BAR_W_FRAC;
-  const barH = BAR_H;
-  const bx = (innerWidth - barW) / 2;
-  const by = (innerHeight - barH) / 2;
+  // Bar geometry (VERTICAL)
+  const barHeight = innerHeight * 0.65;
+  const barWidth = 12;
+  const xPos = innerWidth / 2 - barWidth / 2;
+  const yBase = (innerHeight - barHeight) / 2;
 
-  // background track (very faint)
-  ctx.globalAlpha = 0.14;
+  // Background track
+  ctx.globalAlpha = 0.15;
   ctx.fillStyle = "#fff";
-  roundRect(ctx, bx, by, barW, barH, BAR_RADIUS);
-  ctx.fill();
+  ctx.fillRect(xPos, yBase, barWidth, barHeight);
 
-  // filled portion
-  const fillW = Math.max(barH, barW * x); // keep rounded cap visible
-  ctx.globalAlpha = BASE_ALPHA + pulse * 0.18; // micro tick ack
-  ctx.fillStyle = "#fff";
-  roundRect(ctx, bx, by, fillW, barH, BAR_RADIUS);
-  ctx.fill();
-
-  // optional: minimal center dot (commented out)
-  // ctx.globalAlpha = 0.10;
-  // ctx.beginPath(); ctx.arc(innerWidth/2, innerHeight/2, 2, 0, Math.PI*2); ctx.fill();
+  // Filled portion
+  const filledHeight = barHeight * x;
+  ctx.globalAlpha = 0.55 + pulse * 0.2;
+  ctx.fillRect(
+    xPos,
+    yBase + barHeight - filledHeight,
+    barWidth,
+    filledHeight
+  );
 
   requestAnimationFrame(draw);
 }
