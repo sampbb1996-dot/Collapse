@@ -4,7 +4,6 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Scalar Drift Instrument</title>
-
 <style>
   html, body {
     margin: 0;
@@ -13,10 +12,8 @@
     overflow: hidden;
     touch-action: manipulation;
   }
-  canvas {
-    display: block;
-  }
-  #audioBtn {
+  canvas { display: block; }
+  #audioBtn{
     position: fixed;
     bottom: 22px;
     left: 50%;
@@ -31,50 +28,63 @@
   }
 </style>
 </head>
-
 <body>
+
 <canvas id="c"></canvas>
 <button id="audioBtn">Enable Audio</button>
 
 <script>
 /* =========================================================
-   CORE PARAMETERS — DO NOT OVER-TUNE
+   CORE (keep simple, bounded, non-rhythmic)
 ========================================================= */
 
-// Fixed tick
+// tick sampling (slow enough to avoid “beat”, fast enough to feel alive)
 const TICK_SECONDS = 1.8;
 
-// Visible scalar
+// visible scalar in [0,1]
 let x = 0.5;
 
-// Latent binary probability P(M)
+// latent probability + hidden binary
 let p = 0.5;
-
-// Hidden means (small separation)
 const MU_M = 0.46;
 const MU_F = 0.54;
 
-// Dynamics
+// dynamics
 const MEAN_PULL = 0.14;
 const NOISE_AMPLITUDE = 0.018;
-
-// Latent drift (minutes scale)
 const P_RELAX = 0.002;
 const P_JITTER = 0.003;
 
-// Tick acknowledgement
-let pulse = 0;
-const PULSE_STRENGTH = 0.12;
-const PULSE_DECAY = 0.15;
+// visual bounds (never disappear)
+const OP_MIN = 0.18;     // asymptotic minimum opacity (non-zero)
+const OP_MAX = 0.62;
+
+const W_BASE = 12;       // base width in CSS px
+const W_MIN = 0.85;      // *multipliers*
+const W_MAX = 1.05;
+
+// slow “carrier drift” (no rhythm; slow asymptotic wandering)
+let op = 0.45;
+let wMul = 1.0;
+
+const OP_DRIFT = 0.0025;   // per tick tiny wander
+const OP_RELAX = 0.004;    // pulls toward mid (prevents extremes)
+
+const W_DRIFT  = 0.0018;   // even smaller than opacity
+const W_RELAX  = 0.004;
+
+// subtle acknowledgement (NOT a pulse rhythm; just a micro “breath”)
+let micro = 0;
+const MICRO_ADD = 0.10;
+const MICRO_DECAY = 0.12;
 
 /* =========================================================
-   CANVAS SETUP
+   CANVAS
 ========================================================= */
-
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
-function resize() {
+function resize(){
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   canvas.width = innerWidth * dpr;
   canvas.height = innerHeight * dpr;
@@ -86,20 +96,17 @@ addEventListener("resize", resize);
 resize();
 
 /* =========================================================
-   AUDIO — SUB-THRESHOLD SUPPORT ONLY
+   AUDIO (presence-only; no frequency encoding)
 ========================================================= */
-
 let audioCtx, noiseNode, gainNode;
 let audioEnabled = false;
 
-function initAudio() {
+function initAudio(){
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
+  for (let i=0;i<data.length;i++) data[i] = Math.random()*2 - 1;
 
   noiseNode = audioCtx.createBufferSource();
   noiseNode.buffer = buffer;
@@ -111,12 +118,12 @@ function initAudio() {
   noiseNode.connect(gainNode).connect(audioCtx.destination);
   noiseNode.start();
 
-  // Gentle fade-in to near-threshold
+  // gentle fade-in to a near-threshold bed
   gainNode.gain.linearRampToValueAtTime(0.02, audioCtx.currentTime + 1.2);
 }
 
 document.getElementById("audioBtn").onclick = () => {
-  if (!audioEnabled) {
+  if (!audioEnabled){
     initAudio();
     audioEnabled = true;
     document.getElementById("audioBtn").remove();
@@ -126,82 +133,106 @@ document.getElementById("audioBtn").onclick = () => {
 /* =========================================================
    UTILS
 ========================================================= */
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-function clamp(v) {
-  return Math.max(0, Math.min(1, v));
-}
-
-// Approx Gaussian noise
-function randn() {
+// approx gaussian
+function randn(){
   let s = 0;
-  for (let i = 0; i < 6; i++) s += Math.random();
+  for (let i=0;i<6;i++) s += Math.random();
   return (s - 3) / 1.22;
 }
 
 /* =========================================================
-   TICK UPDATE (HIDDEN LOGIC)
+   TICK UPDATE
 ========================================================= */
-
 let lastTick = performance.now();
 
-function tick() {
-  // Drift latent probability
+function tick(){
+  // drift latent p
   p += (0.5 - p) * P_RELAX;
   p += (Math.random() - 0.5) * P_JITTER;
-  p = clamp(p);
+  p = clamp01(p);
 
-  // Sample hidden state
+  // sample hidden state
   const isM = Math.random() < p;
   const mu = isM ? MU_M : MU_F;
 
-  // Update visible scalar
+  // update visible scalar
   x += MEAN_PULL * (mu - x);
   x += NOISE_AMPLITUDE * randn();
-  x = clamp(x);
+  x = clamp01(x);
 
-  // Subtle tick acknowledgement
-  pulse = Math.min(1, pulse + PULSE_STRENGTH);
+  // carrier drift (bounded, slow, non-rhythmic)
+  const opMid = (OP_MIN + OP_MAX) / 2;
+  op += (Math.random() - 0.5) * OP_DRIFT;
+  op += (opMid - op) * OP_RELAX;
+  op = clamp(op, OP_MIN, OP_MAX);
+
+  const wMid = (W_MIN + W_MAX) / 2;
+  wMul += (Math.random() - 0.5) * W_DRIFT;
+  wMul += (wMid - wMul) * W_RELAX;
+  wMul = clamp(wMul, W_MIN, W_MAX);
+
+  // micro acknowledgement (tiny, decays; not a beat)
+  micro = Math.min(1, micro + MICRO_ADD);
 }
 
 /* =========================================================
-   RENDER LOOP
+   RENDER
 ========================================================= */
-
-function draw() {
+function draw(){
   const now = performance.now();
-  if (now - lastTick >= TICK_SECONDS * 1000) {
+  if (now - lastTick >= TICK_SECONDS * 1000){
     tick();
     lastTick += TICK_SECONDS * 1000;
   }
 
-  pulse *= (1 - PULSE_DECAY);
+  micro *= (1 - MICRO_DECAY);
 
-  // Clear
+  // background fixed (DO NOT fade)
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, innerWidth, innerHeight);
 
-  // Bar geometry (VERTICAL)
-  const barHeight = innerHeight * 0.65;
-  const barWidth = 12;
-  const xPos = innerWidth / 2 - barWidth / 2;
-  const yBase = (innerHeight - barHeight) / 2;
+  // geometry
+  const barH = innerHeight * 0.65;
+  const barTop = (innerHeight - barH) / 2;
+  const cx = innerWidth / 2;
 
-  // Background track
-  ctx.globalAlpha = 0.15;
+  const w = W_BASE * wMul;
+
+  // track (faint)
+  ctx.globalAlpha = 0.12;
   ctx.fillStyle = "#fff";
-  ctx.fillRect(xPos, yBase, barWidth, barHeight);
+  ctx.fillRect(cx - w/2, barTop, w, barH);
 
-  // Filled portion
-  const filledHeight = barHeight * x;
-  ctx.globalAlpha = 0.55 + pulse * 0.2;
-  ctx.fillRect(
-    xPos,
-    yBase + barHeight - filledHeight,
-    barWidth,
-    filledHeight
-  );
+  // fill amount
+  const filledH = barH * x;
+  const yFillTop = barTop + (barH - filledH);
 
+  // filled bar alpha: bounded + tiny micro “breath”
+  const a = clamp(op + micro * 0.08, OP_MIN, OP_MAX);
+
+  // rounded ends: use a rounded-rect path
+  ctx.globalAlpha = a;
+  ctx.fillStyle = "#fff";
+  roundRect(ctx, cx - w/2, yFillTop, w, filledH, Math.min(w/2, 10));
+  ctx.fill();
+
+  ctx.globalAlpha = 1;
   requestAnimationFrame(draw);
+}
+
+// rounded-rect helper (no external libs)
+function roundRect(ctx, x, y, w, h, r){
+  r = Math.max(0, Math.min(r, w/2, h/2));
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y,     x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x,     y + h, r);
+  ctx.arcTo(x,     y + h, x,     y,     r);
+  ctx.arcTo(x,     y,     x + w, y,     r);
+  ctx.closePath();
 }
 
 draw();
