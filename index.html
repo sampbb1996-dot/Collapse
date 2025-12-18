@@ -12,7 +12,18 @@
     overflow: hidden;
     touch-action: manipulation;
   }
-  canvas { display: block; }
+
+  #wrap {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  canvas {
+    display: block;
+  }
+
   button {
     position: fixed;
     left: 50%;
@@ -29,28 +40,29 @@
 </head>
 <body>
 
-<canvas id="c"></canvas>
+<div id="wrap">
+  <canvas id="c"></canvas>
+</div>
+
 <button id="start">START</button>
 
 <script>
 /* =====================
-   CANVAS (iOS-safe)
+   CANVAS (square, centered)
 ===================== */
 const c = document.getElementById("c");
 const ctx = c.getContext("2d");
 
 function resize() {
-  c.width = innerWidth;
-  c.height = innerHeight;
+  const size = Math.min(innerWidth, innerHeight);
+  c.width = size;
+  c.height = size;
 }
 addEventListener("resize", resize);
 resize();
 
 /* =====================
    TIME-OF-DAY DRIFT
-   - local clock only
-   - no location
-   - no sensing
 ===================== */
 function dayFraction() {
   const d = new Date();
@@ -59,10 +71,9 @@ function dayFraction() {
     d.getMinutes() * 60 +
     d.getSeconds() +
     d.getMilliseconds() / 1000;
-  return s / 86400; // 0..1
+  return s / 86400;
 }
 
-// smooth daily wave: lowest ~midnight, highest ~midday
 function daylight01() {
   const p = dayFraction();
   return 0.5 - 0.5 * Math.cos(2 * Math.PI * p);
@@ -71,12 +82,12 @@ function daylight01() {
 /* =====================
    SHARED STATE
 ===================== */
-let level = 0.5;      // shared scalar (audio + visual)
-let noise = 0.04;     // turbulence (decays)
-const pull = 0.01;    // slow pull to daily baseline
+let level = 0.5;
+let noise = 0.04;
+const pull = 0.01;
 
 /* =====================
-   AUDIO (must start on tap)
+   AUDIO (tap-only start)
 ===================== */
 let audioCtx, src, gain, filter;
 
@@ -103,7 +114,6 @@ function startAudio() {
 
 /* =====================
    INPUT
-   - taps add turbulence only
 ===================== */
 document.body.addEventListener("pointerdown", () => {
   if (!gain) return;
@@ -114,18 +124,13 @@ document.body.addEventListener("pointerdown", () => {
    LOOP
 ===================== */
 function loop() {
-  // daily baseline (agnostic drift)
-  const day = daylight01();              // 0..1
-  const baseline = 0.42 + day * 0.16;    // 0.42..0.58
+  const day = daylight01();
+  const baseline = 0.42 + day * 0.16;
 
-  // pull toward baseline
   level += (baseline - level) * pull;
-
-  // turbulence
   level += (Math.random() - 0.5) * noise;
   level = Math.max(0, Math.min(1, level));
 
-  // decay turbulence
   noise *= 0.995;
 
   // AUDIO MAP
@@ -134,7 +139,7 @@ function loop() {
     filter.frequency.value = 300 + level * 1400;
   }
 
-  // VISUAL MAP (tile-based grain)
+  // VISUAL MAP (square field)
   const tile = 14;
   for (let y = 0; y < c.height; y += tile) {
     for (let x = 0; x < c.width; x += tile) {
