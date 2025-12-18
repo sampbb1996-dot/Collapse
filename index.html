@@ -4,51 +4,51 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Specificity</title>
-
 <style>
-  html, body {
-    margin: 0;
-    height: 100%;
-    background: #000;
-    overflow: hidden;
-    touch-action: manipulation;
+  html, body { margin:0; height:100%; background:#000; overflow:hidden; touch-action:manipulation; }
+  canvas { display:block; }
+  #bar {
+    position:fixed; left:50%; bottom:18px; transform:translateX(-50%);
+    display:flex; gap:10px; align-items:center;
+    font-family:system-ui, sans-serif; font-size:12px; color:#777;
+    user-select:none;
   }
-  canvas { display: block; }
-
-  #audioBtn {
-    position: fixed;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 14px 20px;
-    border-radius: 16px;
-    border: none;
-    background: #777;
-    color: #000;
-    font-size: 14px;
+  button {
+    padding:12px 16px; border-radius:14px; border:none;
+    background:#777; color:#000; font-size:13px;
   }
 </style>
 </head>
-
 <body>
 
 <canvas id="c"></canvas>
-<button id="audioBtn">Enable Audio</button>
+
+<div id="bar">
+  <button id="audioBtn">Enable Audio</button>
+  <button id="micBtn">Enable Mic (turbulence)</button>
+</div>
 
 <script>
 /* =========================
-   STATE
+   CORE STATE
 ========================= */
 
+// invariant (slow)
 let mean = 0.5;
+// surface (fast)
 let x = 0.5;
 
-let noiseAmp = 0.06;
+// dynamics
+let noiseAmp = 0.06;        // baseline turbulence
 const pull = 0.03;
-const meanDecay = 0.0004;
+const meanDecay = 0.00035;
 
+// stability tracking (non-semantic)
 let lastX = x;
 let variance = 0;
+
+// time drift (non-semantic)
+const t0 = performance.now();
 
 /* =========================
    CANVAS
@@ -65,7 +65,7 @@ addEventListener("resize", resize);
 resize();
 
 /* =========================
-   AUDIO
+   AUDIO (OUTPUT)
 ========================= */
 
 let audioCtx, noiseNode, gainNode, filterNode;
@@ -73,110 +73,6 @@ let audioOn = false;
 
 function startAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  audioCtx.resume(); // IMPORTANT
+  audioCtx.resume();
 
-  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
-
-  noiseNode = audioCtx.createBufferSource();
-  noiseNode.buffer = buffer;
-  noiseNode.loop = true;
-
-  filterNode = audioCtx.createBiquadFilter();
-  filterNode.type = "lowpass";
-  filterNode.frequency.value = 600;
-
-  gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.3; // clearly audible
-
-  noiseNode.connect(filterNode).connect(gainNode).connect(audioCtx.destination);
-  noiseNode.start();
-
-  audioOn = true;
-  document.getElementById("audioBtn").remove();
-}
-
-document.getElementById("audioBtn").onclick = startAudio;
-
-/* =========================
-   INPUT
-========================= */
-
-document.body.addEventListener("pointerdown", () => {
-  noiseAmp += 0.01; // interaction destabilizes
-});
-
-/* =========================
-   UPDATE LOOP
-========================= */
-
-function step() {
-  mean += (0.5 - mean) * meanDecay;
-
-  x += (Math.random() - 0.5) * noiseAmp;
-  x += (mean - x) * pull;
-  x = Math.max(0, Math.min(1, x));
-
-  const dx = x - lastX;
-  variance = 0.98 * variance + 0.02 * dx * dx;
-  lastX = x;
-
-  noiseAmp *= 0.999;
-
-  updateAudio();
-  render();
-  requestAnimationFrame(step);
-}
-
-/* =========================
-   AUDIO MAPPING
-========================= */
-
-function updateAudio() {
-  if (!audioOn) return;
-
-  const instability = Math.min(1, variance * 400);
-
-  gainNode.gain.value = 0.25 + instability * 0.35;
-  filterNode.frequency.value = 300 + (1 - instability) * 900;
-}
-
-/* =========================
-   VISUAL
-========================= */
-
-function render() {
-  const img = ctx.createImageData(canvas.width, canvas.height);
-  const d = img.data;
-
-  const centerY = canvas.height * mean;
-
-  for (let y = 0; y < canvas.height; y++) {
-    const structural =
-      Math.exp(-Math.abs(y - centerY) / (canvas.height * 0.25));
-
-    for (let xPix = 0; xPix < canvas.width; xPix++) {
-      const i = (y * canvas.width + xPix) * 4;
-      const n = (Math.random() - 0.5) * 40;
-      const base = 30 + structural * 55 + x * 20;
-
-      d[i] = d[i+1] = d[i+2] = base + n;
-      d[i+3] = 255;
-    }
-  }
-
-  ctx.putImageData(img, 0, 0);
-}
-
-/* =========================
-   START
-========================= */
-
-step();
-</script>
-
-</body>
-</html>
+  const buffer = audioCtx.createBuffer(1,
