@@ -1,24 +1,118 @@
 <!DOCTYPE html>
-<html>
-<body style="margin:0; background:#222; color:white; display:flex; align-items:center; justify-content:center; height:100vh;">
-<button style="font-size:24px; padding:20px;">
-  TAP FOR SOUND
-</button>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Substrate</title>
+
+<style>
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background: #1f1f1f;
+    overflow: hidden;
+    touch-action: manipulation;
+  }
+
+  #field {
+    position: fixed;
+    inset: 0;
+    background: rgb(90, 90, 90);
+    transition: background 120ms linear;
+  }
+</style>
+</head>
+
+<body>
+<div id="field"></div>
 
 <script>
-document.querySelector("button").onclick = () => {
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
+/* -------------------------
+   STATE
+-------------------------- */
 
-  osc.frequency.value = 440;
-  gain.gain.value = 0.2;
+let p = 0.5;            // core state (0..1), starts unbiased
+const decay = 0.002;    // pull back toward 0.5
+const noise = 0.015;    // inherent uncertainty
 
-  osc.connect(gain).connect(ctx.destination);
+/* -------------------------
+   VISUAL
+-------------------------- */
+
+const field = document.getElementById("field");
+
+function renderVisual() {
+  const v = Math.floor(80 + p * 140);
+  field.style.background = `rgb(${v}, ${v * 0.85}, ${v * 0.35})`;
+}
+
+/* -------------------------
+   AUDIO (created ONCE)
+-------------------------- */
+
+let audioCtx = null;
+let osc = null;
+let gain = null;
+let audioUnlocked = false;
+
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  osc = audioCtx.createOscillator();
+  gain = audioCtx.createGain();
+
+  osc.type = "sine";
+  osc.frequency.value = 200;
+  gain.gain.value = 0; // start silent
+
+  osc.connect(gain).connect(audioCtx.destination);
   osc.start();
 
-  ctx.resume();
-};
+  audioCtx.resume();
+}
+
+/* -------------------------
+   EVOLUTION
+-------------------------- */
+
+function step() {
+  // intrinsic drift
+  p += (Math.random() - 0.5) * noise;
+  p += (0.5 - p) * decay;
+
+  p = Math.max(0, Math.min(1, p));
+
+  renderVisual();
+
+  if (audioUnlocked) {
+    osc.frequency.value = 180 + p * 520;
+    gain.gain.value = 0.04 + p * 0.12;
+  }
+}
+
+/* -------------------------
+   INPUT
+-------------------------- */
+
+// First tap: unlock audio (nothing else)
+document.body.addEventListener("pointerdown", unlockAudio, { once: true });
+
+// Subsequent taps: weak, noisy perturbation
+document.body.addEventListener("pointerdown", () => {
+  p += (Math.random() - 0.5) * 0.08;
+  p = Math.max(0, Math.min(1, p));
+});
+
+/* -------------------------
+   LOOP
+-------------------------- */
+
+setInterval(step, 600);
+renderVisual();
 </script>
 </body>
 </html>
