@@ -2,214 +2,149 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta
-  name="viewport"
-  content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-/>
-<title>Collapse</title>
-
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mean + Noise</title>
 <style>
-*{
-  box-sizing:border-box;
-  -webkit-tap-highlight-color: transparent;
-}
-html, body{
-  height:100%;
-  margin:0;
-}
-body{
-  background:#000;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-  touch-action: manipulation;
-  user-select:none;
-}
-.panel{
-  width:min(520px, 92vw);
-  padding:32px 28px 28px;
-  background:#111;
-  border-radius:20px;
-  border:1px solid #333;
-  text-align:center;
-}
-.value{
-  font-size: clamp(48px, 9vw, 86px);
-  font-weight:600;
-  letter-spacing:-0.015em;
-  color:#fff;
-  margin:8px 0 22px;
-}
-.btn{
-  width:100%;
-  height:64px;
-  margin:10px 0;
-  border-radius:36px;
-  border:1px solid #333;
-  background:#151515;
-  color:#fff;
-  font-size:18px;
-  font-weight:600;
-  cursor:pointer;
-}
-.label{
-  margin-top:14px;
-  font-size:14px;
-  color:#aaa;
-}
-.hint{
-  margin-top:8px;
-  font-size:13px;
-  color:#888;
-  min-height:16px;
-}
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #2b2b2b;
+    overflow: hidden;
+    touch-action: manipulation;
+  }
+  canvas { display: block; }
+  #audioBtn {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 14px 22px;
+    border-radius: 18px;
+    border: none;
+    background: #ff9800;
+    color: #111;
+    font-size: 16px;
+  }
 </style>
 </head>
-
 <body>
-<div class="panel">
-  <div id="value" class="value">calibrating</div>
-  <button id="tap" class="btn">tap</button>
-  <button id="reset" class="btn">reset</button>
-  <div class="label">relative timing signal</div>
-  <div id="hint" class="hint"></div>
-</div>
+
+<canvas id="c"></canvas>
+<button id="audioBtn">Enable Audio</button>
 
 <script>
-(() => {
+/* -------------------------
+   STATE
+-------------------------- */
 
-  // -------------------------
-  // Core parameters
-  // -------------------------
-  const EPS = 0.001;
-  const MIN_DT = 90;
-  const MAX_DT = 4000;
-  const INIT_BASELINE = 450;
-  const EMA_ALPHA = 0.12;
-  const GUARD = 0.60;
-  const K = 3.6;
-  const CAL_TAPS = 6;
+// latent mean (what matters)
+let m = 0.5;          // equilibrium
+// instantaneous state (what you perceive)
+let x = 0.5;
 
-  // -------------------------
-  // State
-  // -------------------------
-  let lastTap = null;
-  let baseline = null;
-  let valid = 0;
-  let score = 0.5;
-  let attended = true;   // attention gate
+const meanDecay = 0.0006;   // m → 0.5
+const pullToMean = 0.04;    // x → m
+const noiseAmp = 0.08;      // local variance
 
-  const valueEl = document.getElementById("value");
-  const hintEl  = document.getElementById("hint");
-  const tapBtn  = document.getElementById("tap");
-  const resetBtn= document.getElementById("reset");
+/* -------------------------
+   CANVAS
+-------------------------- */
 
-  const clamp = (x,a,b) => Math.max(a, Math.min(b,x));
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
 
-  function deviation(dt, base){
-    return Math.abs(Math.log(dt / base));
-  }
-  function sigmoid(x){
-    return 1 / (1 + Math.exp(-x));
-  }
-  function remap(s){
-    return 1 - Math.pow(1 - s, 2);
-  }
+function resize() {
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+}
+addEventListener("resize", resize);
+resize();
 
-  function render(msg=""){
-    if (valid < CAL_TAPS){
-      valueEl.textContent = "—";
-      hintEl.textContent = `calibrating (${CAL_TAPS - valid})`;
-      if (msg) hintEl.textContent = msg;
-      return;
-    }
-    valueEl.textContent = score.toFixed(4);
-    hintEl.textContent = msg;
+/* -------------------------
+   AUDIO
+-------------------------- */
+
+let audioCtx, noiseNode, gainNode;
+let audioEnabled = false;
+
+function initAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) {
+    data[i] = Math.random() * 2 - 1;
   }
 
-  function reset(){
-    lastTap = null;
-    baseline = null;
-    valid = 0;
-    score = 0.5;
-    valueEl.textContent = "calibrating";
-    hintEl.textContent = "";
+  noiseNode = audioCtx.createBufferSource();
+  noiseNode.buffer = buffer;
+  noiseNode.loop = true;
+
+  gainNode = audioCtx.createGain();
+  gainNode.gain.value = 0;
+
+  noiseNode.connect(gainNode).connect(audioCtx.destination);
+  noiseNode.start();
+}
+
+/* -------------------------
+   INPUT
+-------------------------- */
+
+document.getElementById("audioBtn").onclick = () => {
+  if (!audioEnabled) {
+    initAudio();
+    audioEnabled = true;
+    document.getElementById("audioBtn").remove();
+  }
+};
+
+document.body.addEventListener("pointerdown", () => {
+  if (!audioEnabled) return;
+  // taps nudge the MEAN, not raw noise
+  m += (Math.random() - 0.5) * 0.08;
+  m = Math.max(0, Math.min(1, m));
+});
+
+/* -------------------------
+   UPDATE + RENDER
+-------------------------- */
+
+function step() {
+  // mean relaxes back to 0.5
+  m += (0.5 - m) * meanDecay;
+
+  // instantaneous state fluctuates but is pulled to mean
+  x += (Math.random() - 0.5) * noiseAmp;
+  x += (m - x) * pullToMean;
+  x = Math.max(0, Math.min(1, x));
+
+  // audio follows instantaneous state
+  if (audioEnabled) {
+    gainNode.gain.value = 0.25 * x;
   }
 
-  function onTap(){
-    const now = performance.now();
+  // visual noise centered on x
+  const img = ctx.createImageData(canvas.width, canvas.height);
+  const d = img.data;
 
-    // If attention was lost, re-prime
-    if (!attended){
-      lastTap = now;
-      attended = true;
-      render("resumed");
-      return;
-    }
+  const baseR = 150 + x * 70;
+  const baseG = 120 + x * 40;
+  const baseB = 60  + x * 20;
 
-    if (!lastTap){
-      lastTap = now;
-      baseline = INIT_BASELINE;
-      render();
-      return;
-    }
-
-    const dt = now - lastTap;
-    lastTap = now;
-
-    if (dt < MIN_DT){
-      render("too fast");
-      return;
-    }
-
-    const base = baseline ?? INIT_BASELINE;
-    const dev = deviation(dt, base);
-
-    score = clamp(
-      remap(sigmoid(-K * dev)),
-      EPS,
-      1 - EPS
-    );
-
-    if (dt <= MAX_DT){
-      const r = dt / base;
-      if (r > (1 - GUARD) && r < (1 + GUARD)){
-        baseline = (1 - EMA_ALPHA) * base + EMA_ALPHA * dt;
-      }
-    }
-
-    valid++;
-    render();
+  for (let i = 0; i < d.length; i += 4) {
+    const n = (Math.random() - 0.5) * 50;
+    d[i]     = baseR + n;
+    d[i + 1] = baseG + n;
+    d[i + 2] = baseB + n;
+    d[i + 3] = 255;
   }
 
-  // -------------------------
-  // Attention gating
-  // -------------------------
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden){
-      attended = false;
-      lastTap = null; // invalidate elapsed time
-    }
-  });
+  ctx.putImageData(img, 0, 0);
+  requestAnimationFrame(step);
+}
 
-  window.addEventListener("blur", () => {
-    attended = false;
-    lastTap = null;
-  });
-
-  // -------------------------
-  // Inputs
-  // -------------------------
-  tapBtn.addEventListener("touchstart", e => { e.preventDefault(); onTap(); }, {passive:false});
-  tapBtn.addEventListener("click", e => { e.preventDefault(); onTap(); });
-
-  resetBtn.addEventListener("touchstart", e => { e.preventDefault(); reset(); }, {passive:false});
-  resetBtn.addEventListener("click", e => { e.preventDefault(); reset(); });
-
-  reset();
-
-})();
+step();
 </script>
 </body>
 </html>
