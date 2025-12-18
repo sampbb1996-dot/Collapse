@@ -1,116 +1,140 @@
 <!DOCTYPE html>
-<html lang="en">j
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0" />
 <title>Collapse</title>
 
 <style>
-  html, body {
-    margin: 0;
-    height: 100%;
-    background: #000;
-    overflow: hidden;
-    touch-action: manipulation;
-  }
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: #050505; /* near-black */
+  overflow: hidden;
+  touch-action: manipulation;
+}
 
-  canvas {
-    display: block;
-  }
+canvas {
+  display: block;
+}
 
-  /* Minimal audio unlock */
-  #audio {
-    position: fixed;
-    bottom: 10px;
-    right: 10px;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: rgba(255,255,255,0.25);
-    border: none;
-  }
+#audioBtn {
+  position: fixed;
+  bottom: 6%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 18px;
+  border-radius: 18px;
+  border: none;
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.6);
+  font-size: 14px;
+  letter-spacing: 0.3px;
+}
 </style>
 </head>
-<body>
 
+<body>
 <canvas id="c"></canvas>
-<button id="audio" aria-label="Enable audio"></button>
+<button id="audioBtn">Enable Audio</button>
 
 <script>
 /* =========================
-   CANVAS (stable)
+   CANVAS SETUP
 ========================= */
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 function resize() {
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
+  canvas.width = window.innerWidth * devicePixelRatio;
+  canvas.height = window.innerHeight * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
 }
-addEventListener("resize", resize);
 resize();
+window.addEventListener("resize", resize);
 
 /* =========================
-   AUDIO (iOS-safe)
+   AUDIO (VERY SUBTLE)
 ========================= */
-let audioCtx, osc, gain;
+let audioCtx, noiseNode, gainNode;
+const audioBtn = document.getElementById("audioBtn");
 
-document.getElementById("audio").onclick = () => {
+audioBtn.onclick = () => {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-  osc = audioCtx.createOscillator();
-  gain = audioCtx.createGain();
+  const bufferSize = audioCtx.sampleRate * 2;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
 
-  osc.type = "sine";
-  osc.frequency.value = 180;
-  gain.gain.value = 0.015;
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = (Math.random() * 2 - 1) * 0.03;
+  }
 
-  osc.connect(gain).connect(audioCtx.destination);
-  osc.start();
+  noiseNode = audioCtx.createBufferSource();
+  noiseNode.buffer = buffer;
+  noiseNode.loop = true;
 
-  // Permanently remove control
-  document.getElementById("audio").remove();
+  gainNode = audioCtx.createGain();
+  gainNode.gain.value = 0.015; // near inaudible
+
+  noiseNode.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+  noiseNode.start();
+
+  audioBtn.style.display = "none";
 };
 
 /* =========================
-   VISUAL (degenerate spiral)
+   VISUAL STATE
 ========================= */
-let theta = 0;
+let t = 0;
 
+/* =========================
+   DRAW LOOP
+========================= */
 function draw() {
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  t += 0.00015; // very slow drift
 
-  // sub-perceptual drift
-  theta += (Math.random() - 0.5) * 0.0002;
-  theta *= 0.999;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const cx = canvas.width / 2;
-  const cy = canvas.height / 2;
-  const len = canvas.height * 0.75;
+  const w = canvas.width / devicePixelRatio;
+  const h = canvas.height / devicePixelRatio;
 
-  const dx = Math.sin(theta) * len / 2;
-  const dy = Math.cos(theta) * len / 2;
+  ctx.save();
+  ctx.translate(w / 2, h / 2);
 
-  const g = ctx.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy);
-  g.addColorStop(0, "rgba(235,235,235,0)");
-  g.addColorStop(0.5, "rgba(235,235,235,0.8)");
-  g.addColorStop(1, "rgba(235,235,235,0)");
+  // sub-perceptual angular drift
+  ctx.rotate(Math.sin(t) * 0.015);
 
-  ctx.strokeStyle = g;
-  ctx.lineWidth = 8;
+  // infinite fade gradient
+  const grad = ctx.createLinearGradient(0, -h, 0, h);
+  grad.addColorStop(0.0, "rgba(240,240,235,0)");
+  grad.addColorStop(0.35, "rgba(240,240,235,0.08)");
+  grad.addColorStop(0.5, "rgba(240,240,235,0.22)");
+  grad.addColorStop(0.65, "rgba(240,240,235,0.08)");
+  grad.addColorStop(1.0, "rgba(240,240,235,0)");
+
+  // width fade
+  const baseWidth = 3.2;
+  const widthMod = 1 + Math.sin(t * 0.7) * 0.015;
+
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = baseWidth * widthMod;
   ctx.lineCap = "round";
 
   ctx.beginPath();
-  ctx.moveTo(cx - dx, cy - dy);
-  ctx.lineTo(cx + dx, cy + dy);
+  ctx.moveTo(0, -h);
+  ctx.lineTo(0, h);
   ctx.stroke();
+
+  ctx.restore();
 
   requestAnimationFrame(draw);
 }
 
 draw();
 </script>
-
 </body>
 </html>
