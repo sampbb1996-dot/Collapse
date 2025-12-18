@@ -1,25 +1,24 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Field</title>
 
 <style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: #141414; /* dark mode, not pure black */
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-  }
-
-  canvas {
-    display: block;
-    width: 100vw;
-    height: 100vh;
-  }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #1a1a1a;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+canvas {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
 </style>
 </head>
 
@@ -27,79 +26,65 @@
 <canvas id="c"></canvas>
 
 <script>
-/* -------------------------
-   VISUAL FIELD (noise)
--------------------------- */
+/* ---------- VISUAL ---------- */
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
 }
 resize();
-window.addEventListener("resize", resize);
-
-// shared noise state
-let seed = Math.random() * 10000;
+addEventListener("resize", resize);
 
 function draw() {
   const img = ctx.createImageData(canvas.width, canvas.height);
   const d = img.data;
-
   for (let i = 0; i < d.length; i += 4) {
-    const n = Math.sin(seed++) * 0.5 + 0.5; // deterministic-ish noise
-    d[i]     = 180 + n * 40;  // R (warm)
-    d[i + 1] = 130 + n * 30;  // G
-    d[i + 2] = 60  + n * 20;  // B
+    const n = Math.random();
+    d[i]     = 180 + n * 40;
+    d[i + 1] = 120 + n * 30;
+    d[i + 2] =  60 + n * 20;
     d[i + 3] = 255;
   }
-
   ctx.putImageData(img, 0, 0);
   requestAnimationFrame(draw);
 }
-
 draw();
 
-/* -------------------------
-   AUDIO FIELD (noise)
--------------------------- */
+/* ---------- AUDIO ---------- */
 
-let audioStarted = false;
-let ac, gainNode;
+let started = false;
 
 function startAudio() {
-  if (audioStarted) return;
-  audioStarted = true;
+  if (started) return;
+  started = true;
 
-  ac = new (window.AudioContext || window.webkitAudioContext)();
-  ac.resume(); // critical for iOS
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const ac = new AudioCtx();
 
   const buffer = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
   const data = buffer.getChannelData(0);
-
   for (let i = 0; i < data.length; i++) {
-    // SAME NOISE LOGIC as visual (shared structure)
-    data[i] = Math.sin(seed++) * 0.5;
+    data[i] = Math.random() * 2 - 1;
   }
 
   const src = ac.createBufferSource();
   src.buffer = buffer;
   src.loop = true;
 
-  gainNode = ac.createGain();
-  gainNode.gain.value = 0.25; // audible but not aggressive
+  const gain = ac.createGain();
+  gain.gain.value = 0.2;
 
-  src.connect(gainNode);
-  gainNode.connect(ac.destination);
+  src.connect(gain);
+  gain.connect(ac.destination);
   src.start();
 }
 
-// must be a direct gesture
-document.addEventListener("pointerdown", startAudio, { once: true });
-document.addEventListener("touchstart", startAudio, { once: true });
-
+// MUST be a direct gesture
+document.body.addEventListener("touchstart", startAudio, { passive: true });
+document.body.addEventListener("mousedown", startAudio);
 </script>
 </body>
 </html>
