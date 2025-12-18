@@ -1,181 +1,105 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <title>Field + Audio</title>
-  <style>
-    html,body{margin:0;height:100%;background:#1a1a1a;overflow:hidden}
-    canvas{display:block}
-    /* only needed to satisfy iOS "user gesture" audio start; disappears after first tap */
-    #hint{
-      position:fixed; inset:0; display:grid; place-items:center;
-      color:#8a8a8a; font:16px/1.2 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;
-      background:rgba(0,0,0,0.0);
-      pointer-events:none;
-      opacity:1;
-      transition:opacity .2s linear;
-    }
-    #hint.hide{opacity:0}
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Field</title>
+
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #141414; /* dark mode, not pure black */
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+</style>
 </head>
+
 <body>
-  <canvas id="c"></canvas>
-  <div id="hint">tap once to enable audio</div>
+<canvas id="c"></canvas>
 
 <script>
-(() => {
-  // ---------- Visual: field ----------
-  const c = document.getElementById('c');
-  const ctx = c.getContext('2d', { alpha:false });
-  const hint = document.getElementById('hint');
+/* -------------------------
+   VISUAL FIELD (noise)
+-------------------------- */
 
-  function resize(){
-    c.width = innerWidth;
-    c.height = innerHeight;
-  }
-  addEventListener('resize', resize);
-  resize();
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
 
-  // "Ground state": unbiased (50/50)
-  let bias = 0.0;      // ~mean offset (0 is neutral)
-  let variance = 0.18; // noise amplitude
-  let corr = 0.00;     // spatial correlation (0 = white)
-  let corrTarget = 0.00;
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener("resize", resize);
 
-  // ---------- Audio: bound to visual statistics ----------
-  let audioStarted = false;
-  let ac, noiseNode, gainNode, filtNode, panNode, lfo, lfoGain;
+// shared noise state
+let seed = Math.random() * 10000;
 
-  function startAudioOnce(){
-    if (audioStarted) return;
-    audioStarted = true;
-    hint.classList.add('hide');
+function draw() {
+  const img = ctx.createImageData(canvas.width, canvas.height);
+  const d = img.data;
 
-    ac = new (window.AudioContext || window.webkitAudioContext)();
-
-    // White noise buffer
-    const seconds = 2;
-    const buf = ac.createBuffer(1, seconds * ac.sampleRate, ac.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i=0;i<data.length;i++) data[i] = Math.random()*2-1;
-
-    noiseNode = ac.createBufferSource();
-    noiseNode.buffer = buf;
-    noiseNode.loop = true;
-
-    // Main chain: noise -> filter -> gain -> pan -> destination
-    filtNode = ac.createBiquadFilter();
-    filtNode.type = 'lowpass';
-    filtNode.frequency.value = 1200;
-    filtNode.Q.value = 0.3;
-
-    gainNode = ac.createGain();
-    gainNode.gain.value = 0.0; // fade in after start
-
-    panNode = ac.createStereoPanner ? ac.createStereoPanner() : null;
-
-    // very slow LFO to avoid dead-flat sound even at steady state
-    lfo = ac.createOscillator();
-    lfo.type = 'sine';
-    lfo.frequency.value = 0.05;
-    lfoGain = ac.createGain();
-    lfoGain.gain.value = 80; // small wobble in cutoff
-    lfo.connect(lfoGain);
-    lfoGain.connect(filtNode.frequency);
-
-    // Connect
-    noiseNode.connect(filtNode);
-    if (panNode){
-      filtNode.connect(gainNode);
-      gainNode.connect(panNode);
-      panNode.connect(ac.destination);
-    } else {
-      filtNode.connect(gainNode);
-      gainNode.connect(ac.destination);
-    }
-
-    noiseNode.start();
-    lfo.start();
-
-    // quick fade-in (no "effect", just not jarring)
-    const t = ac.currentTime;
-    gainNode.gain.setValueAtTime(0.0, t);
-    gainNode.gain.linearRampToValueAtTime(0.08, t + 0.15);
+  for (let i = 0; i < d.length; i += 4) {
+    const n = Math.sin(seed++) * 0.5 + 0.5; // deterministic-ish noise
+    d[i]     = 180 + n * 40;  // R (warm)
+    d[i + 1] = 130 + n * 30;  // G
+    d[i + 2] = 60  + n * 20;  // B
+    d[i + 3] = 255;
   }
 
-  // iOS: must be triggered by gesture
-  addEventListener('pointerdown', startAudioOnce, { passive:true, once:true });
-  addEventListener('touchstart', startAudioOnce, { passive:true, once:true });
+  ctx.putImageData(img, 0, 0);
+  requestAnimationFrame(draw);
+}
 
-  // ---------- Field evolution (still “noise-like”, but not static) ----------
-  // Randomly wander correlation target very slowly; reverts toward zero.
-  function driftParams(){
-    // tiny random walk on correlation target
-    corrTarget += (Math.random()*2-1) * 0.004;
-    corrTarget = Math.max(0, Math.min(0.85, corrTarget));
-    corr += (corrTarget - corr) * 0.01;
+draw();
 
-    // bias mean-reverts
-    bias *= 0.995;
+/* -------------------------
+   AUDIO FIELD (noise)
+-------------------------- */
 
-    // variance mean-reverts (steady)
-    variance += (0.18 - variance) * 0.002;
+let audioStarted = false;
+let ac, gainNode;
+
+function startAudio() {
+  if (audioStarted) return;
+  audioStarted = true;
+
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  ac.resume(); // critical for iOS
+
+  const buffer = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+  const data = buffer.getChannelData(0);
+
+  for (let i = 0; i < data.length; i++) {
+    // SAME NOISE LOGIC as visual (shared structure)
+    data[i] = Math.sin(seed++) * 0.5;
   }
 
-  // One-pole spatial correlation using previous pixel (cheap)
-  function render(){
-    const w = c.width, h = c.height;
-    const img = ctx.createImageData(w, h);
-    const d = img.data;
+  const src = ac.createBufferSource();
+  src.buffer = buffer;
+  src.loop = true;
 
-    let prev = 0;
-    const a = corr;           // correlation weight
-    const b = 1 - a;
+  gainNode = ac.createGain();
+  gainNode.gain.value = 0.25; // audible but not aggressive
 
-    for (let i=0;i<d.length;i+=4){
-      // base noise
-      const n = (Math.random()*2-1) * variance + bias;
-      // correlate
-      const v = a*prev + b*n;
-      prev = v;
+  src.connect(gainNode);
+  gainNode.connect(ac.destination);
+  src.start();
+}
 
-      // map to orange-ish grayscale field
-      const base = Math.max(0, Math.min(255, 128 + v*150));
-      d[i]   = base;           // R
-      d[i+1] = base * 0.78;    // G
-      d[i+2] = base * 0.30;    // B
-      d[i+3] = 255;
-    }
+// must be a direct gesture
+document.addEventListener("pointerdown", startAudio, { once: true });
+document.addEventListener("touchstart", startAudio, { once: true });
 
-    ctx.putImageData(img, 0, 0);
-  }
-
-  // ---------- Bind audio to visual stats ----------
-  function bindAudio(){
-    if (!audioStarted || !ac) return;
-
-    // Map: correlation -> darker/softer (lower cutoff), variance -> louder/brighter, bias -> pan
-    const cutoff = 300 + (1 - corr) * 2400;     // corr↑ => cutoff↓
-    const loud   = 0.03 + variance * 0.22;      // variance↑ => louder
-    const pan    = Math.max(-1, Math.min(1, bias * 6)); // bias small; exaggerate
-
-    const t = ac.currentTime;
-    filtNode.frequency.setTargetAtTime(cutoff, t, 0.05);
-    gainNode.gain.setTargetAtTime(loud, t, 0.08);
-    if (panNode) panNode.pan.setTargetAtTime(pan, t, 0.08);
-  }
-
-  // ---------- Main loop ----------
-  function loop(){
-    driftParams();
-    render();
-    bindAudio();
-    requestAnimationFrame(loop);
-  }
-  loop();
-
-})();
 </script>
 </body>
 </html>
