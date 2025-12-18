@@ -13,17 +13,19 @@
     overflow: hidden;
     touch-action: manipulation;
   }
-  canvas {
-    display: block;
-  }
-  #hint {
+  canvas { display: block; }
+
+  #audioBtn {
     position: fixed;
-    bottom: 12px;
-    width: 100%;
-    text-align: center;
-    font-family: system-ui, sans-serif;
-    font-size: 11px;
-    color: #555;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 14px 20px;
+    border-radius: 16px;
+    border: none;
+    background: #777;
+    color: #000;
+    font-size: 14px;
   }
 </style>
 </head>
@@ -31,25 +33,20 @@
 <body>
 
 <canvas id="c"></canvas>
-<div id="hint">tap increases instability</div>
+<button id="audioBtn">Enable Audio</button>
 
 <script>
 /* =========================
-   CORE STATE
+   STATE
 ========================= */
 
-// latent invariant (slow)
 let mean = 0.5;
-
-// perceived surface state (fast)
 let x = 0.5;
 
-// dynamics
 let noiseAmp = 0.06;
 const pull = 0.03;
 const meanDecay = 0.0004;
 
-// stability tracking
 let lastX = x;
 let variance = 0;
 
@@ -71,14 +68,12 @@ resize();
    AUDIO
 ========================= */
 
-let audioCtx;
-let noiseSource;
-let gainNode;
-let filterNode;
-let audioStarted = false;
+let audioCtx, noiseNode, gainNode, filterNode;
+let audioOn = false;
 
 function startAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  audioCtx.resume(); // IMPORTANT
 
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
@@ -86,32 +81,32 @@ function startAudio() {
     data[i] = Math.random() * 2 - 1;
   }
 
-  noiseSource = audioCtx.createBufferSource();
-  noiseSource.buffer = buffer;
-  noiseSource.loop = true;
+  noiseNode = audioCtx.createBufferSource();
+  noiseNode.buffer = buffer;
+  noiseNode.loop = true;
 
   filterNode = audioCtx.createBiquadFilter();
   filterNode.type = "lowpass";
+  filterNode.frequency.value = 600;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.2; // audible baseline
+  gainNode.gain.value = 0.3; // clearly audible
 
-  noiseSource
-    .connect(filterNode)
-    .connect(gainNode)
-    .connect(audioCtx.destination);
+  noiseNode.connect(filterNode).connect(gainNode).connect(audioCtx.destination);
+  noiseNode.start();
 
-  noiseSource.start();
-  audioStarted = true;
+  audioOn = true;
+  document.getElementById("audioBtn").remove();
 }
+
+document.getElementById("audioBtn").onclick = startAudio;
 
 /* =========================
    INPUT
 ========================= */
 
 document.body.addEventListener("pointerdown", () => {
-  if (!audioStarted) startAudio();
-  noiseAmp += 0.008; // destabilization only
+  noiseAmp += 0.01; // interaction destabilizes
 });
 
 /* =========================
@@ -119,25 +114,20 @@ document.body.addEventListener("pointerdown", () => {
 ========================= */
 
 function step() {
-  // mean relaxes slowly
   mean += (0.5 - mean) * meanDecay;
 
-  // noisy surface update
   x += (Math.random() - 0.5) * noiseAmp;
   x += (mean - x) * pull;
   x = Math.max(0, Math.min(1, x));
 
-  // variance tracking
   const dx = x - lastX;
   variance = 0.98 * variance + 0.02 * dx * dx;
   lastX = x;
 
-  // natural recovery
   noiseAmp *= 0.999;
 
   updateAudio();
   render();
-
   requestAnimationFrame(step);
 }
 
@@ -146,16 +136,12 @@ function step() {
 ========================= */
 
 function updateAudio() {
-  if (!audioStarted) return;
+  if (!audioOn) return;
 
   const instability = Math.min(1, variance * 400);
 
-  // loudness tracks instability
-  gainNode.gain.value = 0.15 + instability * 0.35;
-
-  // spectral roughness tracks instability
-  filterNode.frequency.value =
-    300 + (1 - instability) * 900;
+  gainNode.gain.value = 0.25 + instability * 0.35;
+  filterNode.frequency.value = 300 + (1 - instability) * 900;
 }
 
 /* =========================
@@ -174,12 +160,11 @@ function render() {
 
     for (let xPix = 0; xPix < canvas.width; xPix++) {
       const i = (y * canvas.width + xPix) * 4;
-
       const n = (Math.random() - 0.5) * 40;
       const base = 30 + structural * 55 + x * 20;
 
-      d[i] = d[i + 1] = d[i + 2] = base + n;
-      d[i + 3] = 255;
+      d[i] = d[i+1] = d[i+2] = base + n;
+      d[i+3] = 255;
     }
   }
 
