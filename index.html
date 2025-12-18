@@ -1,90 +1,21 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Field</title>
-
-<style>
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #1a1a1a;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-canvas {
-  width: 100vw;
-  height: 100vh;
-  display: block;
-}
-</style>
-</head>
-
-<body>
-<canvas id="c"></canvas>
-
 <script>
-/* ---------- VISUAL ---------- */
-
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
-
-function resize() {
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
-}
-resize();
-addEventListener("resize", resize);
-
-function draw() {
-  const img = ctx.createImageData(canvas.width, canvas.height);
-  const d = img.data;
-  for (let i = 0; i < d.length; i += 4) {
-    const n = Math.random();
-    d[i]     = 180 + n * 40;
-    d[i + 1] = 120 + n * 30;
-    d[i + 2] =  60 + n * 20;
-    d[i + 3] = 255;
-  }
-  ctx.putImageData(img, 0, 0);
-  requestAnimationFrame(draw);
-}
-draw();
-
-/* ---------- AUDIO ---------- */
-
-let started = false;
+let ctx, osc, gain;
 
 function startAudio() {
-  if (started) return;
-  started = true;
+  if (!ctx) {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    gain = ctx.createGain();
+    gain.gain.value = 0.15;
+    gain.connect(ctx.destination);
 
-  const AudioCtx = window.AudioContext || window.webkitAudioContext;
-  const ac = new AudioCtx();
-
-  const buffer = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++) {
-    data[i] = Math.random() * 2 - 1;
+    osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = 220;
+    osc.connect(gain);
+    osc.start();
   }
-
-  const src = ac.createBufferSource();
-  src.buffer = buffer;
-  src.loop = true;
-
-  const gain = ac.createGain();
-  gain.gain.value = 0.2;
-
-  src.connect(gain);
-  gain.connect(ac.destination);
-  src.start();
+  ctx.resume();
 }
 
-// MUST be a direct gesture
-document.body.addEventListener("touchstart", startAudio, { passive: true });
-document.body.addEventListener("mousedown", startAudio);
+document.body.addEventListener("touchstart", startAudio, { once: true });
 </script>
-</body>
-</html>
