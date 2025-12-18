@@ -1,7 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio Unlock</title>
+<style>
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background: #1c1c1c;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-family: system-ui, sans-serif;
+  }
+  button {
+    font-size: 20px;
+    padding: 20px 28px;
+    border-radius: 14px;
+    border: none;
+    background: #ff9500;
+    color: #000;
+  }
+</style>
+</head>
+<body>
+
+<button id="start">tap to begin</button>
+
 <script>
 let ctx, osc, gain;
 
-function startAudio() {
+document.getElementById("start").addEventListener("touchstart", () => {
   if (!ctx) {
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     gain = ctx.createGain();
@@ -14,8 +46,10 @@ function startAudio() {
     osc.connect(gain);
     osc.start();
   }
-  ctx.resume();
-}
 
-document.body.addEventListener("touchstart", startAudio, { once: true });
+  ctx.resume();
+}, { once: true });
 </script>
+
+</body>
+</html>
