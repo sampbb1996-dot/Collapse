@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Centered Field (Tilt Drift)</title>
+<title>Centered Field (Calibrated)</title>
+
 <style>
   html, body {
     margin: 0;
@@ -11,118 +12,127 @@
     background: #000;
     overflow: hidden;
     touch-action: manipulation;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   }
-  canvas { display: block; }
+
+  canvas {
+    display: block;
+  }
+
+  /* Minimal peripheral control */
+  #audioBtn {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    padding: 8px 12px;
+    font-size: 13px;
+    border-radius: 12px;
+    border: none;
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.6);
+    backdrop-filter: blur(6px);
+    transition: opacity 1.2s ease;
+  }
+
+  #audioBtn.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
 
 <canvas id="c"></canvas>
+<button id="audioBtn">Enable audio</button>
 
 <script>
 /* =========================
-   CANVAS (single DPR strategy)
+   CANVAS SETUP
 ========================= */
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
-let dpr = 1, vw = 0, vh = 0;
+let vw, vh, dpr;
 
 function resize() {
   vw = window.innerWidth;
   vh = window.innerHeight;
   dpr = window.devicePixelRatio || 1;
 
-  canvas.width = Math.floor(vw * dpr);
-  canvas.height = Math.floor(vh * dpr);
+  canvas.width = vw * dpr;
+  canvas.height = vh * dpr;
   canvas.style.width = vw + "px";
   canvas.style.height = vh + "px";
 
-  // draw in CSS pixels
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 addEventListener("resize", resize);
 resize();
 
 /* =========================
-   VISUAL CONSTANTS
+   VISUAL PARAMETERS
 ========================= */
-const FG = [235, 235, 235];          // off-white
-const BASE_WIDTH = 10;               // base line width
-const MAX_ALPHA = 0.85;              // center alpha
-const TRACK_ALPHA = 0.08;            // faint track
-
-// "fade to infinity" feel: long line + ends to ~0
-const LINE_LEN = 1.25;               // multiplier of screen height
+const FG = [235,235,235];      // off-white
+const BASE_WIDTH = 10;
+const MAX_ALPHA = 0.85;
+const TRACK_ALPHA = 0.07;
+const LINE_LEN = 1.3;
 
 /* =========================
-   SUB-PERCEPTUAL TILT DRIFT
-   - bounded random walk with mean reversion
-   - does NOT create a visible "rotation task"
+   TILT DRIFT (degenerate spiral)
 ========================= */
-let theta = 0;                        // radians
-const THETA_MAX = (0.9 * Math.PI) / 180;  // ±0.9° (small)
-const THETA_DRIFT = 0.00008;          // random walk speed
-const THETA_RELAX = 0.00006;          // pull back to 0
+let theta = 0;
+const THETA_MAX = 0.9 * Math.PI / 180;
+const DRIFT = 0.00008;
+const RELAX = 0.00006;
 
 let lastT = performance.now();
 
 /* =========================
-   HELPERS
-========================= */
-const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-
-/* =========================
-   RENDER
+   RENDER LOOP
 ========================= */
 function draw(now) {
-  const dt = Math.min(50, now - lastT); // ms cap
+  const dt = Math.min(50, now - lastT);
   lastT = now;
 
-  // --- update tilt (sub-perceptual) ---
-  // random walk + mean reversion
-  theta += (Math.random() - 0.5) * THETA_DRIFT * dt;
-  theta += (0 - theta) * THETA_RELAX * dt;
-  theta = clamp(theta, -THETA_MAX, THETA_MAX);
+  // Sub-perceptual angular drift
+  theta += (Math.random() - 0.5) * DRIFT * dt;
+  theta += -theta * RELAX * dt;
+  theta = Math.max(-THETA_MAX, Math.min(THETA_MAX, theta));
 
-  // --- clear background (fixed) ---
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, vw, vh);
 
-  // --- geometry ---
   const cx = vw / 2;
   const cy = vh / 2;
-
   const halfLen = (vh * LINE_LEN) / 2;
 
-  // endpoints of the tilted line
   const dx = Math.sin(theta) * halfLen;
   const dy = Math.cos(theta) * halfLen;
 
   const x1 = cx - dx, y1 = cy - dy;
   const x2 = cx + dx, y2 = cy + dy;
 
-  // faint track (same axis, lower alpha)
   ctx.lineCap = "round";
-  ctx.lineWidth = BASE_WIDTH;
+
+  // Faint axis
   ctx.strokeStyle = `rgba(${FG[0]},${FG[1]},${FG[2]},${TRACK_ALPHA})`;
+  ctx.lineWidth = BASE_WIDTH;
   ctx.beginPath();
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
   ctx.stroke();
 
-  // "fade to infinity": alpha peaks at center, decays toward ends
-  const grad = ctx.createLinearGradient(x1, y1, x2, y2);
-  grad.addColorStop(0.00, `rgba(${FG[0]},${FG[1]},${FG[2]},0.0)`);
-  grad.addColorStop(0.18, `rgba(${FG[0]},${FG[1]},${FG[2]},${0.22 * MAX_ALPHA})`);
-  grad.addColorStop(0.50, `rgba(${FG[0]},${FG[1]},${FG[2]},${1.00 * MAX_ALPHA})`);
-  grad.addColorStop(0.82, `rgba(${FG[0]},${FG[1]},${FG[2]},${0.22 * MAX_ALPHA})`);
-  grad.addColorStop(1.00, `rgba(${FG[0]},${FG[1]},${FG[2]},0.0)`);
+  // Main faded line
+  const g = ctx.createLinearGradient(x1, y1, x2, y2);
+  g.addColorStop(0.0, `rgba(${FG[0]},${FG[1]},${FG[2]},0)`);
+  g.addColorStop(0.18, `rgba(${FG[0]},${FG[1]},${FG[2]},0.22)`);
+  g.addColorStop(0.5, `rgba(${FG[0]},${FG[1]},${FG[2]},${MAX_ALPHA})`);
+  g.addColorStop(0.82, `rgba(${FG[0]},${FG[1]},${FG[2]},0.22)`);
+  g.addColorStop(1.0, `rgba(${FG[0]},${FG[1]},${FG[2]},0)`);
 
-  // slight width emphasis at center without a "pulse"
-  ctx.strokeStyle = grad;
+  ctx.strokeStyle = g;
   ctx.lineWidth = BASE_WIDTH * 1.05;
-
   ctx.beginPath();
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
@@ -132,6 +142,17 @@ function draw(now) {
 }
 
 requestAnimationFrame(draw);
+
+/* =========================
+   AUDIO ENABLE (minimal)
+========================= */
+const btn = document.getElementById("audioBtn");
+
+btn.onclick = async () => {
+  // placeholder: hook up audio here if needed
+  btn.textContent = "Audio enabled";
+  setTimeout(() => btn.classList.add("hidden"), 600);
+};
 </script>
 
 </body>
