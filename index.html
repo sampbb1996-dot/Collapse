@@ -9,21 +9,16 @@
     margin: 0;
     width: 100%;
     height: 100%;
-    background: #181818;
+    background: #1c1c1c;
     display: flex;
     align-items: center;
     justify-content: center;
-  }
-
-  #field {
-    position: absolute;
-    inset: 0;
-    background: #181818;
+    touch-action: manipulation;
   }
 
   #circle {
-    width: 200px;
-    height: 200px;
+    width: 180px;
+    height: 180px;
     border-radius: 50%;
     background: #ff9f0a;
     opacity: 0;
@@ -32,58 +27,68 @@
 </head>
 <body>
 
-<div id="field"></div>
 <div id="circle"></div>
 
 <script>
-let state = Math.random() < 0.5 ? 1 : 0;
-let bias = 0;
-
 const circle = document.getElementById("circle");
 
-// --- AUDIO ---
-const ctx = new (window.AudioContext || window.webkitAudioContext)();
-const osc = ctx.createOscillator();
-const gain = ctx.createGain();
+let started = false;
+let state = 0;
+let bias = 0;
 
-osc.type = "sine";
-osc.frequency.value = 220;
-gain.gain.value = 0;
+// --- AUDIO SETUP ---
+let ctx, osc, gain;
 
-osc.connect(gain);
-gain.connect(ctx.destination);
-osc.start();
+function startAudio() {
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  osc = ctx.createOscillator();
+  gain = ctx.createGain();
 
-// unlock audio on first touch
-document.body.addEventListener("touchstart", () => {
-  ctx.resume();
-}, { once: true });
+  osc.type = "sine";
+  osc.frequency.value = 220;
+  gain.gain.value = 0;
 
-// --- EVOLUTION ---
-function step() {
-  // drift back toward 50/50 if nothing meaningful happens
-  bias *= 0.98;
-
-  const p = 0.5 + bias;
-  state = Math.random() < p ? 1 : 0;
-
-  // visual
-  circle.style.opacity = state;
-
-  // audio
-  gain.gain.setTargetAtTime(state ? 0.15 : 0, ctx.currentTime, 0.05);
-
-  // slow, steady evolution
-  setTimeout(step, 600);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start();
 }
 
-// --- INPUT ---
-document.body.addEventListener("touchstart", () => {
-  // input slightly counteracts decay but adds noise
-  bias += (Math.random() - 0.5) * 0.1;
-});
+// --- MAIN STEP ---
+function step() {
+  bias *= 0.98;
+  const p = 0.5 + bias;
 
-step();
+  state = Math.random() < p ? 1 : 0;
+
+  circle.style.opacity = state;
+  gain.gain.setTargetAtTime(state ? 0.15 : 0, ctx.currentTime, 0.05);
+
+  setTimeout(step, 700);
+}
+
+// --- USER INPUT ---
+document.body.addEventListener("touchstart", () => {
+  if (!started) {
+    started = true;
+    startAudio();
+
+    // FORCE first confirmation
+    ctx.resume().then(() => {
+      state = 1;
+      circle.style.opacity = 1;
+      gain.gain.setTargetAtTime(0.2, ctx.currentTime, 0.01);
+
+      setTimeout(() => {
+        gain.gain.setTargetAtTime(0, ctx.currentTime, 0.1);
+        step();
+      }, 300);
+    });
+
+  } else {
+    // subtle nudge only
+    bias += (Math.random() - 0.5) * 0.08;
+  }
+});
 </script>
 
 </body>
