@@ -8,7 +8,7 @@
   html, body {
     margin: 0;
     height: 100%;
-    background: #000;
+    background: #000; /* fixed, do not fade */
     overflow: hidden;
     touch-action: manipulation;
   }
@@ -20,9 +20,9 @@
     transform: translateX(-50%);
     padding: 14px 18px;
     border-radius: 16px;
-    border: 1px solid rgba(255,255,255,0.18);
-    background: rgba(255,255,255,0.08);
-    color: rgba(255,255,255,0.9);
+    border: 1px solid rgba(230,230,230,0.18);
+    background: rgba(230,230,230,0.08);
+    color: rgba(230,230,230,0.92);
     font-size: 15px;
     backdrop-filter: blur(8px);
   }
@@ -35,51 +35,55 @@
 
 <script>
 /* =========================================================
-   CORE (keep simple, bounded, non-rhythmic)
+   Instrument: Vertical 1D scalar + hidden binary drift
+   - Visual carries information
+   - Audio is presence-only
 ========================================================= */
 
-// tick sampling (slow enough to avoid “beat”, fast enough to feel alive)
+// --- Tick / latent ---
 const TICK_SECONDS = 1.8;
 
-// visible scalar in [0,1]
-let x = 0.5;
+let x = 0.5;          // visible scalar in [0,1]
+let p = 0.5;          // P(M)
 
-// latent probability + hidden binary
-let p = 0.5;
 const MU_M = 0.46;
 const MU_F = 0.54;
 
-// dynamics
 const MEAN_PULL = 0.14;
-const NOISE_AMPLITUDE = 0.018;
+const NOISE_AMP = 0.018;
+
 const P_RELAX = 0.002;
 const P_JITTER = 0.003;
 
-// visual bounds (never disappear)
-const OP_MIN = 0.18;     // asymptotic minimum opacity (non-zero)
-const OP_MAX = 0.62;
+// --- Carrier drift (bounded, slow, non-rhythmic) ---
+let op = 0.44;        // line opacity
+let wMul = 1.0;       // width multiplier
 
-const W_BASE = 12;       // base width in CSS px
-const W_MIN = 0.85;      // *multipliers*
+const OP_MIN = 0.18;
+const OP_MAX = 0.60;
+
+const W_BASE = 12;
+const W_MIN = 0.85;
 const W_MAX = 1.05;
 
-// slow “carrier drift” (no rhythm; slow asymptotic wandering)
-let op = 0.45;
-let wMul = 1.0;
+const OP_DRIFT = 0.0025;
+const OP_RELAX = 0.004;
 
-const OP_DRIFT = 0.0025;   // per tick tiny wander
-const OP_RELAX = 0.004;    // pulls toward mid (prevents extremes)
-
-const W_DRIFT  = 0.0018;   // even smaller than opacity
+const W_DRIFT  = 0.0018;
 const W_RELAX  = 0.004;
 
-// subtle acknowledgement (NOT a pulse rhythm; just a micro “breath”)
+// --- Minimal tick acknowledgement (micro, not a beat) ---
 let micro = 0;
 const MICRO_ADD = 0.10;
 const MICRO_DECAY = 0.12;
 
+// --- Colors (off-white foreground) ---
+const FG = "rgb(230,230,230)";        // off-white (helps even with Night Shift)
+const TRACK_ALPHA = 0.10;             // faint background track
+const FILL_ALPHA_BOOST = 0.08;        // micro pulse boost
+
 /* =========================================================
-   CANVAS
+   Canvas
 ========================================================= */
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -96,14 +100,13 @@ addEventListener("resize", resize);
 resize();
 
 /* =========================================================
-   AUDIO (presence-only; no frequency encoding)
+   Audio (presence-only; fixed broadband noise)
 ========================================================= */
 let audioCtx, noiseNode, gainNode;
 let audioEnabled = false;
 
 function initAudio(){
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
   for (let i=0;i<data.length;i++) data[i] = Math.random()*2 - 1;
@@ -118,7 +121,7 @@ function initAudio(){
   noiseNode.connect(gainNode).connect(audioCtx.destination);
   noiseNode.start();
 
-  // gentle fade-in to a near-threshold bed
+  // gentle fade-in to near-threshold bed
   gainNode.gain.linearRampToValueAtTime(0.02, audioCtx.currentTime + 1.2);
 }
 
@@ -131,25 +134,35 @@ document.getElementById("audioBtn").onclick = () => {
 };
 
 /* =========================================================
-   UTILS
+   Utils
 ========================================================= */
 const clamp01 = v => Math.max(0, Math.min(1, v));
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-// approx gaussian
 function randn(){
   let s = 0;
   for (let i=0;i<6;i++) s += Math.random();
   return (s - 3) / 1.22;
 }
 
+function roundRect(ctx, x, y, w, h, r){
+  r = Math.max(0, Math.min(r, w/2, h/2));
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y,     x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x,     y + h, r);
+  ctx.arcTo(x,     y + h, x,     y,     r);
+  ctx.arcTo(x,     y,     x + w, y,     r);
+  ctx.closePath();
+}
+
 /* =========================================================
-   TICK UPDATE
+   Tick update
 ========================================================= */
 let lastTick = performance.now();
 
 function tick(){
-  // drift latent p
+  // latent drift
   p += (0.5 - p) * P_RELAX;
   p += (Math.random() - 0.5) * P_JITTER;
   p = clamp01(p);
@@ -158,12 +171,12 @@ function tick(){
   const isM = Math.random() < p;
   const mu = isM ? MU_M : MU_F;
 
-  // update visible scalar
+  // visible scalar
   x += MEAN_PULL * (mu - x);
-  x += NOISE_AMPLITUDE * randn();
+  x += NOISE_AMP * randn();
   x = clamp01(x);
 
-  // carrier drift (bounded, slow, non-rhythmic)
+  // bounded carrier drift (no rhythm)
   const opMid = (OP_MIN + OP_MAX) / 2;
   op += (Math.random() - 0.5) * OP_DRIFT;
   op += (opMid - op) * OP_RELAX;
@@ -174,65 +187,53 @@ function tick(){
   wMul += (wMid - wMul) * W_RELAX;
   wMul = clamp(wMul, W_MIN, W_MAX);
 
-  // micro acknowledgement (tiny, decays; not a beat)
+  // micro acknowledgement
   micro = Math.min(1, micro + MICRO_ADD);
 }
 
 /* =========================================================
-   RENDER
+   Render
 ========================================================= */
 function draw(){
   const now = performance.now();
   if (now - lastTick >= TICK_SECONDS * 1000){
+    // single tick; keep it simple and stable
     tick();
     lastTick += TICK_SECONDS * 1000;
   }
 
   micro *= (1 - MICRO_DECAY);
 
-  // background fixed (DO NOT fade)
+  // fixed background
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, innerWidth, innerHeight);
 
-  // geometry
+  // vertical bar geometry
   const barH = innerHeight * 0.65;
   const barTop = (innerHeight - barH) / 2;
   const cx = innerWidth / 2;
 
   const w = W_BASE * wMul;
+  const r = Math.min(w/2, 10);
 
-  // track (faint)
-  ctx.globalAlpha = 0.12;
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(cx - w/2, barTop, w, barH);
+  // track (faint, off-white)
+  ctx.globalAlpha = TRACK_ALPHA;
+  ctx.fillStyle = FG;
+  roundRect(ctx, cx - w/2, barTop, w, barH, r);
+  ctx.fill();
 
-  // fill amount
+  // filled portion (rounded ends)
   const filledH = barH * x;
   const yFillTop = barTop + (barH - filledH);
 
-  // filled bar alpha: bounded + tiny micro “breath”
-  const a = clamp(op + micro * 0.08, OP_MIN, OP_MAX);
-
-  // rounded ends: use a rounded-rect path
+  const a = clamp(op + micro * FILL_ALPHA_BOOST, OP_MIN, OP_MAX);
   ctx.globalAlpha = a;
-  ctx.fillStyle = "#fff";
-  roundRect(ctx, cx - w/2, yFillTop, w, filledH, Math.min(w/2, 10));
+  ctx.fillStyle = FG;
+  roundRect(ctx, cx - w/2, yFillTop, w, filledH, r);
   ctx.fill();
 
   ctx.globalAlpha = 1;
   requestAnimationFrame(draw);
-}
-
-// rounded-rect helper (no external libs)
-function roundRect(ctx, x, y, w, h, r){
-  r = Math.max(0, Math.min(r, w/2, h/2));
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y,     x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x,     y + h, r);
-  ctx.arcTo(x,     y + h, x,     y,     r);
-  ctx.arcTo(x,     y,     x + w, y,     r);
-  ctx.closePath();
 }
 
 draw();
