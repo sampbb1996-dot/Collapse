@@ -3,35 +3,61 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation Threshold — Speed Layer Only</title>
+<title>Initiation Threshold — Degenerate Field</title>
 
 <style>
 html, body {
   margin: 0;
   padding: 0;
+  width: 100%;
   height: 100%;
-  background: #0b0b0b;
+  background: #000;
   overflow: hidden;
   touch-action: manipulation;
 }
-canvas { display: block; }
 
+/* Centered square field */
+#frame {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#field {
+  width: min(80vmin, 520px);
+  height: min(80vmin, 520px);
+  background: #0b0b0b;
+}
+
+canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Minimal audio toggle */
 #audioBtn {
   position: fixed;
   top: 10px;
   right: 10px;
   padding: 6px 10px;
   font-size: 12px;
-  background: rgba(20,20,20,0.55);
-  color: rgba(220,220,220,0.55);
-  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(20,20,20,0.6);
+  color: rgba(220,220,220,0.6);
+  border: 1px solid rgba(255,255,255,0.1);
   border-radius: 10px;
 }
 </style>
 </head>
 
 <body>
-<canvas id="c"></canvas>
+<div id="frame">
+  <div id="field">
+    <canvas id="c"></canvas>
+  </div>
+</div>
 <button id="audioBtn">audio</button>
 
 <script>
@@ -40,7 +66,7 @@ canvas { display: block; }
 ========================= */
 const CADENCE_MS = 2000;
 const PROMPT_MS = 70;
-const REFRACTORY_MS = 420; // NEW: post-commitment delay (fixed)
+const REFRACTORY_MS = 420;
 const ONSET_JITTER_MS = 40;
 
 /* =========================
@@ -56,24 +82,24 @@ const CALM_STD_MAX = 55;
 const TIGHTEN_HITS = 6;
 const LOOSEN_MISSES = 2;
 
-const STORAGE_KEY = "speed_layer_state_v2";
+const STORAGE_KEY = "speed_layer_degenerate_v1";
 
-/* =========================
-   RESTORE
-========================= */
+/* Restore state */
 try {
   const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
   if (s?.REACTION_WINDOW) {
-    REACTION_WINDOW = Math.min(MAX_WINDOW,
-      Math.max(MIN_WINDOW, s.REACTION_WINDOW + 10));
+    REACTION_WINDOW = Math.min(
+      MAX_WINDOW,
+      Math.max(MIN_WINDOW, s.REACTION_WINDOW + 10)
+    );
   }
 } catch {}
 
 function persist() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    REACTION_WINDOW,
-    lastSaved: Date.now()
-  }));
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ REACTION_WINDOW, t: Date.now() })
+  );
 }
 
 /* =========================
@@ -83,8 +109,9 @@ const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d", { alpha: false });
 
 function resize() {
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
+  const r = canvas.getBoundingClientRect();
+  canvas.width = r.width;
+  canvas.height = r.height;
 }
 addEventListener("resize", resize);
 resize();
@@ -120,22 +147,25 @@ document.getElementById("audioBtn").onclick = async () => {
 };
 
 /* =========================
-   VISUAL
+   VISUAL — DEGENERATE SPIRAL
 ========================= */
 let lineAlpha = 0;
-let linePhase = 0;
+let phase = 0;
 
 function draw() {
-  ctx.fillStyle = "rgba(11,11,11,0.12)";
+  // fade-to-infinity
+  ctx.fillStyle = "rgba(11,11,11,0.16)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   if (lineAlpha > 0.001) {
     const cx = canvas.width / 2;
     const cy = canvas.height / 2;
-    linePhase += 0.0004;
 
-    const angle = Math.PI * 0.15 + Math.sin(linePhase) * 0.12;
-    const len = Math.min(canvas.width, canvas.height) * 0.7;
+    // infinitesimal drift (degenerate spiral)
+    phase += 0.00025;
+
+    const angle = Math.PI * 0.25 + Math.sin(phase) * 0.08;
+    const len = canvas.width * 0.7;
 
     ctx.beginPath();
     ctx.lineCap = "round";
@@ -151,7 +181,8 @@ function draw() {
     );
     ctx.stroke();
 
-    lineAlpha *= 0.90;
+    // faster decay
+    lineAlpha *= 0.88;
   }
 
   requestAnimationFrame(draw);
@@ -161,14 +192,14 @@ draw();
 /* =========================
    TRIAL LOGIC
 ========================= */
-let trialOnset = 0;
+let onset = 0;
 let deadline = 0;
 let accepting = false;
 let locked = false;
 
 let rtHistory = [];
-let stableHits = 0;
-let missStreak = 0;
+let hits = 0;
+let misses = 0;
 
 function stdDev(a) {
   const m = a.reduce((s,v)=>s+v,0)/a.length;
@@ -179,33 +210,33 @@ function canTighten() {
   return rtHistory.length >= RT_HISTORY && stdDev(rtHistory) <= CALM_STD_MAX;
 }
 
-function scheduleNext() {
+function schedule() {
   const j = (Math.random()*2-1)*ONSET_JITTER_MS;
   setTimeout(startTrial, CADENCE_MS + j);
 }
 
 function startTrial() {
-  trialOnset = performance.now();
-  deadline = trialOnset + REACTION_WINDOW;
+  onset = performance.now();
+  deadline = onset + REACTION_WINDOW;
   accepting = true;
   locked = false;
 
-  lineAlpha = 0.10;
+  // very faint prompt
+  lineAlpha = 0.05;
 
   setTimeout(() => {}, PROMPT_MS);
 
   setTimeout(() => {
     if (!accepting) return;
     accepting = false;
-    missStreak++;
-    stableHits = 0;
+    misses++;
+    hits = 0;
 
-    if (missStreak >= LOOSEN_MISSES) {
+    if (misses >= LOOSEN_MISSES) {
       REACTION_WINDOW = Math.min(MAX_WINDOW, REACTION_WINDOW + STEP_MS);
-      missStreak = 0;
+      misses = 0;
       persist();
     }
-
     lockAndSchedule();
   }, REACTION_WINDOW);
 }
@@ -214,7 +245,7 @@ function lockAndSchedule() {
   locked = true;
   setTimeout(() => {
     locked = false;
-    scheduleNext();
+    schedule();
   }, REFRACTORY_MS);
 }
 
@@ -223,7 +254,7 @@ document.body.addEventListener("pointerdown", () => {
 
   accepting = false;
   const now = performance.now();
-  const rt = now - trialOnset;
+  const rt = now - onset;
 
   rtHistory.push(rt);
   if (rtHistory.length > RT_HISTORY) rtHistory.shift();
@@ -231,22 +262,16 @@ document.body.addEventListener("pointerdown", () => {
   const hit = now <= deadline;
 
   if (hit) {
-    stableHits++;
-    missStreak = 0;
+    hits++;
+    misses = 0;
   } else {
-    missStreak++;
-    stableHits = 0;
+    misses++;
+    hits = 0;
   }
 
-  if (hit && stableHits >= TIGHTEN_HITS && canTighten()) {
+  if (hit && hits >= TIGHTEN_HITS && canTighten()) {
     REACTION_WINDOW = Math.max(MIN_WINDOW, REACTION_WINDOW - STEP_MS);
-    stableHits = 0;
-    persist();
-  }
-
-  if (!hit && missStreak >= LOOSEN_MISSES) {
-    REACTION_WINDOW = Math.min(MAX_WINDOW, REACTION_WINDOW + STEP_MS);
-    missStreak = 0;
+    hits = 0;
     persist();
   }
 
