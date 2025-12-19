@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation Threshold</title>
+<title>Initiation Threshold — Hard Mode</title>
 
 <style>
   html, body {
     margin: 0;
     padding: 0;
-    background: #0b0b0b; /* near-black, not pure */
+    background: #0b0b0b; /* near-black */
     height: 100%;
     overflow: hidden;
     touch-action: manipulation;
@@ -21,15 +21,15 @@
 
   #audioBtn {
     position: fixed;
-    bottom: 12px;
-    right: 12px;
+    bottom: 10px;
+    right: 10px;
     padding: 6px 10px;
     font-size: 12px;
     background: #111;
     color: #666;
     border: 1px solid #222;
     border-radius: 6px;
-    opacity: 0.4;
+    opacity: 0.35;
   }
 </style>
 </head>
@@ -40,13 +40,12 @@
 
 <script>
 /* =========================
-   CONFIG (DO NOT TWEAK)
+   CONFIG (ADVANCED / HARD)
 ========================= */
 
-const PROMPT_DURATION = 1400; // ms (fixed)
-const GAP_DURATION = 1200;    // ms
-const LINE_OPACITY = 0.06;    // faint
-const LINE_WIDTH = 2;
+const BASE_PROMPT = 1400;   // ms
+const BASE_GAP    = 1200;   // ms
+const JITTER      = 120;    // ±ms (sub-perceptual)
 
 /* =========================
    CANVAS
@@ -101,49 +100,40 @@ document.getElementById("audioBtn").onclick = () => {
    STATE
 ========================= */
 
-let promptActive = false;
-let promptTimeout;
+let active = false;
+let timeoutId;
 
 /* =========================
    INPUT
 ========================= */
 
 document.body.addEventListener("pointerdown", () => {
-  if (promptActive) {
-    clearPrompt(); // early action
-  }
+  if (active) clearPrompt();
 });
 
 /* =========================
-   PROMPT LOOP
+   LOOP
 ========================= */
 
-function showPrompt() {
-  promptActive = true;
+function jitter(base) {
+  return base + (Math.random() * 2 - 1) * JITTER;
+}
 
+function showPrompt() {
+  active = true;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // draw faint vertical line
-  ctx.strokeStyle = `rgba(200,200,200,${LINE_OPACITY})`;
-  ctx.lineWidth = LINE_WIDTH;
-  ctx.lineCap = "round";
+  // Invisible prompt: presence only
+  // (screen remains near-black)
 
-  const x = canvas.width / 2;
-  ctx.beginPath();
-  ctx.moveTo(x, canvas.height * 0.25);
-  ctx.lineTo(x, canvas.height * 0.75);
-  ctx.stroke();
-
-  promptTimeout = setTimeout(() => {
-    clearPrompt(); // timeout = silent fail
-  }, PROMPT_DURATION);
+  timeoutId = setTimeout(clearPrompt, jitter(BASE_PROMPT));
 }
 
 function clearPrompt() {
-  promptActive = false;
+  active = false;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  setTimeout(showPrompt, GAP_DURATION);
+  setTimeout(showPrompt, jitter(BASE_GAP));
 }
 
 /* =========================
