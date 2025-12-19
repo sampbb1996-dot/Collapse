@@ -3,30 +3,30 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation Threshold — Adaptive / Gated</title>
+<title>Initiation Threshold — Speed Layer Only</title>
 
 <style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: #0b0b0b;
-    height: 100%;
-    overflow: hidden;
-    touch-action: manipulation;
-  }
-  canvas { display: block; }
-  #audioBtn {
-    position: fixed;
-    bottom: 10px;
-    right: 10px;
-    padding: 6px 10px;
-    font-size: 12px;
-    background: #111;
-    color: #666;
-    border: 1px solid #222;
-    border-radius: 6px;
-    opacity: 0.35;
-  }
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #0b0b0b;
+  overflow: hidden;
+  touch-action: manipulation;
+}
+canvas { display: block; }
+
+#audioBtn {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: rgba(20,20,20,0.55);
+  color: rgba(220,220,220,0.55);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 10px;
+}
 </style>
 </head>
 
@@ -36,67 +36,51 @@
 
 <script>
 /* =========================
-   PERSISTENCE
+   FIXED STRUCTURE
 ========================= */
+const CADENCE_MS = 2000;
+const PROMPT_MS = 70;
+const REFRACTORY_MS = 420; // NEW: post-commitment delay (fixed)
+const ONSET_JITTER_MS = 40;
 
-const STORAGE_KEY = "initiation_threshold_state";
+/* =========================
+   SPEED LAYER (ONLY ADAPTIVE)
+========================= */
+let REACTION_WINDOW = 420;
+const MIN_WINDOW = 180;
+const MAX_WINDOW = 650;
+const STEP_MS = 15;
 
-function loadState() {
-  try {
-    const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (!s) return null;
-    return s;
-  } catch {
-    return null;
+const RT_HISTORY = 8;
+const CALM_STD_MAX = 55;
+const TIGHTEN_HITS = 6;
+const LOOSEN_MISSES = 2;
+
+const STORAGE_KEY = "speed_layer_state_v2";
+
+/* =========================
+   RESTORE
+========================= */
+try {
+  const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
+  if (s?.REACTION_WINDOW) {
+    REACTION_WINDOW = Math.min(MAX_WINDOW,
+      Math.max(MIN_WINDOW, s.REACTION_WINDOW + 10));
   }
-}
+} catch {}
 
-function saveState() {
+function persist() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    BASE_PROMPT,
+    REACTION_WINDOW,
     lastSaved: Date.now()
   }));
 }
 
 /* =========================
-   CONFIG
-========================= */
-
-let BASE_PROMPT = 1400;
-let BASE_GAP = 1200;
-
-const MIN_PROMPT = 900;
-const MAX_PROMPT = 1800;
-
-const JITTER = 120;
-const STEP = 50;
-
-const HIT_THRESHOLD = 5;
-const MISS_THRESHOLD = 3;
-
-/* Calm gating */
-const RT_HISTORY = 6;
-const MAX_RT_STD = 120;   // ms (variance threshold)
-const CALM_MISS_WINDOW = 5;
-
-/* =========================
-   RESTORE DAY-LEVEL STATE
-========================= */
-
-const saved = loadState();
-if (saved) {
-  BASE_PROMPT = Math.min(
-    MAX_PROMPT,
-    Math.max(MIN_PROMPT, saved.BASE_PROMPT + 25) // tiny soft reset
-  );
-}
-
-/* =========================
    CANVAS
 ========================= */
-
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+const ctx = canvas.getContext("2d", { alpha: false });
 
 function resize() {
   canvas.width = innerWidth;
@@ -108,130 +92,171 @@ resize();
 /* =========================
    AUDIO (OPTIONAL)
 ========================= */
-
-let audioCtx, noiseNode, gainNode;
-let audioOn = false;
+let audioCtx, noiseNode, gainNode, audioOn = false;
 
 function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  const buf = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
 
   noiseNode = audioCtx.createBufferSource();
-  noiseNode.buffer = buffer;
+  noiseNode.buffer = buf;
   noiseNode.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.015;
+  gainNode.gain.value = 0.008;
 
   noiseNode.connect(gainNode).connect(audioCtx.destination);
   noiseNode.start();
 }
 
-document.getElementById("audioBtn").onclick = () => {
-  if (!audioOn) {
-    initAudio();
-    audioOn = true;
-    document.getElementById("audioBtn").remove();
-  }
+document.getElementById("audioBtn").onclick = async () => {
+  if (audioOn) return;
+  initAudio();
+  audioOn = true;
+  try { await audioCtx.resume(); } catch {}
+  document.getElementById("audioBtn").remove();
 };
 
 /* =========================
-   STATE
+   VISUAL
 ========================= */
+let lineAlpha = 0;
+let linePhase = 0;
 
-let active = false;
-let promptStart = 0;
-let timeoutId;
+function draw() {
+  ctx.fillStyle = "rgba(11,11,11,0.12)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-let hitCount = 0;
-let missCount = 0;
+  if (lineAlpha > 0.001) {
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    linePhase += 0.0004;
 
-let rtHistory = [];
-let recentMisses = 0;
+    const angle = Math.PI * 0.15 + Math.sin(linePhase) * 0.12;
+    const len = Math.min(canvas.width, canvas.height) * 0.7;
+
+    ctx.beginPath();
+    ctx.lineCap = "round";
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = `rgba(235,235,225,${lineAlpha})`;
+    ctx.moveTo(
+      cx - Math.cos(angle) * len / 2,
+      cy - Math.sin(angle) * len / 2
+    );
+    ctx.lineTo(
+      cx + Math.cos(angle) * len / 2,
+      cy + Math.sin(angle) * len / 2
+    );
+    ctx.stroke();
+
+    lineAlpha *= 0.90;
+  }
+
+  requestAnimationFrame(draw);
+}
+draw();
 
 /* =========================
-   INPUT
+   TRIAL LOGIC
 ========================= */
+let trialOnset = 0;
+let deadline = 0;
+let accepting = false;
+let locked = false;
+
+let rtHistory = [];
+let stableHits = 0;
+let missStreak = 0;
+
+function stdDev(a) {
+  const m = a.reduce((s,v)=>s+v,0)/a.length;
+  return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/a.length);
+}
+
+function canTighten() {
+  return rtHistory.length >= RT_HISTORY && stdDev(rtHistory) <= CALM_STD_MAX;
+}
+
+function scheduleNext() {
+  const j = (Math.random()*2-1)*ONSET_JITTER_MS;
+  setTimeout(startTrial, CADENCE_MS + j);
+}
+
+function startTrial() {
+  trialOnset = performance.now();
+  deadline = trialOnset + REACTION_WINDOW;
+  accepting = true;
+  locked = false;
+
+  lineAlpha = 0.10;
+
+  setTimeout(() => {}, PROMPT_MS);
+
+  setTimeout(() => {
+    if (!accepting) return;
+    accepting = false;
+    missStreak++;
+    stableHits = 0;
+
+    if (missStreak >= LOOSEN_MISSES) {
+      REACTION_WINDOW = Math.min(MAX_WINDOW, REACTION_WINDOW + STEP_MS);
+      missStreak = 0;
+      persist();
+    }
+
+    lockAndSchedule();
+  }, REACTION_WINDOW);
+}
+
+function lockAndSchedule() {
+  locked = true;
+  setTimeout(() => {
+    locked = false;
+    scheduleNext();
+  }, REFRACTORY_MS);
+}
 
 document.body.addEventListener("pointerdown", () => {
-  if (!active) return;
+  if (!accepting || locked) return;
 
-  const rt = performance.now() - promptStart;
+  accepting = false;
+  const now = performance.now();
+  const rt = now - trialOnset;
+
   rtHistory.push(rt);
   if (rtHistory.length > RT_HISTORY) rtHistory.shift();
 
-  hitCount++;
-  missCount = 0;
-  recentMisses = Math.max(0, recentMisses - 1);
+  const hit = now <= deadline;
 
-  if (canAdapt() && hitCount >= HIT_THRESHOLD && BASE_PROMPT > MIN_PROMPT) {
-    BASE_PROMPT -= STEP;
-    hitCount = 0;
-    saveState();
+  if (hit) {
+    stableHits++;
+    missStreak = 0;
+  } else {
+    missStreak++;
+    stableHits = 0;
   }
 
-  clearPrompt();
+  if (hit && stableHits >= TIGHTEN_HITS && canTighten()) {
+    REACTION_WINDOW = Math.max(MIN_WINDOW, REACTION_WINDOW - STEP_MS);
+    stableHits = 0;
+    persist();
+  }
+
+  if (!hit && missStreak >= LOOSEN_MISSES) {
+    REACTION_WINDOW = Math.min(MAX_WINDOW, REACTION_WINDOW + STEP_MS);
+    missStreak = 0;
+    persist();
+  }
+
+  lockAndSchedule();
 });
-
-/* =========================
-   CALM GATING
-========================= */
-
-function stdDev(arr) {
-  const mean = arr.reduce((a,b)=>a+b,0) / arr.length;
-  const variance = arr.reduce((a,b)=>a + (b-mean)**2,0) / arr.length;
-  return Math.sqrt(variance);
-}
-
-function canAdapt() {
-  if (rtHistory.length < RT_HISTORY) return false;
-  if (recentMisses > CALM_MISS_WINDOW) return false;
-  if (stdDev(rtHistory) > MAX_RT_STD) return false;
-  return true;
-}
-
-/* =========================
-   LOOP
-========================= */
-
-function jitter(ms) {
-  return ms + (Math.random() * 2 - 1) * JITTER;
-}
-
-function showPrompt() {
-  active = true;
-  promptStart = performance.now();
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  timeoutId = setTimeout(() => {
-    active = false;
-    missCount++;
-    hitCount = 0;
-    recentMisses++;
-
-    if (canAdapt() && missCount >= MISS_THRESHOLD && BASE_PROMPT < MAX_PROMPT) {
-      BASE_PROMPT += STEP;
-      missCount = 0;
-      saveState();
-    }
-
-    clearPrompt();
-  }, jitter(BASE_PROMPT));
-}
-
-function clearPrompt() {
-  active = false;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  setTimeout(showPrompt, jitter(BASE_GAP));
-}
 
 /* =========================
    START
 ========================= */
-
-setTimeout(showPrompt, 1000);
+setTimeout(startTrial, 1000);
 </script>
 </body>
 </html>
