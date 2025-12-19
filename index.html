@@ -2,74 +2,80 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0" />
-<title>Collapse</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Initiation Threshold</title>
 
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  height: 100%;
-  background: #050505; /* near-black */
-  overflow: hidden;
-  touch-action: manipulation;
-}
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #0b0b0b; /* near-black, not pure */
+    height: 100%;
+    overflow: hidden;
+    touch-action: manipulation;
+  }
 
-canvas {
-  display: block;
-}
+  canvas {
+    display: block;
+  }
 
-#audioBtn {
-  position: fixed;
-  bottom: 6%;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 10px 18px;
-  border-radius: 18px;
-  border: none;
-  background: rgba(255,255,255,0.08);
-  color: rgba(255,255,255,0.6);
-  font-size: 14px;
-  letter-spacing: 0.3px;
-}
+  #audioBtn {
+    position: fixed;
+    bottom: 12px;
+    right: 12px;
+    padding: 6px 10px;
+    font-size: 12px;
+    background: #111;
+    color: #666;
+    border: 1px solid #222;
+    border-radius: 6px;
+    opacity: 0.4;
+  }
 </style>
 </head>
 
 <body>
 <canvas id="c"></canvas>
-<button id="audioBtn">Enable Audio</button>
+<button id="audioBtn">audio</button>
 
 <script>
 /* =========================
-   CANVAS SETUP
+   CONFIG (DO NOT TWEAK)
 ========================= */
+
+const PROMPT_DURATION = 1400; // ms (fixed)
+const GAP_DURATION = 1200;    // ms
+const LINE_OPACITY = 0.06;    // faint
+const LINE_WIDTH = 2;
+
+/* =========================
+   CANVAS
+========================= */
+
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 function resize() {
-  canvas.width = window.innerWidth * devicePixelRatio;
-  canvas.height = window.innerHeight * devicePixelRatio;
-  ctx.scale(devicePixelRatio, devicePixelRatio);
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
 }
+addEventListener("resize", resize);
 resize();
-window.addEventListener("resize", resize);
 
 /* =========================
-   AUDIO (VERY SUBTLE)
+   AUDIO (OPTIONAL)
 ========================= */
-let audioCtx, noiseNode, gainNode;
-const audioBtn = document.getElementById("audioBtn");
 
-audioBtn.onclick = () => {
+let audioCtx, noiseNode, gainNode;
+let audioOn = false;
+
+function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-  const bufferSize = audioCtx.sampleRate * 2;
-  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
-
-  for (let i = 0; i < bufferSize; i++) {
-    data[i] = (Math.random() * 2 - 1) * 0.03;
+  for (let i = 0; i < data.length; i++) {
+    data[i] = Math.random() * 2 - 1;
   }
 
   noiseNode = audioCtx.createBufferSource();
@@ -77,64 +83,74 @@ audioBtn.onclick = () => {
   noiseNode.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.015; // near inaudible
+  gainNode.gain.value = 0.015; // barely audible
 
-  noiseNode.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
+  noiseNode.connect(gainNode).connect(audioCtx.destination);
   noiseNode.start();
+}
 
-  audioBtn.style.display = "none";
+document.getElementById("audioBtn").onclick = () => {
+  if (!audioOn) {
+    initAudio();
+    audioOn = true;
+    document.getElementById("audioBtn").remove();
+  }
 };
 
 /* =========================
-   VISUAL STATE
+   STATE
 ========================= */
-let t = 0;
+
+let promptActive = false;
+let promptTimeout;
 
 /* =========================
-   DRAW LOOP
+   INPUT
 ========================= */
-function draw() {
-  t += 0.00015; // very slow drift
+
+document.body.addEventListener("pointerdown", () => {
+  if (promptActive) {
+    clearPrompt(); // early action
+  }
+});
+
+/* =========================
+   PROMPT LOOP
+========================= */
+
+function showPrompt() {
+  promptActive = true;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const w = canvas.width / devicePixelRatio;
-  const h = canvas.height / devicePixelRatio;
-
-  ctx.save();
-  ctx.translate(w / 2, h / 2);
-
-  // sub-perceptual angular drift
-  ctx.rotate(Math.sin(t) * 0.015);
-
-  // infinite fade gradient
-  const grad = ctx.createLinearGradient(0, -h, 0, h);
-  grad.addColorStop(0.0, "rgba(240,240,235,0)");
-  grad.addColorStop(0.35, "rgba(240,240,235,0.08)");
-  grad.addColorStop(0.5, "rgba(240,240,235,0.22)");
-  grad.addColorStop(0.65, "rgba(240,240,235,0.08)");
-  grad.addColorStop(1.0, "rgba(240,240,235,0)");
-
-  // width fade
-  const baseWidth = 3.2;
-  const widthMod = 1 + Math.sin(t * 0.7) * 0.015;
-
-  ctx.strokeStyle = grad;
-  ctx.lineWidth = baseWidth * widthMod;
+  // draw faint vertical line
+  ctx.strokeStyle = `rgba(200,200,200,${LINE_OPACITY})`;
+  ctx.lineWidth = LINE_WIDTH;
   ctx.lineCap = "round";
 
+  const x = canvas.width / 2;
   ctx.beginPath();
-  ctx.moveTo(0, -h);
-  ctx.lineTo(0, h);
+  ctx.moveTo(x, canvas.height * 0.25);
+  ctx.lineTo(x, canvas.height * 0.75);
   ctx.stroke();
 
-  ctx.restore();
-
-  requestAnimationFrame(draw);
+  promptTimeout = setTimeout(() => {
+    clearPrompt(); // timeout = silent fail
+  }, PROMPT_DURATION);
 }
 
-draw();
+function clearPrompt() {
+  promptActive = false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  setTimeout(showPrompt, GAP_DURATION);
+}
+
+/* =========================
+   START
+========================= */
+
+setTimeout(showPrompt, 1000);
 </script>
 </body>
 </html>
