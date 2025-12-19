@@ -3,20 +3,18 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation Threshold — Adaptive</title>
+<title>Initiation Threshold — Adaptive / Gated</title>
 
 <style>
   html, body {
     margin: 0;
     padding: 0;
-    background: #0b0b0b; /* near-black */
+    background: #0b0b0b;
     height: 100%;
     overflow: hidden;
     touch-action: manipulation;
   }
-
   canvas { display: block; }
-
   #audioBtn {
     position: fixed;
     bottom: 10px;
@@ -38,24 +36,60 @@
 
 <script>
 /* =========================
-   CONFIG (ADAPTIVE)
+   PERSISTENCE
 ========================= */
 
-// Base timing
-let BASE_PROMPT = 1400;     // ms
-let BASE_GAP    = 1200;     // ms
+const STORAGE_KEY = "initiation_threshold_state";
 
-// Bounds
-const MIN_PROMPT = 900;    // do not go below
-const MAX_PROMPT = 1800;   // do not go above
+function loadState() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (!s) return null;
+    return s;
+  } catch {
+    return null;
+  }
+}
 
-// Jitter (sub-perceptual)
-const JITTER = 120;        // ±ms
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    BASE_PROMPT,
+    lastSaved: Date.now()
+  }));
+}
 
-// Adaptation
-const STEP = 50;           // ms per adjustment
-const HIT_THRESHOLD = 5;   // tighten after 5 clean hits
-const MISS_THRESHOLD = 3;  // loosen after 3 misses
+/* =========================
+   CONFIG
+========================= */
+
+let BASE_PROMPT = 1400;
+let BASE_GAP = 1200;
+
+const MIN_PROMPT = 900;
+const MAX_PROMPT = 1800;
+
+const JITTER = 120;
+const STEP = 50;
+
+const HIT_THRESHOLD = 5;
+const MISS_THRESHOLD = 3;
+
+/* Calm gating */
+const RT_HISTORY = 6;
+const MAX_RT_STD = 120;   // ms (variance threshold)
+const CALM_MISS_WINDOW = 5;
+
+/* =========================
+   RESTORE DAY-LEVEL STATE
+========================= */
+
+const saved = loadState();
+if (saved) {
+  BASE_PROMPT = Math.min(
+    MAX_PROMPT,
+    Math.max(MIN_PROMPT, saved.BASE_PROMPT + 25) // tiny soft reset
+  );
+}
 
 /* =========================
    CANVAS
@@ -80,12 +114,9 @@ let audioOn = false;
 
 function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
 
   noiseNode = audioCtx.createBufferSource();
   noiseNode.buffer = buffer;
@@ -117,6 +148,9 @@ let timeoutId;
 let hitCount = 0;
 let missCount = 0;
 
+let rtHistory = [];
+let recentMisses = 0;
+
 /* =========================
    INPUT
 ========================= */
@@ -125,19 +159,38 @@ document.body.addEventListener("pointerdown", () => {
   if (!active) return;
 
   const rt = performance.now() - promptStart;
+  rtHistory.push(rt);
+  if (rtHistory.length > RT_HISTORY) rtHistory.shift();
 
-  // Successful initiation
   hitCount++;
   missCount = 0;
+  recentMisses = Math.max(0, recentMisses - 1);
 
-  // Tighten only after consistency
-  if (hitCount >= HIT_THRESHOLD && BASE_PROMPT > MIN_PROMPT) {
+  if (canAdapt() && hitCount >= HIT_THRESHOLD && BASE_PROMPT > MIN_PROMPT) {
     BASE_PROMPT -= STEP;
     hitCount = 0;
+    saveState();
   }
 
   clearPrompt();
 });
+
+/* =========================
+   CALM GATING
+========================= */
+
+function stdDev(arr) {
+  const mean = arr.reduce((a,b)=>a+b,0) / arr.length;
+  const variance = arr.reduce((a,b)=>a + (b-mean)**2,0) / arr.length;
+  return Math.sqrt(variance);
+}
+
+function canAdapt() {
+  if (rtHistory.length < RT_HISTORY) return false;
+  if (recentMisses > CALM_MISS_WINDOW) return false;
+  if (stdDev(rtHistory) > MAX_RT_STD) return false;
+  return true;
+}
 
 /* =========================
    LOOP
@@ -152,17 +205,16 @@ function showPrompt() {
   promptStart = performance.now();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // No visual stimulus (hard mode)
-
   timeoutId = setTimeout(() => {
-    // Silent miss
+    active = false;
     missCount++;
     hitCount = 0;
+    recentMisses++;
 
-    // Loosen only after repeated misses
-    if (missCount >= MISS_THRESHOLD && BASE_PROMPT < MAX_PROMPT) {
+    if (canAdapt() && missCount >= MISS_THRESHOLD && BASE_PROMPT < MAX_PROMPT) {
       BASE_PROMPT += STEP;
       missCount = 0;
+      saveState();
     }
 
     clearPrompt();
