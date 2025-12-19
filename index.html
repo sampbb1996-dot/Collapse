@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation Threshold — Hard Mode</title>
+<title>Initiation Threshold — Adaptive</title>
 
 <style>
   html, body {
@@ -15,9 +15,7 @@
     touch-action: manipulation;
   }
 
-  canvas {
-    display: block;
-  }
+  canvas { display: block; }
 
   #audioBtn {
     position: fixed;
@@ -40,12 +38,24 @@
 
 <script>
 /* =========================
-   CONFIG (ADVANCED / HARD)
+   CONFIG (ADAPTIVE)
 ========================= */
 
-const BASE_PROMPT = 1400;   // ms
-const BASE_GAP    = 1200;   // ms
-const JITTER      = 120;    // ±ms (sub-perceptual)
+// Base timing
+let BASE_PROMPT = 1400;     // ms
+let BASE_GAP    = 1200;     // ms
+
+// Bounds
+const MIN_PROMPT = 900;    // do not go below
+const MAX_PROMPT = 1800;   // do not go above
+
+// Jitter (sub-perceptual)
+const JITTER = 120;        // ±ms
+
+// Adaptation
+const STEP = 50;           // ms per adjustment
+const HIT_THRESHOLD = 5;   // tighten after 5 clean hits
+const MISS_THRESHOLD = 3;  // loosen after 3 misses
 
 /* =========================
    CANVAS
@@ -82,7 +92,7 @@ function initAudio() {
   noiseNode.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.015; // barely audible
+  gainNode.gain.value = 0.015;
 
   noiseNode.connect(gainNode).connect(audioCtx.destination);
   noiseNode.start();
@@ -101,38 +111,67 @@ document.getElementById("audioBtn").onclick = () => {
 ========================= */
 
 let active = false;
+let promptStart = 0;
 let timeoutId;
+
+let hitCount = 0;
+let missCount = 0;
 
 /* =========================
    INPUT
 ========================= */
 
 document.body.addEventListener("pointerdown", () => {
-  if (active) clearPrompt();
+  if (!active) return;
+
+  const rt = performance.now() - promptStart;
+
+  // Successful initiation
+  hitCount++;
+  missCount = 0;
+
+  // Tighten only after consistency
+  if (hitCount >= HIT_THRESHOLD && BASE_PROMPT > MIN_PROMPT) {
+    BASE_PROMPT -= STEP;
+    hitCount = 0;
+  }
+
+  clearPrompt();
 });
 
 /* =========================
    LOOP
 ========================= */
 
-function jitter(base) {
-  return base + (Math.random() * 2 - 1) * JITTER;
+function jitter(ms) {
+  return ms + (Math.random() * 2 - 1) * JITTER;
 }
 
 function showPrompt() {
   active = true;
+  promptStart = performance.now();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Invisible prompt: presence only
-  // (screen remains near-black)
+  // No visual stimulus (hard mode)
 
-  timeoutId = setTimeout(clearPrompt, jitter(BASE_PROMPT));
+  timeoutId = setTimeout(() => {
+    // Silent miss
+    missCount++;
+    hitCount = 0;
+
+    // Loosen only after repeated misses
+    if (missCount >= MISS_THRESHOLD && BASE_PROMPT < MAX_PROMPT) {
+      BASE_PROMPT += STEP;
+      missCount = 0;
+    }
+
+    clearPrompt();
+  }, jitter(BASE_PROMPT));
 }
 
 function clearPrompt() {
   active = false;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
   setTimeout(showPrompt, jitter(BASE_GAP));
 }
 
