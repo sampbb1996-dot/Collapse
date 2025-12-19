@@ -3,115 +3,82 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation Threshold — Degenerate Field</title>
+<title>Initiation Threshold — Speed Layer Only</title>
 
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  height: 100%;
-  background: #000;
-  overflow: hidden;
-  touch-action: manipulation;
-}
-
-/* Centered square field */
-#frame {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-#field {
-  width: min(80vmin, 520px);
-  height: min(80vmin, 520px);
-  background: #0b0b0b;
-}
-
-canvas {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-/* Minimal audio toggle */
-#audioBtn {
-  position: fixed;
-  top: 10px;
-  right: 10px;
-  padding: 6px 10px;
-  font-size: 12px;
-  background: rgba(20,20,20,0.6);
-  color: rgba(220,220,220,0.6);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 10px;
-}
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #050505;
+    height: 100%;
+    overflow: hidden;
+    touch-action: manipulation;
+  }
+  canvas {
+    display: block;
+    margin: auto;
+  }
+  #audioBtn {
+    position: fixed;
+    bottom: 8px;
+    right: 8px;
+    font-size: 11px;
+    padding: 4px 8px;
+    background: #0a0a0a;
+    color: #777;
+    border: 1px solid #222;
+    border-radius: 5px;
+    opacity: 0.3;
+  }
 </style>
 </head>
 
 <body>
-<div id="frame">
-  <div id="field">
-    <canvas id="c"></canvas>
-  </div>
-</div>
+<canvas id="c"></canvas>
 <button id="audioBtn">audio</button>
 
 <script>
 /* =========================
-   FIXED STRUCTURE
+   FIXED CADENCE (LOCKED)
 ========================= */
-const CADENCE_MS = 2000;
-const PROMPT_MS = 70;
-const REFRACTORY_MS = 420;
-const ONSET_JITTER_MS = 40;
+
+const PROMPT_MS = 1400;
+const GAP_MS = 1200;
+const JITTER = 100;
 
 /* =========================
-   SPEED LAYER (ONLY ADAPTIVE)
+   REACTION WINDOW (ONLY ADAPTIVE PART)
 ========================= */
-let REACTION_WINDOW = 420;
-const MIN_WINDOW = 180;
-const MAX_WINDOW = 650;
-const STEP_MS = 15;
 
-const RT_HISTORY = 8;
-const CALM_STD_MAX = 55;
-const TIGHTEN_HITS = 6;
-const LOOSEN_MISSES = 2;
+let RW = 420;                // reaction window (ms)
+const RW_MIN = 220;
+const RW_MAX = 650;
+const RW_STEP = 18;
 
-const STORAGE_KEY = "speed_layer_degenerate_v1";
+let hitStreak = 0;
+let missStreak = 0;
 
-/* Restore state */
-try {
-  const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
-  if (s?.REACTION_WINDOW) {
-    REACTION_WINDOW = Math.min(
-      MAX_WINDOW,
-      Math.max(MIN_WINDOW, s.REACTION_WINDOW + 10)
-    );
-  }
-} catch {}
+/* =========================
+   VISUAL CONFIG (LOCKED)
+========================= */
 
-function persist() {
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({ REACTION_WINDOW, t: Date.now() })
-  );
-}
+const BASE_ALPHA = 0.12;
+const BASE_WIDTH = 2.2;
+const ALPHA_DECAY = 0.94;
+const WIDTH_DECAY = 0.96;
+const ANGLE_DRIFT = 0.00025;
 
 /* =========================
    CANVAS
 ========================= */
+
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d", { alpha: false });
+const ctx = canvas.getContext("2d");
 
 function resize() {
-  const r = canvas.getBoundingClientRect();
-  canvas.width = r.width;
-  canvas.height = r.height;
+  const size = Math.min(innerWidth, innerHeight);
+  canvas.width = size;
+  canvas.height = size;
 }
 addEventListener("resize", resize);
 resize();
@@ -119,169 +86,153 @@ resize();
 /* =========================
    AUDIO (OPTIONAL)
 ========================= */
-let audioCtx, noiseNode, gainNode, audioOn = false;
+
+let audioCtx, noiseNode, gainNode;
+let audioOn = false;
 
 function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const buf = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
 
   noiseNode = audioCtx.createBufferSource();
-  noiseNode.buffer = buf;
+  noiseNode.buffer = buffer;
   noiseNode.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.008;
+  gainNode.gain.value = 0.01;
 
   noiseNode.connect(gainNode).connect(audioCtx.destination);
   noiseNode.start();
 }
 
-document.getElementById("audioBtn").onclick = async () => {
-  if (audioOn) return;
-  initAudio();
-  audioOn = true;
-  try { await audioCtx.resume(); } catch {}
-  document.getElementById("audioBtn").remove();
+document.getElementById("audioBtn").onclick = () => {
+  if (!audioOn) {
+    initAudio();
+    audioOn = true;
+    document.getElementById("audioBtn").remove();
+  }
 };
 
 /* =========================
-   VISUAL — DEGENERATE SPIRAL
+   STATE
 ========================= */
-let lineAlpha = 0;
-let phase = 0;
 
-function draw() {
-  // fade-to-infinity
-  ctx.fillStyle = "rgba(11,11,11,0.16)";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  if (lineAlpha > 0.001) {
-    const cx = canvas.width / 2;
-    const cy = canvas.height / 2;
-
-    // infinitesimal drift (degenerate spiral)
-    phase += 0.00025;
-
-    const angle = Math.PI * 0.25 + Math.sin(phase) * 0.08;
-    const len = canvas.width * 0.7;
-
-    ctx.beginPath();
-    ctx.lineCap = "round";
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = `rgba(235,235,225,${lineAlpha})`;
-    ctx.moveTo(
-      cx - Math.cos(angle) * len / 2,
-      cy - Math.sin(angle) * len / 2
-    );
-    ctx.lineTo(
-      cx + Math.cos(angle) * len / 2,
-      cy + Math.sin(angle) * len / 2
-    );
-    ctx.stroke();
-
-    // faster decay
-    lineAlpha *= 0.88;
-  }
-
-  requestAnimationFrame(draw);
-}
-draw();
+let active = false;
+let promptStart = 0;
+let angle = 0;
 
 /* =========================
-   TRIAL LOGIC
+   DRAW
 ========================= */
-let onset = 0;
-let deadline = 0;
-let accepting = false;
-let locked = false;
 
-let rtHistory = [];
-let hits = 0;
-let misses = 0;
+function drawLine() {
+  let alpha = BASE_ALPHA;
+  let width = BASE_WIDTH;
 
-function stdDev(a) {
-  const m = a.reduce((s,v)=>s+v,0)/a.length;
-  return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/a.length);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate(angle);
+
+  while (alpha > 0.002 && width > 0.2) {
+    ctx.strokeStyle = `rgba(245,245,235,${alpha})`;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(0, -canvas.height);
+    ctx.lineTo(0, canvas.height);
+    ctx.stroke();
+    alpha *= ALPHA_DECAY;
+    width *= WIDTH_DECAY;
+  }
+
+  ctx.restore();
 }
 
-function canTighten() {
-  return rtHistory.length >= RT_HISTORY && stdDev(rtHistory) <= CALM_STD_MAX;
+/* =========================
+   LOOP
+========================= */
+
+function jitter(ms) {
+  return ms + (Math.random() * 2 - 1) * JITTER;
 }
 
-function schedule() {
-  const j = (Math.random()*2-1)*ONSET_JITTER_MS;
-  setTimeout(startTrial, CADENCE_MS + j);
-}
-
-function startTrial() {
-  onset = performance.now();
-  deadline = onset + REACTION_WINDOW;
-  accepting = true;
-  locked = false;
-
-  // very faint prompt
-  lineAlpha = 0.05;
-
-  setTimeout(() => {}, PROMPT_MS);
+function showPrompt() {
+  active = true;
+  promptStart = performance.now();
+  drawLine();
 
   setTimeout(() => {
-    if (!accepting) return;
-    accepting = false;
-    misses++;
-    hits = 0;
-
-    if (misses >= LOOSEN_MISSES) {
-      REACTION_WINDOW = Math.min(MAX_WINDOW, REACTION_WINDOW + STEP_MS);
-      misses = 0;
-      persist();
-    }
-    lockAndSchedule();
-  }, REACTION_WINDOW);
+    if (active) registerMiss();
+    clearPrompt();
+  }, jitter(PROMPT_MS));
 }
 
-function lockAndSchedule() {
-  locked = true;
-  setTimeout(() => {
-    locked = false;
-    schedule();
-  }, REFRACTORY_MS);
+function clearPrompt() {
+  active = false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  setTimeout(showPrompt, jitter(GAP_MS));
 }
+
+/* =========================
+   ADAPTATION (SPEED ONLY)
+========================= */
+
+function registerHit(rt) {
+  hitStreak++;
+  missStreak = 0;
+
+  if (hitStreak >= 3 && RW > RW_MIN) {
+    RW -= RW_STEP;
+    hitStreak = 0;
+  }
+}
+
+function registerMiss() {
+  missStreak++;
+  hitStreak = 0;
+
+  if (missStreak >= 2 && RW < RW_MAX) {
+    RW += RW_STEP;
+    missStreak = 0;
+  }
+}
+
+/* =========================
+   INPUT
+========================= */
 
 document.body.addEventListener("pointerdown", () => {
-  if (!accepting || locked) return;
+  if (!active) return;
 
-  accepting = false;
-  const now = performance.now();
-  const rt = now - onset;
+  const rt = performance.now() - promptStart;
 
-  rtHistory.push(rt);
-  if (rtHistory.length > RT_HISTORY) rtHistory.shift();
-
-  const hit = now <= deadline;
-
-  if (hit) {
-    hits++;
-    misses = 0;
+  if (rt <= RW) {
+    registerHit(rt);
   } else {
-    misses++;
-    hits = 0;
+    registerMiss();
   }
 
-  if (hit && hits >= TIGHTEN_HITS && canTighten()) {
-    REACTION_WINDOW = Math.max(MIN_WINDOW, REACTION_WINDOW - STEP_MS);
-    hits = 0;
-    persist();
-  }
-
-  lockAndSchedule();
+  clearPrompt();
 });
+
+/* =========================
+   ANIMATION
+========================= */
+
+function animate() {
+  angle += ANGLE_DRIFT;
+  if (active) drawLine();
+  requestAnimationFrame(animate);
+}
 
 /* =========================
    START
 ========================= */
-setTimeout(startTrial, 1000);
+
+setTimeout(showPrompt, 1000);
+animate();
 </script>
 </body>
 </html>
