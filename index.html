@@ -269,4 +269,79 @@ function render() {
   const dy = Math.cos(tilt) * (len / 2);
 
   // Off-white with alpha
-  ctx
+  ctx.save();
+  ctx.globalCompositeOperation = "source-over";
+  ctx.lineCap = "round";
+  ctx.lineWidth = w;
+  ctx.strokeStyle = `rgba(${OFFWHITE.r}, ${OFFWHITE.g}, ${OFFWHITE.b}, ${a})`;
+
+  ctx.beginPath();
+  ctx.moveTo(cx - dx, cy - dy);
+  ctx.lineTo(cx + dx, cy + dy);
+  ctx.stroke();
+  ctx.restore();
+
+  // Audio mapping: extremely low gain, proportional to alpha (same envelope)
+  if (audioOn && gainNode) {
+    // Keep it barely there; max gain intentionally tiny
+    gainNode.gain.value = 0.02 * a;
+  }
+
+  // Window end = miss if no tap happened
+  if (elapsed >= REACTION_WINDOW_MS) {
+    // miss
+    active = false;
+    missCount++;
+    hitCount = 0;
+
+    if (canAdapt() && missCount >= MISSES_TO_LOOSEN) {
+      REACTION_WINDOW_MS = clamp(REACTION_WINDOW_MS + STEP_MS, MIN_WINDOW_MS, MAX_WINDOW_MS);
+      missCount = 0;
+      persist();
+    }
+
+    endTrial();
+    return;
+  }
+
+  rafId = requestAnimationFrame(render);
+}
+
+/* =========================
+   TRIAL CONTROL (FIXED RHYTHM)
+========================= */
+function startTrial() {
+  active = true;
+  t0 = performance.now();
+
+  // Start render loop
+  cancelAnimationFrame(rafId);
+  rafId = requestAnimationFrame(render);
+}
+
+function endTrial() {
+  active = false;
+
+  // Stop audio (silence) between trials
+  if (audioOn && gainNode) gainNode.gain.value = 0.0;
+
+  cancelAnimationFrame(rafId);
+  clearField();
+
+  // Fixed gap (external cadence does not adapt)
+  setTimeout(startTrial, GAP_MS);
+}
+
+/* =========================
+   UTILS
+========================= */
+function clamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
+
+/* =========================
+   START
+========================= */
+clearField();
+setTimeout(startTrial, START_DELAY_MS);
+</script>
+</body>
+</html>
