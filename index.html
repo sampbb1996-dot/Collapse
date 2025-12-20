@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation — Degenerate</title>
+<title>Initiation — Temporal Fade</title>
 
 <style>
 html, body {
@@ -15,9 +15,7 @@ html, body {
   touch-action: manipulation;
 }
 
-canvas {
-  display: block;
-}
+canvas { display: block; }
 
 #audioBtn {
   position: fixed;
@@ -69,11 +67,14 @@ function clear() {
 }
 
 /* =========================
-   AUDIO (FADE / RETURN)
+   AUDIO (MATCH ORIGINAL FEEL)
 ========================= */
 
 let audioOn = false;
 let audioCtx, noiseNode, gainNode;
+
+const AUDIO_HIGH = 0.02;
+const AUDIO_LOW  = 0.002;
 
 function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -86,19 +87,24 @@ function initAudio() {
   noiseNode.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.02;
+  gainNode.gain.value = AUDIO_HIGH;
 
   noiseNode.connect(gainNode).connect(audioCtx.destination);
   noiseNode.start();
 }
 
-function fadeAudio(to, time = 0.25) {
+function dropAudioFast() {
   if (!audioOn) return;
-  gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
-  gainNode.gain.linearRampToValueAtTime(
-    to,
-    audioCtx.currentTime + time
-  );
+  const t = audioCtx.currentTime;
+  gainNode.gain.cancelScheduledValues(t);
+  gainNode.gain.setTargetAtTime(AUDIO_LOW, t, 0.03); // fast drop
+}
+
+function restoreAudioInstant() {
+  if (!audioOn) return;
+  const t = audioCtx.currentTime;
+  gainNode.gain.cancelScheduledValues(t);
+  gainNode.gain.setValueAtTime(AUDIO_HIGH, t); // instant
 }
 
 document.getElementById("audioBtn").onclick = () => {
@@ -116,6 +122,7 @@ document.getElementById("audioBtn").onclick = () => {
 let active = false;
 let promptStart = 0;
 let timeoutId;
+let rafId;
 
 /* =========================
    INPUT
@@ -125,35 +132,34 @@ document.body.addEventListener("pointerdown", () => {
   if (!active) return;
 
   const rt = performance.now() - promptStart;
-
   if (rt < reactionWindow) {
     reactionWindow = Math.max(MIN_WINDOW, reactionWindow - STEP);
   }
-
   endPrompt();
 });
 
 /* =========================
-   STIMULUS (FADED / DEGENERATE)
+   STIMULUS (TEMPORAL FADE)
 ========================= */
 
-function drawStimulus() {
+function renderStimulus() {
+  if (!active) return;
+
   clear();
+
+  const t = performance.now() - promptStart;
+  const progress = Math.min(t / reactionWindow, 1);
+  const alpha = 0.7 * (1 - progress * 0.85);
 
   const cx = canvas.width / 2;
   const cy = canvas.height / 2;
   const len = canvas.height * 0.3;
+  const drift = (performance.now() % 30000) / 30000 * 0.03;
 
-  const drift = (performance.now() % 20000) / 20000 * 0.03; // infinitesimal
   ctx.translate(cx, cy);
   ctx.rotate(drift);
 
-  const grad = ctx.createLinearGradient(0, -len, 0, len);
-  grad.addColorStop(0, "rgba(245,245,240,0)");
-  grad.addColorStop(0.5, "rgba(245,245,240,0.7)");
-  grad.addColorStop(1, "rgba(245,245,240,0)");
-
-  ctx.strokeStyle = grad;
+  ctx.strokeStyle = `rgba(245,245,240,${alpha})`;
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(0, -len);
@@ -161,6 +167,8 @@ function drawStimulus() {
   ctx.stroke();
 
   ctx.setTransform(1,0,0,1,0,0);
+
+  rafId = requestAnimationFrame(renderStimulus);
 }
 
 /* =========================
@@ -170,8 +178,8 @@ function drawStimulus() {
 function startPrompt() {
   active = true;
   promptStart = performance.now();
-  drawStimulus();
-  fadeAudio(0.002, 0.35); // fade down during prompt
+  dropAudioFast();
+  renderStimulus();
 
   timeoutId = setTimeout(() => {
     reactionWindow = Math.min(MAX_WINDOW, reactionWindow + STEP);
@@ -181,9 +189,10 @@ function startPrompt() {
 
 function endPrompt() {
   active = false;
+  cancelAnimationFrame(rafId);
   clearTimeout(timeoutId);
   clear();
-  fadeAudio(0.02, 0.05); // snap back between prompts
+  restoreAudioInstant();
   setTimeout(startPrompt, GAP);
 }
 
