@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation — Fixed Stimulus</title>
+<title>Initiation — Degenerate</title>
 
 <style>
 html, body {
@@ -40,16 +40,10 @@ canvas {
 
 <script>
 /* =========================
-   INVARIANT
-   - Stimulus ALWAYS visible during prompt
-   - ONLY reaction window adapts
+   CONFIG (ONLY ADAPTIVE VAR)
 ========================= */
 
-/* =========================
-   CONFIG
-========================= */
-
-let reactionWindow = 1400; // ms
+let reactionWindow = 1400;
 const MIN_WINDOW = 900;
 const MAX_WINDOW = 1800;
 const STEP = 50;
@@ -75,7 +69,7 @@ function clear() {
 }
 
 /* =========================
-   AUDIO (USER-GATED)
+   AUDIO (FADE / RETURN)
 ========================= */
 
 let audioOn = false;
@@ -92,10 +86,19 @@ function initAudio() {
   noiseNode.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.015;
+  gainNode.gain.value = 0.02;
 
   noiseNode.connect(gainNode).connect(audioCtx.destination);
   noiseNode.start();
+}
+
+function fadeAudio(to, time = 0.25) {
+  if (!audioOn) return;
+  gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
+  gainNode.gain.linearRampToValueAtTime(
+    to,
+    audioCtx.currentTime + time
+  );
 }
 
 document.getElementById("audioBtn").onclick = () => {
@@ -123,7 +126,6 @@ document.body.addEventListener("pointerdown", () => {
 
   const rt = performance.now() - promptStart;
 
-  // clean hit → tighten window
   if (rt < reactionWindow) {
     reactionWindow = Math.max(MIN_WINDOW, reactionWindow - STEP);
   }
@@ -132,17 +134,33 @@ document.body.addEventListener("pointerdown", () => {
 });
 
 /* =========================
-   STIMULUS (ALWAYS PRESENT)
+   STIMULUS (FADED / DEGENERATE)
 ========================= */
 
 function drawStimulus() {
   clear();
-  ctx.strokeStyle = "rgba(245,245,240,0.7)"; // off-white
+
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const len = canvas.height * 0.3;
+
+  const drift = (performance.now() % 20000) / 20000 * 0.03; // infinitesimal
+  ctx.translate(cx, cy);
+  ctx.rotate(drift);
+
+  const grad = ctx.createLinearGradient(0, -len, 0, len);
+  grad.addColorStop(0, "rgba(245,245,240,0)");
+  grad.addColorStop(0.5, "rgba(245,245,240,0.7)");
+  grad.addColorStop(1, "rgba(245,245,240,0)");
+
+  ctx.strokeStyle = grad;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(canvas.width / 2, canvas.height * 0.35);
-  ctx.lineTo(canvas.width / 2, canvas.height * 0.65);
+  ctx.moveTo(0, -len);
+  ctx.lineTo(0, len);
   ctx.stroke();
+
+  ctx.setTransform(1,0,0,1,0,0);
 }
 
 /* =========================
@@ -153,9 +171,9 @@ function startPrompt() {
   active = true;
   promptStart = performance.now();
   drawStimulus();
+  fadeAudio(0.002, 0.35); // fade down during prompt
 
   timeoutId = setTimeout(() => {
-    // miss → loosen window
     reactionWindow = Math.min(MAX_WINDOW, reactionWindow + STEP);
     endPrompt();
   }, reactionWindow);
@@ -165,6 +183,7 @@ function endPrompt() {
   active = false;
   clearTimeout(timeoutId);
   clear();
+  fadeAudio(0.02, 0.05); // snap back between prompts
   setTimeout(startPrompt, GAP);
 }
 
