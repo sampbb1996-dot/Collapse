@@ -6,29 +6,29 @@
 <title>Initiation Threshold</title>
 
 <style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: #0b0b0b;
-    height: 100%;
-    overflow: hidden;
-    touch-action: manipulation;
-  }
-  canvas {
-    display: block;
-  }
-  #audioBtn {
-    position: fixed;
-    bottom: 8px;
-    right: 8px;
-    font-size: 11px;
-    padding: 5px 8px;
-    background: #111;
-    color: #666;
-    border: 1px solid #222;
-    border-radius: 6px;
-    opacity: 0.3;
-  }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #0b0b0b;
+  height: 100%;
+  overflow: hidden;
+  touch-action: manipulation;
+}
+canvas {
+  display: block;
+}
+#audioBtn {
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: #111;
+  color: #777;
+  border: 1px solid #222;
+  border-radius: 6px;
+  opacity: 0.5;
+}
 </style>
 </head>
 
@@ -38,29 +38,19 @@
 
 <script>
 /* =========================
-   CONFIG (LOCKED)
+   CONFIG (ONLY SPEED ADAPTS)
 ========================= */
 
-let BASE_PROMPT = 1400;   // reaction window (ms)
-let BASE_GAP = 1200;
+let PROMPT_MS = 1400;
+const GAP_MS = 1200;
 
-const MIN_PROMPT = 900;
+const MIN_PROMPT = 850;
 const MAX_PROMPT = 1800;
-
 const STEP = 50;
 const JITTER = 120;
 
-const HIT_THRESHOLD = 5;
-const MISS_THRESHOLD = 3;
-
-/* =========================
-   STATE
-========================= */
-
-let active = false;
-let promptStart = 0;
-let hitCount = 0;
-let missCount = 0;
+const HIT_TARGET = 5;
+const MISS_TARGET = 3;
 
 /* =========================
    CANVAS
@@ -70,69 +60,100 @@ const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 function resize() {
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = innerWidth * dpr;
+  canvas.height = innerHeight * dpr;
+  canvas.style.width = innerWidth + "px";
+  canvas.style.height = innerHeight + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
-addEventListener("resize", resize);
+window.addEventListener("resize", resize);
 resize();
 
 /* =========================
-   AUDIO (ROBUST iOS SAFE)
+   AUDIO
 ========================= */
 
-let audioCtx = null;
-let noiseNode = null;
-let gainNode = null;
+let audioCtx, noise, gain;
 let audioOn = false;
 
-function startAudio() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-    const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < data.length; i++) {
-      data[i] = Math.random() * 2 - 1;
-    }
-
-    noiseNode = audioCtx.createBufferSource();
-    noiseNode.buffer = buffer;
-    noiseNode.loop = true;
-
-    gainNode = audioCtx.createGain();
-    gainNode.gain.value = 0.02; // faint static
-
-    noiseNode.connect(gainNode).connect(audioCtx.destination);
-    noiseNode.start();
+function initAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) {
+    data[i] = Math.random() * 2 - 1;
   }
+  noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  noise.loop = true;
 
-  if (audioCtx.state === "suspended") {
-    audioCtx.resume();
-  }
+  gain = audioCtx.createGain();
+  gain.gain.value = 0.015;
 
-  audioOn = true;
+  noise.connect(gain).connect(audioCtx.destination);
+  noise.start();
 }
 
-document.body.addEventListener("pointerdown", () => {
+document.getElementById("audioBtn").onclick = () => {
   if (!audioOn) {
-    startAudio();
-    const btn = document.getElementById("audioBtn");
-    if (btn) btn.remove();
+    initAudio();
+    audioOn = true;
+    document.getElementById("audioBtn").remove();
   }
+};
 
+/* =========================
+   STATE
+========================= */
+
+let active = false;
+let promptStart = 0;
+let hitCount = 0;
+let missCount = 0;
+let timeoutId;
+
+/* =========================
+   INPUT
+========================= */
+
+document.body.addEventListener("pointerdown", () => {
   if (!active) return;
 
-  const rt = performance.now() - promptStart;
   hitCount++;
   missCount = 0;
 
-  if (hitCount >= HIT_THRESHOLD && BASE_PROMPT > MIN_PROMPT) {
-    BASE_PROMPT -= STEP;
+  if (hitCount >= HIT_TARGET && PROMPT_MS > MIN_PROMPT) {
+    PROMPT_MS -= STEP;
     hitCount = 0;
   }
 
   clearPrompt();
 });
+
+/* =========================
+   DRAW
+========================= */
+
+function drawLine() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const len = Math.min(canvas.height * 0.55, 420);
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(Math.PI / 180 * 2); // slight tilt only
+  ctx.beginPath();
+  ctx.moveTo(0, -len / 2);
+  ctx.lineTo(0, len / 2);
+  ctx.strokeStyle = "rgba(235,235,230,0.65)";
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  ctx.stroke();
+  ctx.restore();
+}
 
 /* =========================
    LOOP
@@ -142,46 +163,29 @@ function jitter(ms) {
   return ms + (Math.random() * 2 - 1) * JITTER;
 }
 
-function drawStimulus() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // faint off-white band (pre-symbolic, non-targetable)
-  const w = canvas.width;
-  const h = canvas.height;
-  const y = h / 2;
-
-  const grad = ctx.createLinearGradient(0, y - 40, 0, y + 40);
-  grad.addColorStop(0, "rgba(240,240,230,0)");
-  grad.addColorStop(0.5, "rgba(240,240,230,0.06)");
-  grad.addColorStop(1, "rgba(240,240,230,0)");
-
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, y - 40, w, 80);
-}
-
 function showPrompt() {
   active = true;
   promptStart = performance.now();
-  drawStimulus();
+  drawLine();
 
-  setTimeout(() => {
+  timeoutId = setTimeout(() => {
     active = false;
     missCount++;
     hitCount = 0;
 
-    if (missCount >= MISS_THRESHOLD && BASE_PROMPT < MAX_PROMPT) {
-      BASE_PROMPT += STEP;
+    if (missCount >= MISS_TARGET && PROMPT_MS < MAX_PROMPT) {
+      PROMPT_MS += STEP;
       missCount = 0;
     }
 
     clearPrompt();
-  }, jitter(BASE_PROMPT));
+  }, jitter(PROMPT_MS));
 }
 
 function clearPrompt() {
   active = false;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  setTimeout(showPrompt, jitter(BASE_GAP));
+  setTimeout(showPrompt, jitter(GAP_MS));
 }
 
 /* =========================
