@@ -67,14 +67,14 @@ function clear() {
 }
 
 /* =========================
-   AUDIO (MATCH ORIGINAL FEEL)
+   AUDIO (QUIETER)
 ========================= */
 
 let audioOn = false;
 let audioCtx, noiseNode, gainNode;
 
-const AUDIO_HIGH = 0.02;
-const AUDIO_LOW  = 0.002;
+const AUDIO_HIGH = 0.012; // quieter baseline
+const AUDIO_LOW  = 0.001; // quieter floor
 
 function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -97,14 +97,14 @@ function dropAudioFast() {
   if (!audioOn) return;
   const t = audioCtx.currentTime;
   gainNode.gain.cancelScheduledValues(t);
-  gainNode.gain.setTargetAtTime(AUDIO_LOW, t, 0.03); // fast drop
+  gainNode.gain.setTargetAtTime(AUDIO_LOW, t, 0.03);
 }
 
 function restoreAudioInstant() {
   if (!audioOn) return;
   const t = audioCtx.currentTime;
   gainNode.gain.cancelScheduledValues(t);
-  gainNode.gain.setValueAtTime(AUDIO_HIGH, t); // instant
+  gainNode.gain.setValueAtTime(AUDIO_HIGH, t);
 }
 
 document.getElementById("audioBtn").onclick = () => {
