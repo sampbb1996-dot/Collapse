@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation</title>
+<title>Initiation — Fixed Stimulus</title>
 
 <style>
 html, body {
@@ -40,13 +40,20 @@ canvas {
 
 <script>
 /* =========================
-   CONFIG (ONLY ADAPTIVE VAR)
+   INVARIANT
+   - Stimulus ALWAYS visible during prompt
+   - ONLY reaction window adapts
 ========================= */
 
-let reactionWindow = 1400;   // ms
-const MIN_WINDOW = 800;
+/* =========================
+   CONFIG
+========================= */
+
+let reactionWindow = 1400; // ms
+const MIN_WINDOW = 900;
 const MAX_WINDOW = 1800;
 const STEP = 50;
+const GAP = 1200;
 
 /* =========================
    CANVAS
@@ -78,9 +85,7 @@ function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
 
   noiseNode = audioCtx.createBufferSource();
   noiseNode.buffer = buffer;
@@ -118,7 +123,7 @@ document.body.addEventListener("pointerdown", () => {
 
   const rt = performance.now() - promptStart;
 
-  // tighten if clean
+  // clean hit → tighten window
   if (rt < reactionWindow) {
     reactionWindow = Math.max(MIN_WINDOW, reactionWindow - STEP);
   }
@@ -127,12 +132,12 @@ document.body.addEventListener("pointerdown", () => {
 });
 
 /* =========================
-   VISUAL
+   STIMULUS (ALWAYS PRESENT)
 ========================= */
 
-function drawLine() {
+function drawStimulus() {
   clear();
-  ctx.strokeStyle = "rgba(245,245,240,0.65)"; // off-white
+  ctx.strokeStyle = "rgba(245,245,240,0.7)"; // off-white
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(canvas.width / 2, canvas.height * 0.35);
@@ -147,10 +152,10 @@ function drawLine() {
 function startPrompt() {
   active = true;
   promptStart = performance.now();
-  drawLine();
+  drawStimulus();
 
   timeoutId = setTimeout(() => {
-    // miss → loosen
+    // miss → loosen window
     reactionWindow = Math.min(MAX_WINDOW, reactionWindow + STEP);
     endPrompt();
   }, reactionWindow);
@@ -160,7 +165,7 @@ function endPrompt() {
   active = false;
   clearTimeout(timeoutId);
   clear();
-  setTimeout(startPrompt, 1200);
+  setTimeout(startPrompt, GAP);
 }
 
 /* =========================
