@@ -67,14 +67,14 @@ function clear() {
 }
 
 /* =========================
-   AUDIO (QUIETER)
+   AUDIO (QUIETER, FAST DROP)
 ========================= */
 
 let audioOn = false;
 let audioCtx, noiseNode, gainNode;
 
-const AUDIO_HIGH = 0.012; // quieter baseline
-const AUDIO_LOW  = 0.001; // quieter floor
+const AUDIO_HIGH = 0.012;
+const AUDIO_LOW  = 0.001;
 
 function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -139,7 +139,7 @@ document.body.addEventListener("pointerdown", () => {
 });
 
 /* =========================
-   STIMULUS (TEMPORAL FADE)
+   STIMULUS (SHORTER, TEMPORAL FADE)
 ========================= */
 
 function renderStimulus() {
@@ -153,7 +153,7 @@ function renderStimulus() {
 
   const cx = canvas.width / 2;
   const cy = canvas.height / 2;
-  const len = canvas.height * 0.3;
+  const len = canvas.height * 0.20; // ← shorter line
   const drift = (performance.now() % 30000) / 30000 * 0.03;
 
   ctx.translate(cx, cy);
