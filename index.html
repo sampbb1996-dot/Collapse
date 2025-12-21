@@ -49,10 +49,14 @@ canvas {
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
+let cw = 0, ch = 0, dpr = 1;
+
 function resize() {
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  canvas.width = innerWidth * dpr;
-  canvas.height = innerHeight * dpr;
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  cw = window.innerWidth;
+  ch = window.innerHeight;
+  canvas.width  = Math.floor(cw * dpr);
+  canvas.height = Math.floor(ch * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 window.addEventListener('resize', resize);
@@ -123,12 +127,18 @@ canvas.addEventListener('pointerdown', () => {
 });
 
 /* ================= LOOP ================= */
-function loop(now) {
-  slowPhase += slowVel;
+let lastTime = performance.now();
 
-  // continuous, sub-threshold drift
-  angle  += 0.00018 * Math.sin(slowPhase);
-  offset += 0.00005 * Math.cos(slowPhase);
+function loop(now) {
+  const dt = now - lastTime;
+  lastTime = now;
+
+  // slow latent context (time-scaled)
+  slowPhase += slowVel * dt;
+
+  // continuous sub-threshold drift (now accumulates)
+  angle  += 0.00015 * Math.sin(slowPhase) * dt;
+  offset += 0.00004 * Math.cos(slowPhase) * dt;
   offset  = Math.max(-0.2, Math.min(0.2, offset));
 
   // event timing
@@ -150,19 +160,19 @@ requestAnimationFrame(loop);
 /* ================= DRAW ================= */
 function draw(now) {
   ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, innerWidth, innerHeight);
+  ctx.fillRect(0, 0, cw, ch);
 
-  const s  = Math.min(innerWidth, innerHeight);
-  const cx = innerWidth / 2;
-  const cy = innerHeight / 2;
+  const s  = Math.min(cw, ch);
+  const cx = cw * 0.5;
+  const cy = ch * 0.5;
 
   let fade = 0;
   if (eventActive) {
     const t = (now - eventStart) / (eventEnd - eventStart);
-    fade = Math.sin(Math.PI * t); // smooth in/out
+    fade = Math.sin(Math.PI * t);
   }
 
-  // SUBTRACTIVE event: line thins and fades
+  // SUBTRACTIVE event
   const alpha = baseAlpha * (1 - 0.65 * fade);
   const width = baseWidth * (1 - 0.55 * fade);
 
