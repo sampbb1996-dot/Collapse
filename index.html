@@ -45,7 +45,7 @@ canvas {
 <button id="audioBtn">Enable Audio</button>
 
 <script>
-/* ---------- canvas ---------- */
+/* ================== CANVAS ================== */
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
@@ -53,12 +53,12 @@ function resize() {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   canvas.width = innerWidth * dpr;
   canvas.height = innerHeight * dpr;
-  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 window.addEventListener('resize', resize);
 resize();
 
-/* ---------- audio (one-time opt-in) ---------- */
+/* ================== AUDIO (ONE-SHOT) ================== */
 let audioOn = false;
 let audioCtx, noise, gain;
 
@@ -82,7 +82,6 @@ function startAudio() {
   noise.start();
 }
 
-/* fade + remove button */
 const audioBtn = document.getElementById('audioBtn');
 audioBtn.onclick = () => {
   if (audioOn) return;
@@ -93,9 +92,9 @@ audioBtn.onclick = () => {
   setTimeout(() => audioBtn.remove(), 650);
 };
 
-/* ---------- dual-timescale state ---------- */
+/* ================== STATE ================== */
 let slowPhase = Math.random() * Math.PI * 2;
-let slowVel = (Math.random()*2-1) * 0.00005;
+let slowVel = (Math.random() * 2 - 1) * 0.00006;
 
 let eventActive = false;
 let eventStart = 0;
@@ -104,15 +103,15 @@ let nextEvent = performance.now() + 1200;
 
 let windowMs = 420;
 
-/* ---------- stimulus ---------- */
+/* ================== LINE ================== */
 let angle = Math.random() * Math.PI;
-let offset = (Math.random()*2-1) * 0.1;
+let offset = (Math.random() * 2 - 1) * 0.12;
 let baseAlpha = 0.1;
 let lineWidth = 1.6;
 
-/* ---------- tap handling ---------- */
+/* ================== TAP ================== */
 let lastTap = 0;
-canvas.addEventListener('pointerdown', e => {
+canvas.addEventListener('pointerdown', () => {
   const now = performance.now();
   if (now - lastTap < 120) return;
   lastTap = now;
@@ -124,20 +123,25 @@ canvas.addEventListener('pointerdown', e => {
   }
 });
 
-/* ---------- loop ---------- */
+/* ================== LOOP ================== */
 function loop(now) {
+  // slow latent context
   slowPhase += slowVel;
-  angle += 0.00008 * Math.sin(slowPhase);
-  offset += 0.00002 * Math.cos(slowPhase);
 
+  // restored degenerate motion (sub-threshold, alive)
+  angle += 0.00018 * Math.sin(slowPhase);
+  offset += 0.00005 * Math.cos(slowPhase);
+  offset = Math.max(-0.2, Math.min(0.2, offset));
+
+  // event timing
   if (!eventActive && now > nextEvent) {
     eventActive = true;
     eventStart = now;
-    eventEnd = now + 200 + Math.random()*80;
+    eventEnd = now + 180 + Math.random() * 90;
   }
   if (eventActive && now > eventEnd) {
     eventActive = false;
-    nextEvent = now + 800 + Math.random()*1400;
+    nextEvent = now + 900 + Math.random() * 1400;
   }
 
   draw(now);
@@ -145,19 +149,18 @@ function loop(now) {
 }
 requestAnimationFrame(loop);
 
-/* ---------- draw ---------- */
+/* ================== DRAW ================== */
 function draw(now) {
-  ctx.clearRect(0,0,innerWidth,innerHeight);
   ctx.fillStyle = '#000';
-  ctx.fillRect(0,0,innerWidth,innerHeight);
+  ctx.fillRect(0, 0, innerWidth, innerHeight);
 
   const s = Math.min(innerWidth, innerHeight);
-  const cx = innerWidth/2;
-  const cy = innerHeight/2;
+  const cx = innerWidth / 2;
+  const cy = innerHeight / 2;
 
   let boost = 0;
   if (eventActive) {
-    const t = (now - eventStart)/(eventEnd - eventStart);
+    const t = (now - eventStart) / (eventEnd - eventStart);
     boost = Math.sin(Math.PI * t);
   }
 
@@ -165,12 +168,12 @@ function draw(now) {
   ctx.globalAlpha = baseAlpha + boost * 0.12;
   ctx.lineWidth = lineWidth + boost;
 
-  const dx = Math.cos(angle) * s * 0.4;
-  const dy = Math.sin(angle) * s * 0.4;
+  const dx = Math.cos(angle) * s * 0.45;
+  const dy = Math.sin(angle) * s * 0.45;
 
   ctx.beginPath();
-  ctx.moveTo(cx - dx, cy - dy + offset*s);
-  ctx.lineTo(cx + dx, cy + dy + offset*s);
+  ctx.moveTo(cx - dx, cy - dy + offset * s);
+  ctx.lineTo(cx + dx, cy + dy + offset * s);
   ctx.stroke();
 
   ctx.globalAlpha = 1;
