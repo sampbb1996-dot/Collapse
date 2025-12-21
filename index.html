@@ -3,75 +3,117 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation Threshold — Canonical (Vertical)</title>
-
+<title>Initiation Threshold — Canonical (Only Window Adapts)</title>
 <style>
   html, body {
     margin: 0;
-    padding: 0;
-    background: #0b0b0b;
     height: 100%;
+    background: #000;          /* outside field */
     overflow: hidden;
     touch-action: manipulation;
   }
-  canvas { display: block; }
+  canvas { display:block; }
+
+  /* minimal audio button */
   #audioBtn {
     position: fixed;
-    bottom: 8px;
-    right: 8px;
+    right: 10px;
+    bottom: 10px;
     padding: 6px 10px;
     font-size: 12px;
-    background: #111;
-    color: #666;
-    border: 1px solid #222;
-    border-radius: 6px;
-    opacity: 0.3;
+    background: #0c0c0c;
+    color: #6a6a6a;
+    border: 1px solid #1a1a1a;
+    border-radius: 8px;
+    opacity: 0.28;
+    user-select: none;
   }
 </style>
 </head>
-
 <body>
 <canvas id="c"></canvas>
 <button id="audioBtn">audio</button>
 
 <script>
-/* =========================
-   CONFIG — SPEED ONLY
-========================= */
+/* =========================================================
+   CANONICAL RULE
+   - Only adaptive variable: reaction window length (WINDOW_MS)
+   - Everything else fixed cadence / presentation
+   - No explicit feedback
+========================================================= */
 
-let BASE_PROMPT = 1400;     // reaction window (only adaptive var)
-const BASE_GAP = 1200;
+/* -------------------------
+   PERSISTENCE
+-------------------------- */
+const STORAGE_KEY = "initiation_window_state_v1";
 
-const MIN_PROMPT = 900;
-const MAX_PROMPT = 1800;
-const STEP = 40;
-const JITTER = 120;
+function loadState() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); }
+  catch { return null; }
+}
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    WINDOW_MS,
+    savedAt: Date.now()
+  }));
+}
 
-const HIT_THRESHOLD = 5;
-const MISS_THRESHOLD = 3;
+/* -------------------------
+   TIMING (FIXED except WINDOW_MS)
+-------------------------- */
+let WINDOW_MS = 520;            // adaptive reaction window (ms) — the ONLY adapting knob
+const GAP_MS = 1400;            // fixed gap between events (ms)
+const JITTER_MS = 40;           // fixed slight jitter (ms) — NOT adaptive
 
-/* =========================
-   CANVAS
-========================= */
+const MIN_WINDOW = 260;
+const MAX_WINDOW = 900;
+const STEP = 20;
 
+const HIT_THRESHOLD = 7;
+const MISS_THRESHOLD = 4;
+
+/* calm gating (controls WHEN adaptation can occur, not WHAT changes) */
+const RT_HISTORY = 8;
+const MAX_RT_STD = 85;          // ms
+const MAX_RECENT_MISSES = 4;
+
+/* day-level carryover: tiny soft reset only (still same one knob) */
+const saved = loadState();
+if (saved && typeof saved.WINDOW_MS === "number") {
+  // tiny soften toward easier on new day/use; keeps continuity without jumps
+  WINDOW_MS = Math.min(MAX_WINDOW, Math.max(MIN_WINDOW, saved.WINDOW_MS + 10));
+}
+
+/* -------------------------
+   CANVAS / FIELD (1:1)
+-------------------------- */
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+const ctx = canvas.getContext("2d", { alpha: false });
+
+let W = 0, H = 0;
+let field = { x: 0, y: 0, s: 0 };
 
 function resize() {
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
+  W = canvas.width = innerWidth;
+  H = canvas.height = innerHeight;
+  const s = Math.floor(Math.min(W, H) * 0.86);  // 1:1 field size
+  field.s = s;
+  field.x = Math.floor((W - s) / 2);
+  field.y = Math.floor((H - s) / 2);
 }
 addEventListener("resize", resize);
 resize();
 
-/* =========================
-   AUDIO (VERY QUIET)
-========================= */
-
-let audioCtx, noiseNode, gainNode, audioOn = false;
+/* -------------------------
+   AUDIO (OPTIONAL / QUIET)
+-------------------------- */
+let audioCtx, noiseNode, gainNode;
+let audioOn = false;
 
 function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  // white noise buffer
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
@@ -81,132 +123,214 @@ function initAudio() {
   noiseNode.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.009; // quieter than before
+  gainNode.gain.value = 0.0; // start silent
 
   noiseNode.connect(gainNode).connect(audioCtx.destination);
   noiseNode.start();
 }
 
-audioBtn.onclick = () => {
+document.getElementById("audioBtn").onclick = () => {
   if (!audioOn) {
     initAudio();
     audioOn = true;
-    audioBtn.remove();
+    document.getElementById("audioBtn").remove();
   }
 };
 
-/* =========================
-   STATE
-========================= */
+/* -------------------------
+   STATE (NO FEEDBACK)
+-------------------------- */
+let active = false;          // within window
+let tStart = 0;              // event start time (performance.now)
+let tapRegistered = false;
 
-let active = false;
 let hitCount = 0;
 let missCount = 0;
 
-/* Dual timescale (implicit working memory) */
-let contextPhase = Math.random() * Math.PI * 2;
-const CONTEXT_DRIFT = 0.0002;
+let rtHistory = [];
+let recentMisses = 0;
 
-/* Stimulus */
-let lineAlpha = 0;
-let lineWidth = 1.2;
+/* -------------------------
+   CALM GATING HELPERS
+-------------------------- */
+function stdDev(arr) {
+  const mean = arr.reduce((a,b)=>a+b,0) / arr.length;
+  const v = arr.reduce((a,b)=>a + (b-mean)**2,0) / arr.length;
+  return Math.sqrt(v);
+}
 
-/* =========================
+function canAdaptNow() {
+  if (rtHistory.length < RT_HISTORY) return false;
+  if (recentMisses > MAX_RECENT_MISSES) return false;
+  if (stdDev(rtHistory) > MAX_RT_STD) return false;
+  return true;
+}
+
+function clampWindow() {
+  WINDOW_MS = Math.min(MAX_WINDOW, Math.max(MIN_WINDOW, WINDOW_MS));
+}
+
+/* -------------------------
    INPUT
-========================= */
-
+-------------------------- */
 document.body.addEventListener("pointerdown", () => {
-  if (!active) return;
+  if (!active) return;               // taps outside window ignored
+  if (tapRegistered) return;         // one action only
 
+  tapRegistered = true;
+  const rt = performance.now() - tStart;
+
+  // record RT
+  rtHistory.push(rt);
+  if (rtHistory.length > RT_HISTORY) rtHistory.shift();
+
+  // counts (silent)
   hitCount++;
   missCount = 0;
+  recentMisses = Math.max(0, recentMisses - 1);
 
-  if (hitCount >= HIT_THRESHOLD && BASE_PROMPT > MIN_PROMPT) {
-    BASE_PROMPT -= STEP;
+  // tighten only when calm & stable
+  if (canAdaptNow() && hitCount >= HIT_THRESHOLD) {
+    WINDOW_MS -= STEP;
+    clampWindow();
     hitCount = 0;
+    saveState();
   }
 
-  clearPrompt();
+  // immediately clear to baseline (no reward)
+  endEvent(true);
 });
 
-/* =========================
-   LOOP
-========================= */
-
+/* -------------------------
+   EVENT LOOP (FIXED CADENCE)
+-------------------------- */
 function jitter(ms) {
-  return ms + (Math.random() * 2 - 1) * JITTER;
+  return ms + (Math.random() * 2 - 1) * JITTER_MS;
 }
 
-function showPrompt() {
+let eventTimeout = null;
+let gapTimeout = null;
+
+function startEvent() {
   active = true;
-  lineAlpha = 0.95;   // slightly more faded start
-  lineWidth = 1.2;
+  tapRegistered = false;
+  tStart = performance.now();
 
-  setTimeout(() => {
-    active = false;
-    missCount++;
-    hitCount = 0;
+  // schedule miss if no tap
+  eventTimeout = setTimeout(() => {
+    if (!tapRegistered) {
+      active = false;
+      missCount++;
+      hitCount = 0;
+      recentMisses++;
 
-    if (missCount >= MISS_THRESHOLD && BASE_PROMPT < MAX_PROMPT) {
-      BASE_PROMPT += STEP;
-      missCount = 0;
+      // loosen only when calm (yes, even for misses)
+      if (canAdaptNow() && missCount >= MISS_THRESHOLD) {
+        WINDOW_MS += STEP;
+        clampWindow();
+        missCount = 0;
+        saveState();
+      }
     }
-
-    clearPrompt();
-  }, jitter(BASE_PROMPT));
+    endEvent(false);
+  }, jitter(WINDOW_MS));
 }
 
-function clearPrompt() {
+function endEvent(_tapped) {
   active = false;
-  setTimeout(showPrompt, jitter(BASE_GAP));
+  clearTimeout(eventTimeout);
+
+  // next event after fixed gap
+  clearTimeout(gapTimeout);
+  gapTimeout = setTimeout(startEvent, jitter(GAP_MS));
 }
 
-/* =========================
-   RENDER
-========================= */
+// start after a short settle
+setTimeout(startEvent, 900);
+
+/* -------------------------
+   RENDER (ABSTRACT / DEGNERATE DRIFT / FADE-TO-INFINITY)
+   - Baseline: ultra-faint line (slow context)
+   - Event: slightly higher alpha/width, then exponentially decays back to baseline
+   - Sub-perceptual angular drift (degenerate spiral): tiny tilt that changes extremely slowly
+-------------------------- */
+const nearBlack = "#070707";          // field background (near-black, not pure)
+const offWhiteRGB = [235, 235, 230];  // off-white (night-shift friendly)
+
+const baseAlpha = 0.030;              // baseline visibility (very faint)
+const baseWidth = 0.70;               // baseline stroke width
+const peakAlpha = 0.10;               // peak during event (still subtle)
+const peakWidth = 2.0;                // peak width during event
+
+function expDecay01(elapsed, duration) {
+  // returns 1 at t=0, ~0 by t=duration with smooth asymptote
+  const k = 4.2; // fixed; not adaptive
+  const x = Math.max(0, Math.min(1, elapsed / duration));
+  return Math.exp(-k * x);
+}
 
 function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const now = performance.now();
 
-  /* Slow mechanical context (no expressiveness) */
-  contextPhase += CONTEXT_DRIFT;
-  const tilt = Math.sin(contextPhase) * 0.10; // sub-perceptual
+  // full outside background
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, W, H);
+
+  // field background
+  ctx.fillStyle = nearBlack;
+  ctx.fillRect(field.x, field.y, field.s, field.s);
+
+  // compute event envelope
+  let a = baseAlpha;
+  let w = baseWidth;
 
   if (active) {
-    // Degenerate fade-to-infinity
-    lineAlpha *= 0.984;
-    lineWidth *= 0.993;
+    const elapsed = now - tStart;
+    const d = expDecay01(elapsed, WINDOW_MS);
+    a = baseAlpha + (peakAlpha - baseAlpha) * d;
+    w = baseWidth + (peakWidth - baseWidth) * d;
 
-    ctx.save();
-    ctx.translate(canvas.width / 2, canvas.height / 2);
-    ctx.rotate(tilt);
-
-    ctx.strokeStyle = `rgba(235,235,230,${lineAlpha})`;
-    ctx.lineWidth = lineWidth;
-    ctx.lineCap = "round";
-
-    // Vertical line
-    ctx.beginPath();
-    ctx.moveTo(0, -canvas.height);
-    ctx.lineTo(0, canvas.height);
-    ctx.stroke();
-
-    ctx.restore();
+    // audio follows the same envelope (quiet)
+    if (audioOn && gainNode) {
+      const target = 0.010 + 0.020 * d;   // very quiet; peak still low
+      gainNode.gain.value = target;
+    }
+  } else {
+    if (audioOn && gainNode) {
+      gainNode.gain.value = 0.0;
+    }
   }
 
-  // Audio follows fast layer only
-  if (audioOn) {
-    gainNode.gain.value = 0.009 * lineAlpha;
-  }
+  // degenerate spiral / sub-perceptual drift:
+  // tiny, ultra-slow tilt that never becomes “rotation”
+  const t = now / 1000;
+  const tilt = 0.012 * Math.sin(t / 35);  // radians (~0.7° max), very slow
+
+  // draw the line
+  const cx = field.x + field.s * 0.5;
+  const cy = field.y + field.s * 0.5;
+  const len = field.s * 0.92;
+
+  const dx = Math.sin(tilt);
+  const dy = Math.cos(tilt);
+
+  const x1 = cx - dx * (len / 2);
+  const y1 = cy - dy * (len / 2);
+  const x2 = cx + dx * (len / 2);
+  const y2 = cy + dy * (len / 2);
+
+  ctx.save();
+  ctx.lineCap = "round";              // rounded ends
+  ctx.lineWidth = w;
+  ctx.strokeStyle = `rgba(${offWhiteRGB[0]},${offWhiteRGB[1]},${offWhiteRGB[2]},${a})`;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.restore();
 
   requestAnimationFrame(draw);
 }
-
-/* =========================
-   START
-========================= */
-
-setTimeout(showPrompt, 1000);
 draw();
 </script>
 </body>
