@@ -47,7 +47,6 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
 let cw, ch, dpr;
-
 function resize() {
   dpr = Math.min(2, window.devicePixelRatio || 1);
   cw = window.innerWidth;
@@ -62,26 +61,21 @@ resize();
 /* ===== Audio (one-shot) ===== */
 let audioOn = false;
 let audioCtx, noise, gain;
-
 function startAudio() {
   audioOn = true;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-
   noise = audioCtx.createBufferSource();
   noise.buffer = buffer;
   noise.loop = true;
-
   gain = audioCtx.createGain();
   gain.gain.value = 0.009;
-
   noise.connect(gain);
   gain.connect(audioCtx.destination);
   noise.start();
 }
-
 const audioBtn = document.getElementById('audioBtn');
 audioBtn.onclick = () => {
   if (audioOn) return;
@@ -91,14 +85,12 @@ audioBtn.onclick = () => {
   setTimeout(() => audioBtn.remove(), 650);
 };
 
-/* ===== Visual State ===== */
+/* ===== Visual state (REVERTED) ===== */
 let angle = Math.random() * Math.PI;
-let angleDrift = (Math.random() * 2 - 1) * 0.000001; // almost static
+let offset = (Math.random() * 2 - 1) * 0.12;
 
-let cxBias = 0;
-let cyBias = 0;
-let vx = (Math.random() * 2 - 1) * 0.00008;
-let vy = (Math.random() * 2 - 1) * 0.00008;
+let baseAlpha = 0.18;  // whiter baseline
+let baseWidth = 1.8;
 
 /* ===== Event ===== */
 let eventActive = false;
@@ -106,25 +98,15 @@ let eventStart = 0;
 let eventEnd = 0;
 let nextEvent = performance.now() + 1100;
 
-/* ===== Timing ===== */
-let lastTime = performance.now();
-
+/* ===== Loop ===== */
 function loop(now) {
-  const dt = now - lastTime;
-  lastTime = now;
 
-  // VERY slow rotation (should not read as motion)
-  angle += angleDrift * dt;
+  /* ---- OLD WORKING DRIFT (frame-based) ---- */
+  angle  += 0.00018 * Math.sin(now * 0.00008);  // <-- ONLY CHANGE: uses frame time, not dt
+  offset += 0.00005 * Math.cos(now * 0.00007);
 
-  // Perceptible but untrackable translation
-  cxBias += vx * dt;
-  cyBias += vy * dt;
+  offset = Math.max(-0.2, Math.min(0.2, offset));
 
-  const bound = Math.min(cw, ch) * 0.18;
-  cxBias = Math.max(-bound, Math.min(bound, cxBias));
-  cyBias = Math.max(-bound, Math.min(bound, cyBias));
-
-  // Event timing
   if (!eventActive && now > nextEvent) {
     eventActive = true;
     eventStart = now;
@@ -145,8 +127,8 @@ function draw(now) {
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, cw, ch);
 
-  const cx = cw * 0.5 + cxBias;
-  const cy = ch * 0.5 + cyBias;
+  const cx = cw * 0.5;
+  const cy = ch * 0.5;
 
   let fade = 0;
   if (eventActive) {
@@ -154,10 +136,8 @@ function draw(now) {
     fade = Math.sin(Math.PI * t);
   }
 
-  // CLEAR WHITE BASELINE
-  const alpha = 0.18 * (1 - 0.75 * fade);
-  const width = 1.8 * (1 - 0.7 * fade);
-
+  const alpha = baseAlpha * (1 - 0.75 * fade);
+  const width = baseWidth * (1 - 0.7 * fade);
   if (alpha < 0.01) return;
 
   ctx.strokeStyle = '#ffffff';
@@ -170,8 +150,8 @@ function draw(now) {
   const dy = Math.sin(angle) * len;
 
   ctx.beginPath();
-  ctx.moveTo(cx - dx, cy - dy);
-  ctx.lineTo(cx + dx, cy + dy);
+  ctx.moveTo(cx - dx, cy - dy + offset * len);
+  ctx.lineTo(cx + dx, cy + dy + offset * len);
   ctx.stroke();
 
   ctx.globalAlpha = 1;
