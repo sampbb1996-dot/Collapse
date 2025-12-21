@@ -45,7 +45,7 @@ canvas {
 <button id="audioBtn">Enable Audio</button>
 
 <script>
-/* ================== CANVAS ================== */
+/* ================= CANVAS ================= */
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
@@ -58,7 +58,7 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-/* ================== AUDIO (ONE-SHOT) ================== */
+/* ================= AUDIO (ONE-SHOT) ================= */
 let audioOn = false;
 let audioCtx, noise, gain;
 
@@ -75,7 +75,7 @@ function startAudio() {
   noise.loop = true;
 
   gain = audioCtx.createGain();
-  gain.gain.value = 0.01;
+  gain.gain.value = 0.008;
 
   noise.connect(gain);
   gain.connect(audioCtx.destination);
@@ -86,30 +86,29 @@ const audioBtn = document.getElementById('audioBtn');
 audioBtn.onclick = () => {
   if (audioOn) return;
   startAudio();
-
   audioBtn.style.transition = 'opacity 0.6s ease';
   audioBtn.style.opacity = '0';
   setTimeout(() => audioBtn.remove(), 650);
 };
 
-/* ================== STATE ================== */
+/* ================= STATE ================= */
 let slowPhase = Math.random() * Math.PI * 2;
-let slowVel = (Math.random() * 2 - 1) * 0.00006;
+let slowVel   = (Math.random() * 2 - 1) * 0.00006;
 
 let eventActive = false;
-let eventStart = 0;
-let eventEnd = 0;
-let nextEvent = performance.now() + 1200;
+let eventStart  = 0;
+let eventEnd    = 0;
+let nextEvent   = performance.now() + 1200;
 
 let windowMs = 420;
 
-/* ================== LINE ================== */
-let angle = Math.random() * Math.PI;
-let offset = (Math.random() * 2 - 1) * 0.12;
-let baseAlpha = 0.1;
-let lineWidth = 1.6;
+/* ================= LINE ================= */
+let angle     = Math.random() * Math.PI;
+let offset    = (Math.random() * 2 - 1) * 0.12;
+let baseAlpha = 0.10;
+let baseWidth = 1.6;
 
-/* ================== TAP ================== */
+/* ================= TAP ================= */
 let lastTap = 0;
 canvas.addEventListener('pointerdown', () => {
   const now = performance.now();
@@ -123,25 +122,24 @@ canvas.addEventListener('pointerdown', () => {
   }
 });
 
-/* ================== LOOP ================== */
+/* ================= LOOP ================= */
 function loop(now) {
-  // slow latent context
   slowPhase += slowVel;
 
-  // restored degenerate motion (sub-threshold, alive)
-  angle += 0.00018 * Math.sin(slowPhase);
+  // continuous, sub-threshold drift
+  angle  += 0.00018 * Math.sin(slowPhase);
   offset += 0.00005 * Math.cos(slowPhase);
-  offset = Math.max(-0.2, Math.min(0.2, offset));
+  offset  = Math.max(-0.2, Math.min(0.2, offset));
 
   // event timing
   if (!eventActive && now > nextEvent) {
     eventActive = true;
-    eventStart = now;
-    eventEnd = now + 180 + Math.random() * 90;
+    eventStart  = now;
+    eventEnd    = now + 170 + Math.random() * 80;
   }
   if (eventActive && now > eventEnd) {
     eventActive = false;
-    nextEvent = now + 900 + Math.random() * 1400;
+    nextEvent   = now + 900 + Math.random() * 1400;
   }
 
   draw(now);
@@ -149,24 +147,29 @@ function loop(now) {
 }
 requestAnimationFrame(loop);
 
-/* ================== DRAW ================== */
+/* ================= DRAW ================= */
 function draw(now) {
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, innerWidth, innerHeight);
 
-  const s = Math.min(innerWidth, innerHeight);
+  const s  = Math.min(innerWidth, innerHeight);
   const cx = innerWidth / 2;
   const cy = innerHeight / 2;
 
-  let boost = 0;
+  let fade = 0;
   if (eventActive) {
     const t = (now - eventStart) / (eventEnd - eventStart);
-    boost = Math.sin(Math.PI * t);
+    fade = Math.sin(Math.PI * t); // smooth in/out
   }
 
+  // SUBTRACTIVE event: line thins and fades
+  const alpha = baseAlpha * (1 - 0.65 * fade);
+  const width = baseWidth * (1 - 0.55 * fade);
+
   ctx.strokeStyle = '#f2f0e8';
-  ctx.globalAlpha = baseAlpha + boost * 0.12;
-  ctx.lineWidth = lineWidth + boost;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth   = width;
+  ctx.lineCap     = 'round';
 
   const dx = Math.cos(angle) * s * 0.45;
   const dy = Math.sin(angle) * s * 0.45;
