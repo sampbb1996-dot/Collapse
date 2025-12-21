@@ -47,7 +47,6 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
 let cw = 0, ch = 0, dpr = 1;
-
 function resize() {
   dpr = Math.min(2, window.devicePixelRatio || 1);
   cw = window.innerWidth;
@@ -62,27 +61,21 @@ resize();
 /* ===== Audio (one-shot) ===== */
 let audioOn = false;
 let audioCtx, noise, gain;
-
 function startAudio() {
   audioOn = true;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-
   noise = audioCtx.createBufferSource();
   noise.buffer = buffer;
   noise.loop = true;
-
   gain = audioCtx.createGain();
-  gain.gain.value = 0.007;
-
+  gain.gain.value = 0.006;
   noise.connect(gain);
   gain.connect(audioCtx.destination);
   noise.start();
 }
-
 const audioBtn = document.getElementById('audioBtn');
 audioBtn.onclick = () => {
   if (audioOn) return;
@@ -92,54 +85,43 @@ audioBtn.onclick = () => {
   setTimeout(() => audioBtn.remove(), 650);
 };
 
-/* ===== Latent state ===== */
+/* ===== State ===== */
 let angle = Math.random() * Math.PI;
-let angleVel = (Math.random() * 2 - 1) * 0.00003;
+let angleVel = (Math.random() * 2 - 1) * 0.000003; // VERY slow
 
-let driftX = 0;
-let driftY = 0;
+let driftX = 0, driftY = 0;
+let driftVX = (Math.random() * 2 - 1) * 0.00002;
+let driftVY = (Math.random() * 2 - 1) * 0.00002;
 
-// asymmetric, persistent bias
-let driftVX = (Math.random() * 2 - 1) * 0.000015;
-let driftVY = (Math.random() * 2 - 1) * 0.000015;
-
-let slowPhase = Math.random() * Math.PI * 2;
-
-/* ===== Event (subtractive) ===== */
 let eventActive = false;
 let eventStart = 0;
 let eventEnd = 0;
 let nextEvent = performance.now() + 1200;
 
-/* ===== Timing ===== */
 let lastTime = performance.now();
 
+/* ===== Loop ===== */
 function loop(now) {
   const dt = now - lastTime;
   lastTime = now;
 
-  slowPhase += 0.00005 * dt;
+  if (!eventActive) {
+    // background motion ONLY when no event
+    angle += angleVel * dt;
 
-  // slow rotation (kept minimal)
-  angle += angleVel * dt;
+    driftX += driftVX * dt;
+    driftY += driftVY * dt;
 
-  // biased translation (THIS is the fix)
-  driftVX += 0.00000002 * Math.sin(slowPhase);
-  driftVY += 0.00000002 * Math.cos(slowPhase);
-
-  driftX += driftVX * dt;
-  driftY += driftVY * dt;
-
-  // soft bounding (never recenters)
-  const bound = Math.min(cw, ch) * 0.25;
-  driftX = Math.max(-bound, Math.min(bound, driftX));
-  driftY = Math.max(-bound, Math.min(bound, driftY));
+    const bound = Math.min(cw, ch) * 0.25;
+    driftX = Math.max(-bound, Math.min(bound, driftX));
+    driftY = Math.max(-bound, Math.min(bound, driftY));
+  }
 
   // event timing
   if (!eventActive && now > nextEvent) {
     eventActive = true;
     eventStart = now;
-    eventEnd = now + 160 + Math.random() * 90;
+    eventEnd = now + 180 + Math.random() * 70;
   }
   if (eventActive && now > eventEnd) {
     eventActive = false;
@@ -165,8 +147,11 @@ function draw(now) {
     fade = Math.sin(Math.PI * t);
   }
 
-  const alpha = 0.10 * (1 - 0.6 * fade);
-  const width = 1.6 * (1 - 0.5 * fade);
+  // PURELY SUBTRACTIVE
+  const alpha = 0.10 * (1 - 0.9 * fade);
+  const width = 1.6 * (1 - 0.85 * fade);
+
+  if (alpha <= 0.005) return; // near disappearance
 
   ctx.strokeStyle = '#f2f0e8';
   ctx.globalAlpha = alpha;
