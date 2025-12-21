@@ -30,8 +30,8 @@ canvas {
   padding: 12px 18px;
   border-radius: 18px;
   border: none;
-  background: rgba(255,255,255,0.12);
-  color: rgba(255,255,255,0.85);
+  background: rgba(255,255,255,0.14);
+  color: rgba(255,255,255,0.9);
   font-size: 14px;
 }
 </style>
@@ -46,7 +46,8 @@ canvas {
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
-let cw = 0, ch = 0, dpr = 1;
+let cw, ch, dpr;
+
 function resize() {
   dpr = Math.min(2, window.devicePixelRatio || 1);
   cw = window.innerWidth;
@@ -61,21 +62,26 @@ resize();
 /* ===== Audio (one-shot) ===== */
 let audioOn = false;
 let audioCtx, noise, gain;
+
 function startAudio() {
   audioOn = true;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+
   noise = audioCtx.createBufferSource();
   noise.buffer = buffer;
   noise.loop = true;
+
   gain = audioCtx.createGain();
-  gain.gain.value = 0.006;
+  gain.gain.value = 0.009;
+
   noise.connect(gain);
   gain.connect(audioCtx.destination);
   noise.start();
 }
+
 const audioBtn = document.getElementById('audioBtn');
 audioBtn.onclick = () => {
   if (audioOn) return;
@@ -85,43 +91,44 @@ audioBtn.onclick = () => {
   setTimeout(() => audioBtn.remove(), 650);
 };
 
-/* ===== State ===== */
+/* ===== Visual State ===== */
 let angle = Math.random() * Math.PI;
-let angleVel = (Math.random() * 2 - 1) * 0.000003; // VERY slow
+let angleDrift = (Math.random() * 2 - 1) * 0.000001; // almost static
 
-let driftX = 0, driftY = 0;
-let driftVX = (Math.random() * 2 - 1) * 0.00002;
-let driftVY = (Math.random() * 2 - 1) * 0.00002;
+let cxBias = 0;
+let cyBias = 0;
+let vx = (Math.random() * 2 - 1) * 0.00008;
+let vy = (Math.random() * 2 - 1) * 0.00008;
 
+/* ===== Event ===== */
 let eventActive = false;
 let eventStart = 0;
 let eventEnd = 0;
-let nextEvent = performance.now() + 1200;
+let nextEvent = performance.now() + 1100;
 
+/* ===== Timing ===== */
 let lastTime = performance.now();
 
-/* ===== Loop ===== */
 function loop(now) {
   const dt = now - lastTime;
   lastTime = now;
 
-  if (!eventActive) {
-    // background motion ONLY when no event
-    angle += angleVel * dt;
+  // VERY slow rotation (should not read as motion)
+  angle += angleDrift * dt;
 
-    driftX += driftVX * dt;
-    driftY += driftVY * dt;
+  // Perceptible but untrackable translation
+  cxBias += vx * dt;
+  cyBias += vy * dt;
 
-    const bound = Math.min(cw, ch) * 0.25;
-    driftX = Math.max(-bound, Math.min(bound, driftX));
-    driftY = Math.max(-bound, Math.min(bound, driftY));
-  }
+  const bound = Math.min(cw, ch) * 0.18;
+  cxBias = Math.max(-bound, Math.min(bound, cxBias));
+  cyBias = Math.max(-bound, Math.min(bound, cyBias));
 
-  // event timing
+  // Event timing
   if (!eventActive && now > nextEvent) {
     eventActive = true;
     eventStart = now;
-    eventEnd = now + 180 + Math.random() * 70;
+    eventEnd = now + 160 + Math.random() * 80;
   }
   if (eventActive && now > eventEnd) {
     eventActive = false;
@@ -138,8 +145,8 @@ function draw(now) {
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, cw, ch);
 
-  const cx = cw * 0.5 + driftX;
-  const cy = ch * 0.5 + driftY;
+  const cx = cw * 0.5 + cxBias;
+  const cy = ch * 0.5 + cyBias;
 
   let fade = 0;
   if (eventActive) {
@@ -147,18 +154,18 @@ function draw(now) {
     fade = Math.sin(Math.PI * t);
   }
 
-  // PURELY SUBTRACTIVE
-  const alpha = 0.10 * (1 - 0.9 * fade);
-  const width = 1.6 * (1 - 0.85 * fade);
+  // CLEAR WHITE BASELINE
+  const alpha = 0.18 * (1 - 0.75 * fade);
+  const width = 1.8 * (1 - 0.7 * fade);
 
-  if (alpha <= 0.005) return; // near disappearance
+  if (alpha < 0.01) return;
 
-  ctx.strokeStyle = '#f2f0e8';
+  ctx.strokeStyle = '#ffffff';
   ctx.globalAlpha = alpha;
   ctx.lineWidth = width;
   ctx.lineCap = 'round';
 
-  const len = Math.min(cw, ch) * 0.5;
+  const len = Math.min(cw, ch) * 0.55;
   const dx = Math.cos(angle) * len;
   const dy = Math.sin(angle) * len;
 
