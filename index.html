@@ -2,8 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <title>Initiation Field</title>
 
 <style>
@@ -15,7 +14,6 @@ html, body {
   touch-action: manipulation;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
-  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 canvas {
@@ -35,7 +33,6 @@ canvas {
   background: rgba(255,255,255,0.12);
   color: rgba(255,255,255,0.85);
   font-size: 14px;
-  backdrop-filter: blur(6px);
 }
 </style>
 </head>
@@ -45,7 +42,7 @@ canvas {
 <button id="audioBtn">Enable Audio</button>
 
 <script>
-/* ================= CANVAS ================= */
+/* ===== Canvas ===== */
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
@@ -55,14 +52,14 @@ function resize() {
   dpr = Math.min(2, window.devicePixelRatio || 1);
   cw = window.innerWidth;
   ch = window.innerHeight;
-  canvas.width  = Math.floor(cw * dpr);
-  canvas.height = Math.floor(ch * dpr);
+  canvas.width  = cw * dpr;
+  canvas.height = ch * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 window.addEventListener('resize', resize);
 resize();
 
-/* ================= AUDIO (ONE-SHOT) ================= */
+/* ===== Audio (one-shot) ===== */
 let audioOn = false;
 let audioCtx, noise, gain;
 
@@ -79,7 +76,7 @@ function startAudio() {
   noise.loop = true;
 
   gain = audioCtx.createGain();
-  gain.gain.value = 0.008;
+  gain.gain.value = 0.007;
 
   noise.connect(gain);
   gain.connect(audioCtx.destination);
@@ -95,61 +92,58 @@ audioBtn.onclick = () => {
   setTimeout(() => audioBtn.remove(), 650);
 };
 
-/* ================= STATE ================= */
+/* ===== Latent state ===== */
+let angle = Math.random() * Math.PI;
+let angleVel = (Math.random() * 2 - 1) * 0.00003;
+
+let driftX = 0;
+let driftY = 0;
+
+// asymmetric, persistent bias
+let driftVX = (Math.random() * 2 - 1) * 0.000015;
+let driftVY = (Math.random() * 2 - 1) * 0.000015;
+
 let slowPhase = Math.random() * Math.PI * 2;
-let slowVel   = (Math.random() * 2 - 1) * 0.00006;
 
+/* ===== Event (subtractive) ===== */
 let eventActive = false;
-let eventStart  = 0;
-let eventEnd    = 0;
-let nextEvent   = performance.now() + 1200;
+let eventStart = 0;
+let eventEnd = 0;
+let nextEvent = performance.now() + 1200;
 
-let windowMs = 420;
-
-/* ================= LINE ================= */
-let angle     = Math.random() * Math.PI;
-let offset    = (Math.random() * 2 - 1) * 0.12;
-let baseAlpha = 0.10;
-let baseWidth = 1.6;
-
-/* ================= TAP ================= */
-let lastTap = 0;
-canvas.addEventListener('pointerdown', () => {
-  const now = performance.now();
-  if (now - lastTap < 120) return;
-  lastTap = now;
-
-  if (eventActive) {
-    if (now <= eventStart + windowMs) windowMs *= 0.985;
-    else windowMs *= 1.02;
-    windowMs = Math.max(140, Math.min(900, windowMs));
-  }
-});
-
-/* ================= LOOP ================= */
+/* ===== Timing ===== */
 let lastTime = performance.now();
 
 function loop(now) {
   const dt = now - lastTime;
   lastTime = now;
 
-  // slow latent context (time-scaled)
-  slowPhase += slowVel * dt;
+  slowPhase += 0.00005 * dt;
 
-  // continuous sub-threshold drift (now accumulates)
-  angle  += 0.00015 * Math.sin(slowPhase) * dt;
-  offset += 0.00004 * Math.cos(slowPhase) * dt;
-  offset  = Math.max(-0.2, Math.min(0.2, offset));
+  // slow rotation (kept minimal)
+  angle += angleVel * dt;
+
+  // biased translation (THIS is the fix)
+  driftVX += 0.00000002 * Math.sin(slowPhase);
+  driftVY += 0.00000002 * Math.cos(slowPhase);
+
+  driftX += driftVX * dt;
+  driftY += driftVY * dt;
+
+  // soft bounding (never recenters)
+  const bound = Math.min(cw, ch) * 0.25;
+  driftX = Math.max(-bound, Math.min(bound, driftX));
+  driftY = Math.max(-bound, Math.min(bound, driftY));
 
   // event timing
   if (!eventActive && now > nextEvent) {
     eventActive = true;
-    eventStart  = now;
-    eventEnd    = now + 170 + Math.random() * 80;
+    eventStart = now;
+    eventEnd = now + 160 + Math.random() * 90;
   }
   if (eventActive && now > eventEnd) {
     eventActive = false;
-    nextEvent   = now + 900 + Math.random() * 1400;
+    nextEvent = now + 900 + Math.random() * 1500;
   }
 
   draw(now);
@@ -157,14 +151,13 @@ function loop(now) {
 }
 requestAnimationFrame(loop);
 
-/* ================= DRAW ================= */
+/* ===== Draw ===== */
 function draw(now) {
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, cw, ch);
 
-  const s  = Math.min(cw, ch);
-  const cx = cw * 0.5;
-  const cy = ch * 0.5;
+  const cx = cw * 0.5 + driftX;
+  const cy = ch * 0.5 + driftY;
 
   let fade = 0;
   if (eventActive) {
@@ -172,21 +165,21 @@ function draw(now) {
     fade = Math.sin(Math.PI * t);
   }
 
-  // SUBTRACTIVE event
-  const alpha = baseAlpha * (1 - 0.65 * fade);
-  const width = baseWidth * (1 - 0.55 * fade);
+  const alpha = 0.10 * (1 - 0.6 * fade);
+  const width = 1.6 * (1 - 0.5 * fade);
 
   ctx.strokeStyle = '#f2f0e8';
   ctx.globalAlpha = alpha;
-  ctx.lineWidth   = width;
-  ctx.lineCap     = 'round';
+  ctx.lineWidth = width;
+  ctx.lineCap = 'round';
 
-  const dx = Math.cos(angle) * s * 0.45;
-  const dy = Math.sin(angle) * s * 0.45;
+  const len = Math.min(cw, ch) * 0.5;
+  const dx = Math.cos(angle) * len;
+  const dy = Math.sin(angle) * len;
 
   ctx.beginPath();
-  ctx.moveTo(cx - dx, cy - dy + offset * s);
-  ctx.lineTo(cx + dx, cy + dy + offset * s);
+  ctx.moveTo(cx - dx, cy - dy);
+  ctx.lineTo(cx + dx, cy + dy);
   ctx.stroke();
 
   ctx.globalAlpha = 1;
