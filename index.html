@@ -1,416 +1,180 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Initiation Field</title>
-  <style>
-    html, body {
-      margin: 0;
-      height: 100%;
-      background: #000;
-      overflow: hidden;
-      touch-action: manipulation;
-      -webkit-user-select: none;
-      user-select: none;
-      -webkit-tap-highlight-color: transparent;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-    }
-    canvas { display: block; width: 100vw; height: 100vh; }
+<meta charset="UTF-8" />
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Initiation Field</title>
 
-    /* Minimal controls (optional) */
-    .hud {
-      position: fixed;
-      left: 50%;
-      bottom: 18px;
-      transform: translateX(-50%);
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      z-index: 10;
-    }
-    button {
-      border: none;
-      border-radius: 16px;
-      padding: 12px 16px;
-      background: rgba(255,255,255,0.10);
-      color: rgba(255,255,255,0.85);
-      font-size: 14px;
-      backdrop-filter: blur(6px);
-    }
-    button:active { transform: translateY(1px); }
-  </style>
+<style>
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+#audioBtn {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 18px;
+  border-radius: 18px;
+  border: none;
+  background: rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.85);
+  font-size: 14px;
+  backdrop-filter: blur(6px);
+}
+</style>
 </head>
-<body>
-  <canvas id="c"></canvas>
 
-  <div class="hud">
-    <button id="audioBtn">Enable Audio</button>
-    <button id="endBtn">End</button>
-  </div>
+<body>
+<canvas id="c"></canvas>
+<button id="audioBtn">Enable Audio</button>
 
 <script>
-/* =========================================================
-   INITIATION FIELD (Dual-timescale overlap)
-   - Task: tap when you NOTICE the event (no prompts, no score)
-   - Only adaptive variable: reaction window width
-   - Dual-timescale: slow latent context (phase) + fast event
-   - No counting, no explicit memory task, no targets
-   ========================================================= */
-
-/* --------- iOS double-tap zoom suppression (extra) --------- */
-let lastTouchEnd = 0;
-document.addEventListener('touchend', (e) => {
-  const now = Date.now();
-  if (now - lastTouchEnd <= 250) e.preventDefault();
-  lastTouchEnd = now;
-}, { passive: false });
-
-/* ------------------------- Canvas ------------------------- */
+/* ---------- canvas ---------- */
 const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d', { alpha: false });
+const ctx = canvas.getContext('2d');
 
 function resize() {
-  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-  canvas.width = Math.floor(window.innerWidth * dpr);
-  canvas.height = Math.floor(window.innerHeight * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = innerWidth * dpr;
+  canvas.height = innerHeight * dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
 }
 window.addEventListener('resize', resize);
 resize();
 
-/* ------------------------- Field geometry ------------------------- */
-function fieldRect() {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  const s = Math.min(w, h); // 1:1 square
-  const x = (w - s) * 0.5;
-  const y = (h - s) * 0.5;
-  return { x, y, s };
+/* ---------- audio (one-time opt-in) ---------- */
+let audioOn = false;
+let audioCtx, noise, gain;
+
+function startAudio() {
+  audioOn = true;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+
+  noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  noise.loop = true;
+
+  gain = audioCtx.createGain();
+  gain.gain.value = 0.01;
+
+  noise.connect(gain);
+  gain.connect(audioCtx.destination);
+  noise.start();
 }
 
-/* ------------------------- Core state ------------------------- */
-/* Reaction window (ONLY adaptive variable) */
-let windowMs = 420;           // starts moderately permissive
-const WIN_MIN = 140;          // tightest
-const WIN_MAX = 900;          // loosest
+/* fade + remove button */
+const audioBtn = document.getElementById('audioBtn');
+audioBtn.onclick = () => {
+  if (audioOn) return;
+  startAudio();
 
-/* Calm gating (freeze adaptation if unstable) */
-let tapTimes = [];            // recent tap timestamps (ms)
-const TAP_HISTORY = 8;
-const MIN_TAP_GAP_MS = 120;   // ignores spammy micro-taps
+  audioBtn.style.transition = 'opacity 0.6s ease';
+  audioBtn.style.opacity = '0';
+  setTimeout(() => audioBtn.remove(), 650);
+};
 
-function stabilityScore() {
-  // Lower variance of inter-tap intervals => calmer
-  if (tapTimes.length < 5) return 0; // insufficient evidence
-  const intervals = [];
-  for (let i = 1; i < tapTimes.length; i++) intervals.push(tapTimes[i] - tapTimes[i - 1]);
-  const mean = intervals.reduce((a,b)=>a+b,0) / intervals.length;
-  const varr = intervals.reduce((a,b)=>a+(b-mean)*(b-mean),0) / intervals.length;
-  const stdev = Math.sqrt(varr);
-
-  // Map stdev to [0..1] calm score (tuned to human taps)
-  // ~0–80ms stdev => calm(near 1), ~250ms+ => unstable(near 0)
-  const t = (stdev - 80) / (250 - 80);
-  const calm = 1 - Math.max(0, Math.min(1, t));
-  return calm;
-}
-
-/* ------------------------- Dual-timescale overlap ------------------------- */
-/* Slow latent context: phase drifts very slowly; never “told” to user */
+/* ---------- dual-timescale state ---------- */
 let slowPhase = Math.random() * Math.PI * 2;
-let slowVel = (Math.random() * 2 - 1) * 0.00006;  // extremely slow drift
-let slowWobble = (Math.random() * 2 - 1) * 0.00002;
+let slowVel = (Math.random()*2-1) * 0.00005;
 
-/* Fast event: scheduled with weak conditioning on slowPhase */
 let eventActive = false;
 let eventStart = 0;
 let eventEnd = 0;
-let nextEventAt = 0;
+let nextEvent = performance.now() + 1200;
 
-function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
-function lerp(a, b, t) { return a + (b - a) * t; }
+let windowMs = 420;
 
-/* Conditioning: “opportunity density” depends on slow phase
-   - never deterministic
-   - never solvable
-   - just a gentle coupling that rewards keeping context alive
-*/
-function phaseCoupling() {
-  // Range ~[0.15..0.85]
-  const c = 0.5 + 0.35 * Math.sin(slowPhase);
-  return clamp(c, 0.15, 0.85);
-}
-
-function scheduleNextEvent(now) {
-  // Base wait between events (ms), then modulated by slow phase (weakly)
-  const baseMin = 850;
-  const baseMax = 2200;
-
-  const u = Math.random();
-  const baseWait = lerp(baseMin, baseMax, u*u); // bias towards shorter waits slightly
-
-  const coupling = phaseCoupling();
-  // When coupling high, events come a bit sooner; when low, later.
-  // Keep modulation mild to avoid “rules”.
-  const mod = lerp(1.18, 0.82, coupling); // high coupling => 0.82x wait
-  nextEventAt = now + baseWait * mod;
-}
-
-/* ------------------------- Visual stimulus ------------------------- */
-/* Faint off-white line in centered 1:1 square, with degenerate drift & decay */
-let lineAngle = Math.random() * Math.PI;
-let lineOffset = (Math.random() * 2 - 1) * 0.08;  // relative to square size
+/* ---------- stimulus ---------- */
+let angle = Math.random() * Math.PI;
+let offset = (Math.random()*2-1) * 0.1;
+let baseAlpha = 0.1;
 let lineWidth = 1.6;
-let baseAlpha = 0.10;
 
-let microRot = (Math.random() * 2 - 1) * 0.00008; // degenerate spiral drift (tiny angular change)
-let microOff = (Math.random() * 2 - 1) * 0.00004; // tiny offset drift
+/* ---------- tap handling ---------- */
+let lastTap = 0;
+canvas.addEventListener('pointerdown', e => {
+  const now = performance.now();
+  if (now - lastTap < 120) return;
+  lastTap = now;
 
-/* Fade-to-infinity decay: width/alpha very slowly decay, but never reach 0 */
-function decayStep(dt) {
-  const a = Math.pow(0.9996, dt); // dt in ms (small decay)
-  baseAlpha = clamp(baseAlpha * a + 0.00002, 0.06, 0.14);
-  lineWidth = clamp(lineWidth * a + 0.00001, 1.2, 2.2);
-}
-
-/* The “event” is a subtle, brief change: slight alpha & width bump + micro jitter */
-function eventVisualBoost(now) {
-  if (!eventActive) return { alpha: 0, width: 0, jitter: 0 };
-
-  const t = (now - eventStart) / (eventEnd - eventStart);
-  const envelope = Math.sin(Math.PI * clamp(t, 0, 1)); // 0→1→0
-  return {
-    alpha: 0.12 * envelope,
-    width: 0.9 * envelope,
-    jitter: 0.6 * envelope
-  };
-}
-
-/* ------------------------- Audio (optional, ultra-low salience) ------------------------- */
-let audioOn = false;
-let audioCtx = null, noiseNode = null, gainNode = null, filterNode = null;
-
-function startAudio() {
-  if (audioOn) return;
-  audioOn = true;
-
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-  // Noise buffer
-  const bufferSize = 2 * audioCtx.sampleRate;
-  const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-  const output = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < bufferSize; i++) output[i] = (Math.random() * 2 - 1);
-
-  noiseNode = audioCtx.createBufferSource();
-  noiseNode.buffer = noiseBuffer;
-  noiseNode.loop = true;
-
-  // Gentle lowpass to soften
-  filterNode = audioCtx.createBiquadFilter();
-  filterNode.type = "lowpass";
-  filterNode.frequency.value = 900;
-
-  gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.0; // ramped in
-
-  noiseNode.connect(filterNode);
-  filterNode.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
-
-  noiseNode.start();
-
-  // ramp to very quiet level
-  const t0 = audioCtx.currentTime;
-  gainNode.gain.cancelScheduledValues(t0);
-  gainNode.gain.setValueAtTime(0.0, t0);
-  gainNode.gain.linearRampToValueAtTime(0.010, t0 + 0.4); // VERY quiet
-}
-
-function stopAudio() {
-  audioOn = false;
-  try {
-    if (noiseNode) noiseNode.stop();
-    if (audioCtx) audioCtx.close();
-  } catch {}
-  audioCtx = null; noiseNode = null; gainNode = null; filterNode = null;
-}
-
-const audioBtn = document.getElementById('audioBtn');
-audioBtn.addEventListener('click', () => {
-  if (!audioOn) {
-    startAudio();
-    audioBtn.textContent = "Audio On";
-  } else {
-    stopAudio();
-    audioBtn.textContent = "Enable Audio";
-  }
-}, { passive: true });
-
-/* ------------------------- Session control ------------------------- */
-let running = true;
-const endBtn = document.getElementById('endBtn');
-endBtn.addEventListener('click', () => {
-  running = false;
-  stopAudio();
-}, { passive: true });
-
-/* ------------------------- Tap handling ------------------------- */
-let lastTapAt = 0;
-
-function registerTap(now) {
-  // Ignore super-close taps (anti-spam) without punishment
-  if (now - lastTapAt < MIN_TAP_GAP_MS) return;
-  lastTapAt = now;
-
-  tapTimes.push(now);
-  if (tapTimes.length > TAP_HISTORY) tapTimes.shift();
-
-  // Determine if tap is a "hit" (within reaction window after event starts)
-  let hit = false;
   if (eventActive) {
-    if (now >= eventStart && now <= eventStart + windowMs) hit = true;
+    if (now <= eventStart + windowMs) windowMs *= 0.985;
+    else windowMs *= 1.02;
+    windowMs = Math.max(140, Math.min(900, windowMs));
   }
+});
 
-  // Adaptation is SILENT and gated by calmness
-  const calm = stabilityScore();
-  const allowAdapt = calm > 0.55; // freeze if unstable
+/* ---------- loop ---------- */
+function loop(now) {
+  slowPhase += slowVel;
+  angle += 0.00008 * Math.sin(slowPhase);
+  offset += 0.00002 * Math.cos(slowPhase);
 
-  if (allowAdapt) {
-    if (hit) {
-      // tighten gently
-      windowMs *= 0.985;
-    } else {
-      // loosen gently (miss or mistimed)
-      windowMs *= 1.018;
-    }
-    windowMs = clamp(windowMs, WIN_MIN, WIN_MAX);
-  }
-
-  // NOTE: no visible feedback, no score, no sounds
-}
-
-function onPointerDown(e) {
-  if (!running) return;
-  // Treat first tap as "start" implicitly (we're always running)
-  registerTap(performance.now());
-}
-canvas.addEventListener('pointerdown', onPointerDown, { passive: true });
-
-/* ------------------------- Main loop ------------------------- */
-let tPrev = performance.now();
-scheduleNextEvent(tPrev);
-
-function tick(now) {
-  const dt = now - tPrev;
-  tPrev = now;
-
-  // Update slow phase (dual-timescale background context)
-  slowVel += slowWobble * 0.0000008 * dt;
-  slowVel = clamp(slowVel, -0.00012, 0.00012);
-  slowPhase += slowVel * dt;
-
-  // Ultra-slow stimulus drift (degenerate spiral + offset drift)
-  lineAngle += microRot * dt + 0.000002 * Math.sin(slowPhase) * dt;  // slight coupling, still tiny
-  lineOffset += microOff * dt + 0.0000009 * Math.cos(slowPhase) * dt;
-  lineOffset = clamp(lineOffset, -0.18, 0.18);
-
-  decayStep(dt);
-
-  // Event scheduling / state
-  if (!eventActive && now >= nextEventAt) {
+  if (!eventActive && now > nextEvent) {
     eventActive = true;
     eventStart = now;
-
-    // event duration is short, but not fixed; weakly conditioned
-    const coupling = phaseCoupling();
-    const dur = lerp(160, 260, Math.random()) * lerp(0.92, 1.08, coupling);
-    eventEnd = now + dur;
+    eventEnd = now + 200 + Math.random()*80;
   }
-  if (eventActive && now >= eventEnd) {
+  if (eventActive && now > eventEnd) {
     eventActive = false;
-    scheduleNextEvent(now);
+    nextEvent = now + 800 + Math.random()*1400;
   }
 
-  // Audio coupling: very quiet amplitude breathing from slow phase + tiny event bump
-  if (audioOn && audioCtx && gainNode && filterNode) {
-    const coupling = phaseCoupling(); // 0.15..0.85
-    const base = lerp(0.006, 0.012, coupling); // still very quiet
-    const ev = eventActive ? 0.004 * Math.sin(Math.PI * clamp((now - eventStart)/(eventEnd-eventStart),0,1)) : 0;
-    const target = clamp(base + ev, 0.0, 0.018);
-
-    const t = audioCtx.currentTime;
-    gainNode.gain.setTargetAtTime(target, t, 0.06);
-
-    // gentle filter wobble
-    const f = lerp(650, 1100, coupling);
-    filterNode.frequency.setTargetAtTime(f, t, 0.08);
-  }
-
-  // Render
-  render(now);
-
-  if (running) requestAnimationFrame(tick);
+  draw(now);
+  requestAnimationFrame(loop);
 }
-requestAnimationFrame(tick);
+requestAnimationFrame(loop);
 
-/* ------------------------- Rendering ------------------------- */
-function render(now) {
-  const w = window.innerWidth, h = window.innerHeight;
-  ctx.clearRect(0, 0, w, h);
+/* ---------- draw ---------- */
+function draw(now) {
+  ctx.clearRect(0,0,innerWidth,innerHeight);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0,0,innerWidth,innerHeight);
 
-  // black background
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, w, h);
+  const s = Math.min(innerWidth, innerHeight);
+  const cx = innerWidth/2;
+  const cy = innerHeight/2;
 
-  const { x, y, s } = fieldRect();
+  let boost = 0;
+  if (eventActive) {
+    const t = (now - eventStart)/(eventEnd - eventStart);
+    boost = Math.sin(Math.PI * t);
+  }
 
-  // (No border — keep it minimal and non-targetable)
-  // If you want an ultra-faint square boundary later, we can add it at ~2% alpha.
+  ctx.strokeStyle = '#f2f0e8';
+  ctx.globalAlpha = baseAlpha + boost * 0.12;
+  ctx.lineWidth = lineWidth + boost;
 
-  // Compute line endpoints inside square
-  const cx = x + s * 0.5;
-  const cy = y + s * 0.5;
+  const dx = Math.cos(angle) * s * 0.4;
+  const dy = Math.sin(angle) * s * 0.4;
 
-  const boost = eventVisualBoost(now);
-
-  // subtle jitter during event (non-directional, non-countable)
-  const j = boost.jitter * 0.8;
-  const jx = (Math.random() * 2 - 1) * j;
-  const jy = (Math.random() * 2 - 1) * j;
-
-  const alpha = clamp(baseAlpha + boost.alpha, 0.04, 0.28);
-  const width = clamp(lineWidth + boost.width, 1.0, 3.0);
-
-  // offset line normal to its direction
-  const ox = Math.cos(lineAngle + Math.PI/2) * (lineOffset * s) + jx;
-  const oy = Math.sin(lineAngle + Math.PI/2) * (lineOffset * s) + jy;
-
-  // Extend line to cover square
-  const L = s * 0.65; // half-length
-  const dx = Math.cos(lineAngle) * L;
-  const dy = Math.sin(lineAngle) * L;
-
-  const x1 = cx + ox - dx;
-  const y1 = cy + oy - dy;
-  const x2 = cx + ox + dx;
-  const y2 = cy + oy + dy;
-
-  // Draw line (off-white)
-  ctx.globalAlpha = alpha;
-  ctx.lineWidth = width;
-  ctx.lineCap = "round";
-  ctx.strokeStyle = "#f2f0e8";
   ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
+  ctx.moveTo(cx - dx, cy - dy + offset*s);
+  ctx.lineTo(cx + dx, cy + dy + offset*s);
   ctx.stroke();
-  ctx.globalAlpha = 1.0;
 
-  // No text, no numbers, no feedback.
+  ctx.globalAlpha = 1;
 }
-
 </script>
 </body>
 </html>
