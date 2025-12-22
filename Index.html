@@ -1,1 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signal</title>
 
+<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  height: 100%;
+  overflow: hidden;
+}
+
+#start {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 16px 28px;
+  border-radius: 20px;
+  border: none;
+  font-size: 16px;
+  background: #eee;
+  color: #000;
+}
+
+#line {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 100%;
+  background: rgba(255,255,255,0.12);
+  transform: translateX(-50%);
+  display: none;
+}
+</style>
+</head>
+
+<body>
+
+<button id="start">Start</button>
+<div id="line"></div>
+
+<script>
+let audioCtx, osc, gain;
+let started = false;
+
+const line = document.getElementById("line");
+const startBtn = document.getElementById("start");
+
+function startGame() {
+  if (started) return;
+  started = true;
+
+  // Remove button
+  startBtn.remove();
+
+  // Show line
+  line.style.display = "block";
+
+  // AUDIO (iOS-safe: triggered by button)
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  osc = audioCtx.createOscillator();
+  gain = audioCtx.createGain();
+
+  osc.type = "sine";
+  osc.frequency.value = 110;
+  gain.gain.value = 0.02;
+
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+
+  // Subtle audio drift
+  setInterval(() => {
+    osc.frequency.value += (Math.random() - 0.5) * 0.2;
+  }, 900);
+
+  // Line micro-instability (not flicker)
+  setInterval(() => {
+    const jitter = (Math.random() - 0.5) * 0.6;
+    line.style.transform =
+      `translateX(calc(-50% + ${jitter}px))`;
+  }, 120);
+}
+
+startBtn.addEventListener("click", startGame);
+</script>
+
+</body>
+</html>
