@@ -2,8 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+
 <meta name="viewport"
-  content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  content="width=device-width,
+           initial-scale=1,
+           maximum-scale=1,
+           minimum-scale=1,
+           user-scalable=no">
+
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Signal</title>
 
@@ -14,9 +20,16 @@ html, body {
   height: 100%;
   background: #000;
   overflow: hidden;
-  touch-action: none;
+
+  /* iOS fixes */
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
   user-select: none;
-  -webkit-tap-highlight-color: transparent;
+}
+
+* {
+  -webkit-tap-highlight-color: rgba(0,0,0,0);
 }
 
 canvas {
@@ -31,10 +44,10 @@ canvas {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #777;
-  font-family: system-ui, sans-serif;
+  font-family: system-ui;
   font-size: 18px;
-  background: transparent;
+  color: #777;
+  pointer-events: auto;
   transition: opacity 0.2s linear;
 }
 
@@ -46,18 +59,13 @@ canvas {
 </head>
 
 <body>
-
 <canvas id="c"></canvas>
 <div id="overlay">tap to begin</div>
 
 <script>
-/* =========================
-   AUDIO — CONTINUOUS NOISE
-   (iOS SAFE)
-========================= */
+/* ================= AUDIO (UNCHANGED) ================= */
 
-let audioCtx, noiseSource, gainNode;
-let audioStarted = false;
+let audioCtx, noiseSource, gainNode, audioStarted = false;
 
 function startAudio() {
   if (audioStarted) return;
@@ -66,11 +74,11 @@ function startAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   audioCtx.resume();
 
-  const size = audioCtx.sampleRate * 2;
-  const buffer = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
+  const bufferSize = audioCtx.sampleRate * 2;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
 
-  for (let i = 0; i < size; i++) {
+  for (let i = 0; i < bufferSize; i++) {
     data[i] = Math.random() * 2 - 1;
   }
 
@@ -85,59 +93,38 @@ function startAudio() {
   noiseSource.start();
 }
 
-/* =========================
-   CANVAS SETUP
-========================= */
+/* ================= CANVAS ================= */
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 function resize() {
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
 }
-addEventListener("resize", resize);
+window.addEventListener("resize", resize);
 resize();
 
-/* =========================
-   VISUAL STATE
-========================= */
-
-let drift = 0;
-
-/* =========================
-   DRAW LOOP
-========================= */
-
+let t = 0;
 function draw() {
-  /* HARD black fill — prevents iOS white flash */
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  /* Non-periodic micro-instability */
-  drift += (Math.random() - 0.5) * 0.35;
-  drift *= 0.985;
+  const x = canvas.width / 2 + Math.sin(t) * 60;
 
-  const x = canvas.width / 2 + drift;
-
-  ctx.strokeStyle = "rgba(255,255,255,0.12)";
-  ctx.lineWidth = 1;
-
+  ctx.strokeStyle = "rgba(255,255,255,0.35)";
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(x, 0);
-  ctx.lineTo(x, canvas.height);
+  ctx.moveTo(x, canvas.height * 0.25);
+  ctx.lineTo(x, canvas.height * 0.75);
   ctx.stroke();
 
+  t += 0.01;
   requestAnimationFrame(draw);
 }
 
-/* =========================
-   START (USER GESTURE SAFE)
-========================= */
+/* ================= START (iOS SAFE) ================= */
 
 let started = false;
-const overlay = document.getElementById("overlay");
-
 function begin(e) {
   if (started) return;
   started = true;
@@ -148,12 +135,12 @@ function begin(e) {
   requestAnimationFrame(draw);
   startAudio();
 
-  overlay.classList.add("hidden");
+  document.getElementById("overlay").classList.add("hidden");
+  document.body.offsetHeight; // force repaint
 }
 
 window.addEventListener("touchend", begin, { passive: false });
 window.addEventListener("click", begin);
 </script>
-
 </body>
 </html>
