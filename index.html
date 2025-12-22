@@ -1,95 +1,106 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Signal</title>
 
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #000;
-  height: 100%;
-  overflow: hidden;
-}
+  * {
+    margin: 0;
+    padding: 0;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
 
-#start {
-  position: fixed;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  padding: 16px 28px;
-  border-radius: 20px;
-  border: none;
-  font-size: 16px;
-  background: #eee;
-  color: #000;
-}
+  html, body {
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+    touch-action: none;
+  }
 
-#line {
-  position: fixed;
-  top: 0;
-  left: 50%;
-  width: 1px;
-  height: 100%;
-  background: rgba(255,255,255,0.12);
-  transform: translateX(-50%);
-  display: none;
-}
+  canvas {
+    display: block;
+  }
 </style>
 </head>
-
 <body>
-
-<button id="start">Start</button>
-<div id="line"></div>
+<canvas id="c"></canvas>
 
 <script>
-let audioCtx, osc, gain;
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+let w, h;
 let started = false;
+let audioCtx, osc, gain;
 
-const line = document.getElementById("line");
-const startBtn = document.getElementById("start");
+function resize() {
+  w = canvas.width = window.innerWidth;
+  h = canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
 
-function startGame() {
-  if (started) return;
-  started = true;
-
-  // Remove button
-  startBtn.remove();
-
-  // Show line
-  line.style.display = "block";
-
-  // AUDIO (iOS-safe: triggered by button)
+// ---- AUDIO ----
+function startAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   osc = audioCtx.createOscillator();
   gain = audioCtx.createGain();
 
   osc.type = "sine";
-  osc.frequency.value = 110;
-  gain.gain.value = 0.02;
+  osc.frequency.value = 220;        // neutral, non-instructional
+  gain.gain.value = 0.02;            // very low salience
 
   osc.connect(gain);
   gain.connect(audioCtx.destination);
   osc.start();
-
-  // Subtle audio drift
-  setInterval(() => {
-    osc.frequency.value += (Math.random() - 0.5) * 0.2;
-  }, 900);
-
-  // Line micro-instability (not flicker)
-  setInterval(() => {
-    const jitter = (Math.random() - 0.5) * 0.6;
-    line.style.transform =
-      `translateX(calc(-50% + ${jitter}px))`;
-  }, 120);
 }
 
-startBtn.addEventListener("click", startGame);
-</script>
+// ---- RENDER ----
+let t = 0;
 
+function draw() {
+  if (!started) return;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // subtle, continuous micro-instability (not flicker)
+  const drift = Math.sin(t * 0.001) * 0.6;
+  const x = w / 2 + drift;
+
+  ctx.strokeStyle = "rgba(255,255,255,0.18)";
+  ctx.lineWidth = 1;
+
+  ctx.beginPath();
+  ctx.moveTo(x, 0);
+  ctx.lineTo(x, h);
+  ctx.stroke();
+
+  t++;
+  requestAnimationFrame(draw);
+}
+
+// ---- INPUT (single gate) ----
+function start() {
+  if (started) return;
+  started = true;
+
+  startAudio();
+  requestAnimationFrame(draw);
+}
+
+// hard block Safari behaviors
+["touchstart","touchmove","touchend"].forEach(evt =>
+  document.addEventListener(evt, e => e.preventDefault(), { passive: false })
+);
+
+// first interaction starts everything
+document.addEventListener("pointerdown", start, { once: true });
+</script>
 </body>
 </html>
