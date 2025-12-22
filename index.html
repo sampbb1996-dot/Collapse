@@ -38,14 +38,16 @@ resize();
 /* =========================
    STATE
 ========================= */
-let started = false;
+let audioStarted = false;
 let audioCtx = null;
-let noiseNode = null;
 
 /* =========================
-   AUDIO (iOS SAFE)
+   AUDIO (SAFE)
 ========================= */
 function startAudio() {
+  if (audioStarted) return;
+  audioStarted = true;
+
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
   const bufferSize = audioCtx.sampleRate * 2;
@@ -53,50 +55,40 @@ function startAudio() {
   const data = buffer.getChannelData(0);
 
   for (let i = 0; i < bufferSize; i++) {
-    data[i] = (Math.random() * 2 - 1) * 0.015; // ultra-low salience
+    data[i] = (Math.random() * 2 - 1) * 0.015;
   }
 
-  noiseNode = audioCtx.createBufferSource();
-  noiseNode.buffer = buffer;
-  noiseNode.loop = true;
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  noise.loop = true;
 
   const gain = audioCtx.createGain();
   gain.gain.value = 0.025;
 
-  noiseNode.connect(gain).connect(audioCtx.destination);
-  noiseNode.start();
-}
+  noise.connect(gain).connect(audioCtx.destination);
+  noise.start();
 
-/* =========================
-   START (ONE TAP ONLY)
-========================= */
-function start() {
-  if (started) return;
-  started = true;
-
-  startAudio();
   audioCtx.resume();
-
-  requestAnimationFrame(draw);
 }
 
-document.addEventListener("touchstart", start, { once: true });
-document.addEventListener("mousedown", start, { once: true });
+/* =========================
+   USER GESTURE
+========================= */
+document.addEventListener("touchstart", startAudio, { once: true });
+document.addEventListener("mousedown", startAudio, { once: true });
 
 /* =========================
-   DRAW LOOP
+   DRAW LOOP (ALWAYS ON)
 ========================= */
 function draw() {
   const w = canvas.width;
   const h = canvas.height;
 
-  // fade-to-black (no full clear)
   ctx.fillStyle = "rgba(0,0,0,0.12)";
   ctx.fillRect(0, 0, w, h);
 
-  // micro-instability
   const baseX = w / 2;
-  const jitterX = (Math.random() - 0.5) * 0.7; // sub-pixel drift
+  const jitterX = (Math.random() - 0.5) * 0.7;
   const alpha = 0.06 + Math.random() * 0.05;
   const width = 0.6 + Math.random() * 0.4;
 
@@ -110,6 +102,9 @@ function draw() {
 
   requestAnimationFrame(draw);
 }
+
+// 🔑 START VISUALS IMMEDIATELY
+requestAnimationFrame(draw);
 </script>
 </body>
 </html>
