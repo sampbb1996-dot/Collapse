@@ -3,341 +3,87 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation Threshold — Single-Variable Adaptive</title>
+
 <style>
-  html, body {
-    margin: 0;
-    height: 100%;
-    background: #070707; /* near-black */
-    overflow: hidden;
-    touch-action: manipulation;
-  }
-  canvas { display: block; }
-  #audioBtn{
-    position: fixed;
-    right: 10px;
-    bottom: 10px;
-    padding: 6px 10px;
-    font-size: 12px;
-    border-radius: 10px;
-    border: 1px solid #1b1b1b;
-    background: #0e0e0e;
-    color: #777;
-    opacity: 0.35;
-    user-select: none;
-  }
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #070707;
+  overflow: hidden;
+
+  /* iOS hard disable */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+canvas {
+  display: block;
+  touch-action: none;
+}
 </style>
 </head>
+
 <body>
 <canvas id="c"></canvas>
-<button id="audioBtn">audio</button>
 
 <script>
-/*
-  INVARIANTS (locked):
-  - Fixed cadence (prompt/gap); only the REACTION WINDOW changes (BASE_PROMPT).
-  - No modes. No scoring. No UI feedback. No extra adaptive variables.
-  - Difficulty emerges only as a side-effect of a tighter reaction window.
-*/
+/* ---------- iOS gesture kill ---------- */
+["touchstart","touchmove","touchend"].forEach(t =>
+  document.addEventListener(t, e => e.preventDefault(), { passive:false })
+);
 
-const STORAGE_KEY = "initiation_threshold_v3";
+/* ---------- canvas ---------- */
+const c = document.getElementById("c");
+const ctx = c.getContext("2d");
 
-/* =========================
-   CONFIG (single adaptive var)
-========================= */
-
-// Only this adapts:
-let BASE_PROMPT = 1350;        // ms (reaction window / prompt duration)
-
-// Fixed cadence (non-adaptive):
-const BASE_GAP   = 1200;       // ms
-const JITTER_MS  = 80;         // tiny timing jitter, non-adaptive
-
-// Bounds:
-const MIN_PROMPT = 900;
-const MAX_PROMPT = 1800;
-
-// Adapt step (fixed quantum):
-const STEP_MS = 35;
-
-// Calm gating (fixed):
-const RT_HISTORY = 7;
-const MAX_RT_STD = 110;        // ms
-const MAX_RECENT_MISSES = 4;
-
-// Thresholds (fixed):
-const HIT_THRESHOLD  = 6;
-const MISS_THRESHOLD = 3;
-
-// Day-level carryover (subtle):
-const SOFT_RESET_MS = 25;      // nudges slightly easier on reload/day
-const MIN_SAVE_GAP_MS = 10_000;
-
-/* =========================
-   STATE
-========================= */
-
-let active = false;
-let promptStart = 0;
-let promptEndAt = 0;
-
-let hitCount = 0;
-let missCount = 0;
-
-let rtHistory = [];
-let recentMisses = 0;
-
-let lastSaveAt = 0;
-
-// Visual envelope for current prompt
-let env = 0;        // 0..1
-let envStart = 0;
-
-/* =========================
-   PERSISTENCE
-========================= */
-
-function loadState() {
-  try {
-    const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (!s || typeof s.BASE_PROMPT !== "number") return null;
-    return s;
-  } catch { return null; }
+function resize(){
+  c.width = innerWidth;
+  c.height = innerHeight;
 }
-
-function saveState() {
-  const now = Date.now();
-  if (now - lastSaveAt < MIN_SAVE_GAP_MS) return;
-  lastSaveAt = now;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    BASE_PROMPT,
-    savedAt: now
-  }));
-}
-
-(function restore() {
-  const saved = loadState();
-  if (!saved) return;
-
-  // Soft reset: make it *slightly* easier on reload/day so you can re-enter cleanly.
-  BASE_PROMPT = clamp(saved.BASE_PROMPT + SOFT_RESET_MS, MIN_PROMPT, MAX_PROMPT);
-})();
-
-/* =========================
-   CANVAS + 1:1 FIELD
-========================= */
-
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
-
-let W=0,H=0;
-let field = { x:0, y:0, s:0 };
-
-function resize() {
-  W = canvas.width  = innerWidth;
-  H = canvas.height = innerHeight;
-  const s = Math.min(W, H);
-  field.s = s;
-  field.x = (W - s) * 0.5;
-  field.y = (H - s) * 0.5;
-}
-addEventListener("resize", resize);
 resize();
+addEventListener("resize", resize);
 
-function clearAll() {
-  ctx.clearRect(0,0,W,H);
-}
+/* ---------- state ---------- */
+let contact = false;
+let stability = 0;      // slow-moving internal score
+let target = 0;         // where stability wants to go
 
-/* =========================
-   AUDIO (optional, mapped to same envelope)
-========================= */
-
-let audioCtx, noiseNode, gainNode;
-let audioOn = false;
-
-function initAudio() {
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-  // White noise buffer
-  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-
-  noiseNode = audioCtx.createBufferSource();
-  noiseNode.buffer = buffer;
-  noiseNode.loop = true;
-
-  gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.0;
-
-  noiseNode.connect(gainNode).connect(audioCtx.destination);
-  noiseNode.start();
-}
-
-document.getElementById("audioBtn").onclick = () => {
-  if (audioOn) return;
-  initAudio();
-  audioOn = true;
-  document.getElementById("audioBtn").remove();
-};
-
-/* =========================
-   HELPERS
-========================= */
-
-function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
-
-function stdDev(arr) {
-  if (arr.length < 2) return Infinity;
-  const mean = arr.reduce((s,x)=>s+x,0) / arr.length;
-  const varr = arr.reduce((s,x)=>s + (x-mean)*(x-mean), 0) / arr.length;
-  return Math.sqrt(varr);
-}
-
-function canAdapt() {
-  if (rtHistory.length < RT_HISTORY) return false;
-  if (recentMisses > MAX_RECENT_MISSES) return false;
-  if (stdDev(rtHistory) > MAX_RT_STD) return false;
-  return true;
-}
-
-function jitter(ms) {
-  return ms + (Math.random()*2 - 1) * JITTER_MS;
-}
-
-/* =========================
-   INPUT
-========================= */
-
-document.body.addEventListener("pointerdown", () => {
-  if (!active) return; // tapping outside prompt is ignored (no extra mechanics)
-
-  const now = performance.now();
-  const rt = now - promptStart;
-
-  rtHistory.push(rt);
-  if (rtHistory.length > RT_HISTORY) rtHistory.shift();
-
-  hitCount++;
-  missCount = 0;
-  recentMisses = Math.max(0, recentMisses - 1);
-
-  // Only adapt the reaction window (single variable)
-  if (canAdapt() && hitCount >= HIT_THRESHOLD && BASE_PROMPT > MIN_PROMPT) {
-    BASE_PROMPT = clamp(BASE_PROMPT - STEP_MS, MIN_PROMPT, MAX_PROMPT);
-    hitCount = 0;
-    saveState();
-  }
-
-  endPrompt();
+/* ---------- input ---------- */
+c.addEventListener("pointerdown", () => {
+  contact = true;
+  target = 1;
 });
 
-/* =========================
-   VISUAL RENDER (faint off-white line, fade-to-infinity)
-========================= */
+c.addEventListener("pointerup", () => {
+  contact = false;
+  target = 0;
+});
 
-function draw() {
-  clearAll();
+/* ---------- loop ---------- */
+function loop(){
+  // slow, non-arbitrary adaptation
+  stability += (target - stability) * 0.002;
 
-  // background already near-black via body; draw field border subtly
-  ctx.save();
-  ctx.translate(field.x, field.y);
+  ctx.clearRect(0,0,c.width,c.height);
 
-  // Field is intentionally almost invisible (non-gamey)
-  ctx.strokeStyle = "rgba(255,255,255,0.03)";
+  // line properties
+  const x = c.width / 2;
+  const alpha = 0.05 + stability * 0.35;
+  const jitter = (1 - stability) * 1.5;
+
+  ctx.strokeStyle = `rgba(240,240,240,${alpha})`;
   ctx.lineWidth = 1;
-  ctx.strokeRect(0.5, 0.5, field.s-1, field.s-1);
+  ctx.beginPath();
+  ctx.moveTo(x + (Math.random()-0.5)*jitter, 0);
+  ctx.lineTo(x + (Math.random()-0.5)*jitter, c.height);
+  ctx.stroke();
 
-  if (active) {
-    const tNorm = (BASE_PROMPT - MIN_PROMPT) / (MAX_PROMPT - MIN_PROMPT); // 0..1
-    // As window tightens (tNorm -> 0), signal weakens.
-    const baseAlpha = 0.12 * tNorm;     // off-white faintness
-    const baseWidth = 1.6 * tNorm + 0.55;
-
-    // Fade-to-infinity during the prompt (exponential-ish)
-    const now = performance.now();
-    const p = clamp((now - envStart) / Math.max(1, (promptEndAt - envStart)), 0, 1);
-    const fade = Math.exp(-4.2 * p);    // decays toward 0
-
-    // Degenerate spiral drift: infinitesimal angular change, no legible rotation
-    // (fixed behavior; NOT adaptive)
-    const drift = 0.012 * Math.sin(now * 0.00035) + 0.009 * Math.sin(now * 0.00017);
-
-    const angle = drift;               // near 0 => "degenerate"
-    const cx = field.s * 0.5;
-    const cy = field.s * 0.5;
-
-    // Short line segment (not full-width), rounded caps
-    const halfLen = field.s * 0.18;    // constant geometry
-    const dx = Math.cos(angle) * halfLen;
-    const dy = Math.sin(angle) * halfLen;
-
-    ctx.beginPath();
-    ctx.lineCap = "round";
-    ctx.lineWidth = baseWidth * fade;
-    ctx.strokeStyle = `rgba(248,248,242,${baseAlpha * fade})`; // off-white
-    ctx.moveTo(cx - dx, cy - dy);
-    ctx.lineTo(cx + dx, cy + dy);
-    ctx.stroke();
-
-    // Audio envelope follows the same fade (quiet)
-    if (audioOn && gainNode) {
-      const maxGain = 0.010; // quieter than before
-      gainNode.gain.value = maxGain * (baseAlpha / 0.12) * fade;
-    }
-  } else {
-    if (audioOn && gainNode) gainNode.gain.value = 0.0;
-  }
-
-  ctx.restore();
-  requestAnimationFrame(draw);
-}
-requestAnimationFrame(draw);
-
-/* =========================
-   LOOP (fixed cadence, single-variable adaptation)
-========================= */
-
-let timeoutId = null;
-
-function startPrompt() {
-  active = true;
-  promptStart = performance.now();
-  envStart = promptStart;
-
-  const dur = jitter(BASE_PROMPT);
-  promptEndAt = promptStart + dur;
-
-  timeoutId = setTimeout(() => {
-    // Miss (no tap during window)
-    active = false;
-    missCount++;
-    hitCount = 0;
-    recentMisses++;
-
-    // Only adapt the reaction window (single variable)
-    if (canAdapt() && missCount >= MISS_THRESHOLD && BASE_PROMPT < MAX_PROMPT) {
-      BASE_PROMPT = clamp(BASE_PROMPT + STEP_MS, MIN_PROMPT, MAX_PROMPT);
-      missCount = 0;
-      saveState();
-    }
-
-    endPrompt();
-  }, dur);
+  requestAnimationFrame(loop);
 }
 
-function endPrompt() {
-  if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
-  active = false;
-
-  setTimeout(startPrompt, jitter(BASE_GAP));
-}
-
-/* =========================
-   START
-========================= */
-
-setTimeout(startPrompt, 900);
+loop();
 </script>
 </body>
 </html>
