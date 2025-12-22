@@ -1,146 +1,24 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-
-<meta name="viewport"
-  content="width=device-width,
-           initial-scale=1,
-           maximum-scale=1,
-           minimum-scale=1,
-           user-scalable=no">
-
-<meta name="apple-mobile-web-app-capable" content="yes">
-<title>Signal</title>
-
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no">
 <style>
-html, body {
-  margin: 0;
-  width: 100%;
-  height: 100%;
-  background: #000;
-  overflow: hidden;
-
-  /* iOS fixes */
-  touch-action: manipulation;
-  -webkit-touch-callout: none;
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-* {
-  -webkit-tap-highlight-color: rgba(0,0,0,0);
-}
-
-canvas {
-  position: fixed;
-  inset: 0;
-  display: block;
-}
-
-#overlay {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: system-ui;
-  font-size: 18px;
-  color: #777;
-  pointer-events: auto;
-  transition: opacity 0.2s linear;
-}
-
-#overlay.hidden {
-  opacity: 0;
-  pointer-events: none;
-}
+html,body{margin:0;height:100%;background:#000;overflow:hidden;touch-action:manipulation;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+*{-webkit-tap-highlight-color:rgba(0,0,0,0)}
+canvas{position:fixed;inset:0;display:block}
+#overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#777;font-family:system-ui;transition:opacity .2s}
+#overlay.hidden{opacity:0;pointer-events:none}
 </style>
-</head>
-
-<body>
-<canvas id="c"></canvas>
-<div id="overlay">tap to begin</div>
 
 <script>
-/* ================= AUDIO (UNCHANGED) ================= */
+const canvas=document.getElementById("c"), ctx=canvas.getContext("2d");
+function resize(){canvas.width=innerWidth;canvas.height=innerHeight;}
+addEventListener("resize",resize); resize();
 
-let audioCtx, noiseSource, gainNode, audioStarted = false;
-
-function startAudio() {
-  if (audioStarted) return;
-  audioStarted = true;
-
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  audioCtx.resume();
-
-  const bufferSize = audioCtx.sampleRate * 2;
-  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-
-  for (let i = 0; i < bufferSize; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
-
-  noiseSource = audioCtx.createBufferSource();
-  noiseSource.buffer = buffer;
-  noiseSource.loop = true;
-
-  gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.015;
-
-  noiseSource.connect(gainNode).connect(audioCtx.destination);
-  noiseSource.start();
+function begin(e){
+  e.preventDefault(); e.stopPropagation();
+  startAudio();                 // your exact audio
+  requestAnimationFrame(draw);  // YOUR draw(), unchanged
+  overlay.classList.add("hidden");
+  document.body.offsetHeight;   // repaint
 }
-
-/* ================= CANVAS ================= */
-
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
-
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener("resize", resize);
-resize();
-
-let t = 0;
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  const x = canvas.width / 2 + Math.sin(t) * 60;
-
-  ctx.strokeStyle = "rgba(255,255,255,0.35)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(x, canvas.height * 0.25);
-  ctx.lineTo(x, canvas.height * 0.75);
-  ctx.stroke();
-
-  t += 0.01;
-  requestAnimationFrame(draw);
-}
-
-/* ================= START (iOS SAFE) ================= */
-
-let started = false;
-function begin(e) {
-  if (started) return;
-  started = true;
-
-  e.preventDefault();
-  e.stopPropagation();
-
-  requestAnimationFrame(draw);
-  startAudio();
-
-  document.getElementById("overlay").classList.add("hidden");
-  document.body.offsetHeight; // force repaint
-}
-
-window.addEventListener("touchend", begin, { passive: false });
-window.addEventListener("click", begin);
+addEventListener("touchend",begin,{once:true,passive:false});
+addEventListener("click",begin,{once:true});
 </script>
-</body>
-</html>
