@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Signal</title>
 
 <style>
@@ -31,81 +31,51 @@ html, body {
 
 <script>
 /* -------------------------
-   CORE STATE
+   STATE
 -------------------------- */
 let started = false;
-let ctx, osc, gain;
-let entropy = 0;
-let lastEvent = null;
-let frozen = false;
+let audioCtx, osc, gain;
+const line = document.getElementById("line");
 
 /* -------------------------
-   AUDIO
+   AUDIO (iOS SAFE)
 -------------------------- */
 function startAudio() {
-  ctx = new (window.AudioContext || window.webkitAudioContext)();
-  osc = ctx.createOscillator();
-  gain = ctx.createGain();
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  osc = audioCtx.createOscillator();
+  gain = audioCtx.createGain();
 
   osc.type = "sine";
   osc.frequency.value = 110;
-  gain.gain.value = 0.015;
+  gain.gain.value = 0.02;
 
   osc.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(audioCtx.destination);
   osc.start();
 
-  // slow, unconscious drift
+  // slow drift
   setInterval(() => {
-    if (!frozen) {
-      osc.frequency.value += (Math.random() - 0.5) * 0.15;
-    }
-  }, 800);
+    osc.frequency.value += (Math.random() - 0.5) * 0.2;
+  }, 900);
 }
 
 /* -------------------------
    LINE MICRO-INSTABILITY
 -------------------------- */
-const line = document.getElementById("line");
-
 setInterval(() => {
   if (!started) return;
-
-  const jitter = frozen ? 0 : (Math.random() - 0.5) * 0.6;
-  line.style.transform = `translateX(calc(-50% + ${jitter}px))`;
+  const jitter = (Math.random() - 0.5) * 0.6;
+  line.style.transform =
+    `translateX(calc(-50% + ${jitter}px))`;
 }, 120);
 
 /* -------------------------
-   ENTROPY OBSERVATION
--------------------------- */
-function observeInteraction() {
-  const now = performance.now();
-
-  if (lastEvent !== null) {
-    const dt = now - lastEvent;
-    entropy = 0.98 * entropy + Math.abs(dt - 600) * 0.001;
-  }
-
-  lastEvent = now;
-
-  // silent hard gate
-  if (entropy > 1.2) frozen = true;
-  if (entropy < 0.6) frozen = false;
-
-  // adaptive fading (very slow)
-  const alpha = Math.max(0.04, 0.12 - entropy * 0.03);
-  line.style.background = `rgba(255,255,255,${alpha})`;
-}
-
-/* -------------------------
-   START (single gesture)
+   START (FIRST TOUCH)
 -------------------------- */
 function start() {
   if (started) return;
   started = true;
-
   startAudio();
-  document.addEventListener("pointerdown", observeInteraction);
 }
 
 document.addEventListener("pointerdown", start, { once: true });
