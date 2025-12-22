@@ -12,9 +12,9 @@
     overflow: hidden;
     touch-action: manipulation;
   }
-  canvas { display:block; }
+  canvas { display: block; }
 
-  /* minimal audio button */
+  /* minimal audio button (disappears after enabling) */
   #audioBtn {
     position: fixed;
     right: 10px;
@@ -36,16 +36,17 @@
 
 <script>
 /* =========================================================
-   CANONICAL RULE
+   CANONICAL RULES
    - Only adaptive variable: reaction window length (WINDOW_MS)
-   - Everything else fixed cadence / presentation
+   - Cadence, jitter, visuals, audio behavior are FIXED
    - No explicit feedback
+   - A/V are intentionally slightly misaligned (small drifting margin)
 ========================================================= */
 
 /* -------------------------
-   PERSISTENCE
+   PERSISTENCE (ONLY WINDOW_MS)
 -------------------------- */
-const STORAGE_KEY = "initiation_window_state_v1";
+const STORAGE_KEY = "initiation_window_state_v2";
 
 function loadState() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); }
@@ -61,7 +62,7 @@ function saveState() {
 /* -------------------------
    TIMING (FIXED except WINDOW_MS)
 -------------------------- */
-let WINDOW_MS = 520;            // adaptive reaction window (ms) — the ONLY adapting knob
+let WINDOW_MS = 520;            // adaptive reaction window (ms) — ONLY adapting knob
 const GAP_MS = 1400;            // fixed gap between events (ms)
 const JITTER_MS = 40;           // fixed slight jitter (ms) — NOT adaptive
 
@@ -72,15 +73,14 @@ const STEP = 20;
 const HIT_THRESHOLD = 7;
 const MISS_THRESHOLD = 4;
 
-/* calm gating (controls WHEN adaptation can occur, not WHAT changes) */
+/* calm gating controls WHEN adaptation can occur (not what changes) */
 const RT_HISTORY = 8;
 const MAX_RT_STD = 85;          // ms
 const MAX_RECENT_MISSES = 4;
 
-/* day-level carryover: tiny soft reset only (still same one knob) */
+/* day-level carryover: tiny soften only */
 const saved = loadState();
 if (saved && typeof saved.WINDOW_MS === "number") {
-  // tiny soften toward easier on new day/use; keeps continuity without jumps
   WINDOW_MS = Math.min(MAX_WINDOW, Math.max(MIN_WINDOW, saved.WINDOW_MS + 10));
 }
 
@@ -105,7 +105,7 @@ addEventListener("resize", resize);
 resize();
 
 /* -------------------------
-   AUDIO (OPTIONAL / QUIET)
+   AUDIO (OPTIONAL / QUIET + slight A/V margin)
 -------------------------- */
 let audioCtx, noiseNode, gainNode;
 let audioOn = false;
@@ -113,7 +113,7 @@ let audioOn = false;
 function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-  // white noise buffer
+  // White noise buffer (1 second loop)
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
@@ -129,7 +129,7 @@ function initAudio() {
   noiseNode.start();
 }
 
-document.getElementById("audioBtn").onclick = () => {
+document.getElementById("audioBtn").onclick = async () => {
   if (!audioOn) {
     initAudio();
     audioOn = true;
@@ -140,8 +140,8 @@ document.getElementById("audioBtn").onclick = () => {
 /* -------------------------
    STATE (NO FEEDBACK)
 -------------------------- */
-let active = false;          // within window
-let tStart = 0;              // event start time (performance.now)
+let active = false;
+let tStart = 0;
 let tapRegistered = false;
 
 let hitCount = 0;
@@ -174,22 +174,20 @@ function clampWindow() {
    INPUT
 -------------------------- */
 document.body.addEventListener("pointerdown", () => {
-  if (!active) return;               // taps outside window ignored
-  if (tapRegistered) return;         // one action only
+  if (!active) return;          // taps outside window ignored
+  if (tapRegistered) return;    // one action only
 
   tapRegistered = true;
   const rt = performance.now() - tStart;
 
-  // record RT
   rtHistory.push(rt);
   if (rtHistory.length > RT_HISTORY) rtHistory.shift();
 
-  // counts (silent)
   hitCount++;
   missCount = 0;
   recentMisses = Math.max(0, recentMisses - 1);
 
-  // tighten only when calm & stable
+  // tighten only when calm
   if (canAdaptNow() && hitCount >= HIT_THRESHOLD) {
     WINDOW_MS -= STEP;
     clampWindow();
@@ -197,12 +195,11 @@ document.body.addEventListener("pointerdown", () => {
     saveState();
   }
 
-  // immediately clear to baseline (no reward)
-  endEvent(true);
+  endEvent();
 });
 
 /* -------------------------
-   EVENT LOOP (FIXED CADENCE)
+   LOOP (FIXED CADENCE)
 -------------------------- */
 function jitter(ms) {
   return ms + (Math.random() * 2 - 1) * JITTER_MS;
@@ -216,7 +213,6 @@ function startEvent() {
   tapRegistered = false;
   tStart = performance.now();
 
-  // schedule miss if no tap
   eventTimeout = setTimeout(() => {
     if (!tapRegistered) {
       active = false;
@@ -224,7 +220,7 @@ function startEvent() {
       hitCount = 0;
       recentMisses++;
 
-      // loosen only when calm (yes, even for misses)
+      // loosen only when calm
       if (canAdaptNow() && missCount >= MISS_THRESHOLD) {
         WINDOW_MS += STEP;
         clampWindow();
@@ -232,15 +228,14 @@ function startEvent() {
         saveState();
       }
     }
-    endEvent(false);
+    endEvent();
   }, jitter(WINDOW_MS));
 }
 
-function endEvent(_tapped) {
+function endEvent() {
   active = false;
   clearTimeout(eventTimeout);
 
-  // next event after fixed gap
   clearTimeout(gapTimeout);
   gapTimeout = setTimeout(startEvent, jitter(GAP_MS));
 }
@@ -249,30 +244,47 @@ function endEvent(_tapped) {
 setTimeout(startEvent, 900);
 
 /* -------------------------
-   RENDER (ABSTRACT / DEGNERATE DRIFT / FADE-TO-INFINITY)
-   - Baseline: ultra-faint line (slow context)
-   - Event: slightly higher alpha/width, then exponentially decays back to baseline
-   - Sub-perceptual angular drift (degenerate spiral): tiny tilt that changes extremely slowly
+   RENDER (ABSTRACT / FULL-LENGTH LINE / FADE-TO-INFINITY / DEGNERATE DRIFT)
+   - Field: near-black square
+   - Line: off-white, ultra-faint, FULL-LENGTH through field
+   - Event: envelope boosts alpha+width, then exponential decay back to baseline
+   - Degenerate "spiral" = sub-perceptual tilt drift
+   - Audio envelope is slightly misaligned vs visual (small drifting lead/lag)
 -------------------------- */
 const nearBlack = "#070707";          // field background (near-black, not pure)
 const offWhiteRGB = [235, 235, 230];  // off-white (night-shift friendly)
 
-const baseAlpha = 0.030;              // baseline visibility (very faint)
-const baseWidth = 0.70;               // baseline stroke width
-const peakAlpha = 0.10;               // peak during event (still subtle)
-const peakWidth = 2.0;                // peak width during event
+const baseAlpha = 0.028;
+const baseWidth = 0.65;
+
+const peakAlpha = 0.095;
+const peakWidth = 2.1;
 
 function expDecay01(elapsed, duration) {
-  // returns 1 at t=0, ~0 by t=duration with smooth asymptote
-  const k = 4.2; // fixed; not adaptive
+  const k = 4.2; // fixed
   const x = Math.max(0, Math.min(1, elapsed / duration));
   return Math.exp(-k * x);
+}
+
+/* fixed A/V margin: small, slowly drifting, sometimes audio leads or lags */
+function avOffsetMs(nowMs) {
+  // +/- ~35ms max, very slow drift; fixed behavior (not adaptive)
+  const t = nowMs / 1000;
+  return 35 * Math.sin(t / 19) + 12 * Math.sin(t / 61);
+}
+
+/* map envelope to audio gain (quiet) */
+function setAudioGainFromEnvelope(d) {
+  if (!audioOn || !gainNode) return;
+  // extremely quiet, with small lift during event
+  const g = 0.006 + 0.014 * d;  // peak ~0.02 (quiet)
+  gainNode.gain.value = g;
 }
 
 function draw() {
   const now = performance.now();
 
-  // full outside background
+  // outside background
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, W, H);
 
@@ -280,39 +292,39 @@ function draw() {
   ctx.fillStyle = nearBlack;
   ctx.fillRect(field.x, field.y, field.s, field.s);
 
-  // compute event envelope
+  // visual envelope
   let a = baseAlpha;
   let w = baseWidth;
 
   if (active) {
-    const elapsed = now - tStart;
-    const d = expDecay01(elapsed, WINDOW_MS);
-    a = baseAlpha + (peakAlpha - baseAlpha) * d;
-    w = baseWidth + (peakWidth - baseWidth) * d;
+    const elapsedV = now - tStart;
+    const dV = expDecay01(elapsedV, WINDOW_MS);
 
-    // audio follows the same envelope (quiet)
-    if (audioOn && gainNode) {
-      const target = 0.010 + 0.020 * d;   // very quiet; peak still low
-      gainNode.gain.value = target;
-    }
+    a = baseAlpha + (peakAlpha - baseAlpha) * dV;
+    w = baseWidth + (peakWidth - baseWidth) * dV;
+
+    // audio envelope uses a slightly shifted time (fixed drifting margin)
+    const elapsedA = (now + avOffsetMs(now)) - tStart;
+    const dA = expDecay01(Math.max(0, elapsedA), WINDOW_MS);
+    setAudioGainFromEnvelope(dA);
   } else {
-    if (audioOn && gainNode) {
-      gainNode.gain.value = 0.0;
-    }
+    if (audioOn && gainNode) gainNode.gain.value = 0.0;
   }
 
-  // degenerate spiral / sub-perceptual drift:
-  // tiny, ultra-slow tilt that never becomes “rotation”
+  // degenerate drift: tiny, ultra-slow tilt
   const t = now / 1000;
-  const tilt = 0.012 * Math.sin(t / 35);  // radians (~0.7° max), very slow
+  const tilt = 0.012 * Math.sin(t / 35); // ~0.7° max
 
-  // draw the line
+  // FULL-LENGTH line through the field (edge to edge, with rounding)
   const cx = field.x + field.s * 0.5;
   const cy = field.y + field.s * 0.5;
-  const len = field.s * 0.92;
 
+  // direction vector from tilt: near-vertical baseline
   const dx = Math.sin(tilt);
   const dy = Math.cos(tilt);
+
+  // extend beyond field so it always reaches edges even with rounding/tilt
+  const len = field.s * 1.45;
 
   const x1 = cx - dx * (len / 2);
   const y1 = cy - dy * (len / 2);
@@ -320,7 +332,7 @@ function draw() {
   const y2 = cy + dy * (len / 2);
 
   ctx.save();
-  ctx.lineCap = "round";              // rounded ends
+  ctx.lineCap = "round";
   ctx.lineWidth = w;
   ctx.strokeStyle = `rgba(${offWhiteRGB[0]},${offWhiteRGB[1]},${offWhiteRGB[2]},${a})`;
   ctx.beginPath();
