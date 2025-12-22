@@ -1,31 +1,46 @@
-<div id="audioGate">tap</div>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Initiation</title>
+
 <style>
   html, body {
     margin: 0;
     padding: 0;
     background: #000;
-    height: 100%;
     overflow: hidden;
     touch-action: manipulation;
   }
+
   canvas {
     display: block;
+  }
+
+  #audioGate {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255,255,255,0.15);
+    font-family: system-ui, sans-serif;
+    font-size: 18px;
+    user-select: none;
   }
 </style>
 </head>
 <body>
+
 <canvas id="c"></canvas>
+<div id="audioGate">tap</div>
 
 <script>
 /* =========================
-   CANVAS
+   CANVAS SETUP
 ========================= */
+
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
@@ -33,12 +48,13 @@ function resize() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 }
-window.addEventListener("resize", resize);
 resize();
+window.addEventListener("resize", resize);
 
 /* =========================
    AUDIO (iOS SAFE)
 ========================= */
+
 let audioCtx = null;
 let audioStarted = false;
 
@@ -46,8 +62,9 @@ function startAudio() {
   if (audioStarted) return;
   audioStarted = true;
 
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  document.getElementById("audioGate").remove();
 
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   audioCtx.resume().then(() => {
     const bufferSize = audioCtx.sampleRate * 2;
     const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
@@ -62,53 +79,62 @@ function startAudio() {
     noise.loop = true;
 
     const gain = audioCtx.createGain();
-    gain.gain.value = 0.03;
+    gain.gain.value = 0.025;
 
     noise.connect(gain).connect(audioCtx.destination);
     noise.start();
   });
 }
 
-document.addEventListener("touchstart", startAudio, { once: true });
-document.addEventListener("mousedown", startAudio, { once: true });
+const gate = document.getElementById("audioGate");
+gate.addEventListener("touchstart", startAudio, { once: true });
+gate.addEventListener("mousedown", startAudio, { once: true });
 
 /* =========================
-   DRAW LOOP
+   LINE STATE
 ========================= */
+
+// very small continuous drift
 let drift = 0;
+let driftVelocity = 0;
+
+// flicker phase
+let flickerPhase = Math.random() * 1000;
+
+/* =========================
+   RENDER LOOP
+========================= */
 
 function draw() {
-  const w = canvas.width;
-  const h = canvas.height;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // decay
-  ctx.fillStyle = "rgba(0,0,0,0.18)";
-  ctx.fillRect(0, 0, w, h);
+  // update drift (bounded)
+  driftVelocity += (Math.random() - 0.5) * 0.002;
+  driftVelocity *= 0.98;
+  drift += driftVelocity;
+  drift = Math.max(-1.5, Math.min(1.5, drift));
 
-  // slow lateral drift (non-rhythmic)
-  drift += (Math.random() - 0.5) * 0.25;
-  drift *= 0.98;
+  // flicker
+  flickerPhase += 0.03;
+  const alpha =
+    0.35 +
+    Math.sin(flickerPhase) * 0.05 +
+    (Math.random() - 0.5) * 0.02;
 
-  const baseX = w / 2 + drift;
+  ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+  ctx.lineWidth = 1;
 
-  // perceptible micro-instability
-  const jitter = (Math.random() - 0.5) * 1.6;
-  const alpha = 0.08 + Math.random() * 0.07;
-  const width = 0.7 + Math.random() * 0.6;
-
-  ctx.strokeStyle = `rgba(245,245,245,${alpha})`;
-  ctx.lineWidth = width;
+  const x = canvas.width / 2 + drift;
 
   ctx.beginPath();
-  ctx.moveTo(baseX + jitter, 0);
-  ctx.lineTo(baseX + jitter, h);
+  ctx.moveTo(x, 0);
+  ctx.lineTo(x, canvas.height);
   ctx.stroke();
 
   requestAnimationFrame(draw);
 }
 
-// visuals always start
-requestAnimationFrame(draw);
+draw();
 </script>
 </body>
 </html>
