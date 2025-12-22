@@ -3,138 +3,218 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation</title>
+<title>Initiation Threshold</title>
 
 <style>
   html, body {
     margin: 0;
     padding: 0;
-    background: #000;
+    background: #0a0a0a;
+    height: 100%;
     overflow: hidden;
     touch-action: manipulation;
   }
-
   canvas {
     display: block;
   }
-
-  #audioGate {
+  #audioBtn {
     position: fixed;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(255,255,255,0.15);
-    font-family: system-ui, sans-serif;
-    font-size: 18px;
-    user-select: none;
+    bottom: 10px;
+    right: 10px;
+    font-size: 11px;
+    padding: 6px 9px;
+    background: #111;
+    color: #666;
+    border: 1px solid #222;
+    border-radius: 6px;
+    opacity: 0.35;
   }
 </style>
 </head>
-<body>
 
+<body>
 <canvas id="c"></canvas>
-<div id="audioGate">tap</div>
+<button id="audioBtn">audio</button>
 
 <script>
-/* =========================
-   CANVAS SETUP
-========================= */
+/* ===============================
+   CONFIG — ONLY SPEED LAYER
+================================ */
+
+let PROMPT_WINDOW = 1400;   // ms (adaptive)
+const MIN_WINDOW = 900;
+const MAX_WINDOW = 1800;
+
+const GAP = 1200;
+const JITTER = 100;
+const STEP = 50;
+
+/* Calm gating */
+const RT_HISTORY = 6;
+const MAX_STD = 120;
+const FREEZE_MISSES = 4;
+
+/* ===============================
+   CANVAS
+================================ */
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
 }
+addEventListener("resize", resize);
 resize();
-window.addEventListener("resize", resize);
 
-/* =========================
-   AUDIO (iOS SAFE)
-========================= */
+/* ===============================
+   AUDIO (OPTIONAL)
+================================ */
 
-let audioCtx = null;
-let audioStarted = false;
+let audioCtx, noiseNode, gainNode;
+let audioOn = false;
 
-function startAudio() {
-  if (audioStarted) return;
-  audioStarted = true;
-
-  document.getElementById("audioGate").remove();
-
+function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  audioCtx.resume().then(() => {
-    const bufferSize = audioCtx.sampleRate * 2;
-    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-    const data = buffer.getChannelData(0);
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
 
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = (Math.random() * 2 - 1) * 0.02;
+  noiseNode = audioCtx.createBufferSource();
+  noiseNode.buffer = buffer;
+  noiseNode.loop = true;
+
+  gainNode = audioCtx.createGain();
+  gainNode.gain.value = 0.01;
+
+  noiseNode.connect(gainNode).connect(audioCtx.destination);
+  noiseNode.start();
+}
+
+document.getElementById("audioBtn").onclick = () => {
+  if (!audioOn) {
+    initAudio();
+    audioOn = true;
+    document.getElementById("audioBtn").remove();
+  }
+};
+
+/* ===============================
+   STATE
+================================ */
+
+let active = false;
+let promptStart = 0;
+let timeoutId;
+
+let hitCount = 0;
+let missCount = 0;
+let recentMisses = 0;
+let rtHistory = [];
+
+/* ===============================
+   UTILS
+================================ */
+
+function jitter(ms) {
+  return ms + (Math.random() * 2 - 1) * JITTER;
+}
+
+function stdDev(arr) {
+  const mean = arr.reduce((a,b)=>a+b,0) / arr.length;
+  const variance = arr.reduce((a,b)=>a + (b-mean)**2,0) / arr.length;
+  return Math.sqrt(variance);
+}
+
+function canAdapt() {
+  if (rtHistory.length < RT_HISTORY) return false;
+  if (recentMisses > FREEZE_MISSES) return false;
+  if (stdDev(rtHistory) > MAX_STD) return false;
+  return true;
+}
+
+/* ===============================
+   DRAW
+================================ */
+
+function drawLine() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.strokeStyle = "rgba(245,245,240,0.12)";
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+
+  const x = canvas.width / 2 + (Math.random() - 0.5) * 4;
+  ctx.beginPath();
+  ctx.moveTo(x, canvas.height * 0.1);
+  ctx.lineTo(x, canvas.height * 0.9);
+  ctx.stroke();
+}
+
+function clear() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+}
+
+/* ===============================
+   INPUT
+================================ */
+
+document.body.addEventListener("pointerdown", () => {
+  if (!active) return;
+
+  const rt = performance.now() - promptStart;
+  rtHistory.push(rt);
+  if (rtHistory.length > RT_HISTORY) rtHistory.shift();
+
+  hitCount++;
+  missCount = 0;
+  recentMisses = Math.max(0, recentMisses - 1);
+
+  if (canAdapt() && hitCount >= 5 && PROMPT_WINDOW > MIN_WINDOW) {
+    PROMPT_WINDOW -= STEP;
+    hitCount = 0;
+  }
+
+  clearPrompt();
+});
+
+/* ===============================
+   LOOP
+================================ */
+
+function showPrompt() {
+  active = true;
+  promptStart = performance.now();
+  drawLine();
+
+  timeoutId = setTimeout(() => {
+    active = false;
+    clear();
+
+    missCount++;
+    hitCount = 0;
+    recentMisses++;
+
+    if (canAdapt() && missCount >= 3 && PROMPT_WINDOW < MAX_WINDOW) {
+      PROMPT_WINDOW += STEP;
+      missCount = 0;
     }
 
-    const noise = audioCtx.createBufferSource();
-    noise.buffer = buffer;
-    noise.loop = true;
-
-    const gain = audioCtx.createGain();
-    gain.gain.value = 0.025;
-
-    noise.connect(gain).connect(audioCtx.destination);
-    noise.start();
-  });
+    clearPrompt();
+  }, jitter(PROMPT_WINDOW));
 }
 
-const gate = document.getElementById("audioGate");
-gate.addEventListener("touchstart", startAudio, { once: true });
-gate.addEventListener("mousedown", startAudio, { once: true });
-
-/* =========================
-   LINE STATE
-========================= */
-
-// very small continuous drift
-let drift = 0;
-let driftVelocity = 0;
-
-// flicker phase
-let flickerPhase = Math.random() * 1000;
-
-/* =========================
-   RENDER LOOP
-========================= */
-
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // update drift (bounded)
-  driftVelocity += (Math.random() - 0.5) * 0.002;
-  driftVelocity *= 0.98;
-  drift += driftVelocity;
-  drift = Math.max(-1.5, Math.min(1.5, drift));
-
-  // flicker
-  flickerPhase += 0.03;
-  const alpha =
-    0.35 +
-    Math.sin(flickerPhase) * 0.05 +
-    (Math.random() - 0.5) * 0.02;
-
-  ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-  ctx.lineWidth = 1;
-
-  const x = canvas.width / 2 + drift;
-
-  ctx.beginPath();
-  ctx.moveTo(x, 0);
-  ctx.lineTo(x, canvas.height);
-  ctx.stroke();
-
-  requestAnimationFrame(draw);
+function clearPrompt() {
+  active = false;
+  clear();
+  setTimeout(showPrompt, jitter(GAP));
 }
 
-draw();
+/* ===============================
+   START
+================================ */
+
+setTimeout(showPrompt, 1000);
 </script>
 </body>
 </html>
