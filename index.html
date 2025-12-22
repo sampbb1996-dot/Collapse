@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Signal</title>
 
 <style>
@@ -15,76 +15,92 @@ html, body {
   touch-action: manipulation;
 }
 
-#overlay {
+#screen {
   position: fixed;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #aaa;
-  font-family: system-ui, sans-serif;
+  background: #000;
+}
+
+#prompt {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #777;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 18px;
+  pointer-events: none;
 }
 
 #line {
-  position: fixed;
+  position: absolute;
   top: 0;
+  bottom: 0;
   left: 50%;
   width: 1px;
-  height: 100%;
   background: rgba(255,255,255,0.15);
-  transform: translateX(-0.5px);
+  transform: translateX(-50%);
   opacity: 0;
 }
 </style>
 </head>
 
 <body>
-
-<div id="overlay">tap to begin</div>
-<div id="line"></div>
+<div id="screen">
+  <div id="prompt">tap to begin</div>
+  <div id="line"></div>
+</div>
 
 <script>
 let started = false;
-let ctx, osc, gain;
+let audioCtx, osc, gain;
 
-function startSystem() {
+function startGame() {
   if (started) return;
   started = true;
 
-  // --- AUDIO (must be inside tap) ---
-  ctx = new (window.AudioContext || window.webkitAudioContext)();
-  ctx.resume();
+  // --- AUDIO (iOS SAFE) ---
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-  osc = ctx.createOscillator();
-  gain = ctx.createGain();
+  osc = audioCtx.createOscillator();
+  gain = audioCtx.createGain();
 
   osc.type = "sine";
-  osc.frequency.value = 220;
-  gain.gain.value = 0.04;
+  osc.frequency.value = 110;      // low, neutral tone
+  gain.gain.value = 0.03;         // subtle volume
 
-  osc.connect(gain).connect(ctx.destination);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
   osc.start();
 
   // --- VISUAL ---
-  document.getElementById("overlay").remove();
+  document.getElementById("prompt").style.display = "none";
   const line = document.getElementById("line");
-  line.style.opacity = 1;
+  line.style.opacity = "1";
 
-  // subtle drift
-  let t = 0;
-  function animate() {
-    t += 0.002;
-    const wobble = Math.sin(t * 3) * 0.6;
-    line.style.transform = `translateX(${wobble - 0.5}px)`;
-    gain.gain.value = 0.03 + Math.abs(Math.sin(t)) * 0.01;
-    requestAnimationFrame(animate);
-  }
-  animate();
+  animate(line);
 }
 
-document.addEventListener("pointerdown", startSystem, { once: true });
-</script>
+function animate(line) {
+  let t = 0;
+  function frame() {
+    t += 0.01;
 
+    // micro instability (non-flicker)
+    const drift = Math.sin(t * 1.7) * 0.3;
+    line.style.transform = `translateX(-50%) translateX(${drift}px)`;
+
+    // subtle audio drift
+    osc.frequency.value = 110 + Math.sin(t) * 2;
+
+    requestAnimationFrame(frame);
+  }
+  frame();
+}
+
+// IMPORTANT: must be a direct user gesture
+document.body.addEventListener("pointerdown", startGame, { once: true });
+</script>
 </body>
 </html>
