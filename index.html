@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport"
-  content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Signal</title>
 
@@ -26,7 +26,7 @@ canvas{display:block;}
   display:flex;
   align-items:center;
   justify-content:center;
-  color:#888;
+  color:#777;
   font-family:system-ui;
 }
 </style>
@@ -37,28 +37,68 @@ canvas{display:block;}
 <canvas id="c"></canvas>
 
 <script>
-/* AUDIO — EXACT LOGIC */
+/* ================= AUDIO (UNCHANGED) ================= */
+
 let audioCtx,noiseSource,gainNode,audioStarted=false;
 
 function startAudio(){
- if(audioStarted) return;
- audioStarted=true;
- audioCtx=new (window.AudioContext||webkitAudioContext)();
- audioCtx.resume();
- const b=audioCtx.createBuffer(1,audioCtx.sampleRate*2,audioCtx.sampleRate);
- const d=b.getChannelData(0);
- for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
- noiseSource=audioCtx.createBufferSource();
- noiseSource.buffer=b; noiseSource.loop=true;
- gainNode=audioCtx.createGain(); gainNode.gain.value=0.015;
- noiseSource.connect(gainNode).connect(audioCtx.destination);
- noiseSource.start();
+  if(audioStarted) return;
+  audioStarted=true;
+
+  audioCtx=new (window.AudioContext||webkitAudioContext)();
+  audioCtx.resume();
+
+  const size=audioCtx.sampleRate*2;
+  const buffer=audioCtx.createBuffer(1,size,audioCtx.sampleRate);
+  const data=buffer.getChannelData(0);
+  for(let i=0;i<size;i++) data[i]=Math.random()*2-1;
+
+  noiseSource=audioCtx.createBufferSource();
+  noiseSource.buffer=buffer;
+  noiseSource.loop=true;
+
+  gainNode=audioCtx.createGain();
+  gainNode.gain.value=0.015;
+
+  noiseSource.connect(gainNode).connect(audioCtx.destination);
+  noiseSource.start();
 }
 
+/* ================= CANVAS ================= */
+
+const canvas=document.getElementById("c");
+const ctx=canvas.getContext("2d");
+
+function resize(){
+  canvas.width=window.innerWidth;
+  canvas.height=window.innerHeight;
+}
+window.addEventListener("resize",resize);
+resize();
+
+/* ================= GAME LOOP ================= */
+
+function draw(){
+  ctx.fillStyle="#000";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // placeholder pixel so iOS never blanks
+  ctx.fillStyle="#111";
+  ctx.fillRect(canvas.width/2,canvas.height/2,1,1);
+
+  requestAnimationFrame(draw);
+}
+
+function startGame(){
+  draw();
+}
+
+/* ================= START ================= */
+
 window.addEventListener("pointerdown",()=>{
- document.getElementById("overlay").remove();
- startAudio();
- startGame(); // your game
+  document.getElementById("overlay").remove();
+  startAudio();
+  startGame();
 },{once:true});
 </script>
 </body>
