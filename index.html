@@ -6,29 +6,21 @@
 <title>Signal</title>
 
 <style>
-  * {
-    margin: 0;
-    padding: 0;
-    user-select: none;
-    -webkit-user-select: none;
-    -webkit-touch-callout: none;
-    -webkit-tap-highlight-color: transparent;
-  }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  overflow: hidden;
+  touch-action: manipulation;
+}
 
-  html, body {
-    width: 100%;
-    height: 100%;
-    background: #000;
-    overflow: hidden;
-    touch-action: none;
-  }
-
-  canvas {
-    display: block;
-  }
+canvas {
+  display: block;
+}
 </style>
 </head>
 <body>
+
 <canvas id="c"></canvas>
 
 <script>
@@ -36,9 +28,6 @@ const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 let w, h;
-let started = false;
-let audioCtx, osc, gain;
-
 function resize() {
   w = canvas.width = window.innerWidth;
   h = canvas.height = window.innerHeight;
@@ -46,61 +35,80 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
-// ---- AUDIO ----
+/* ---------- STATE ---------- */
+let started = false;
+let audioCtx = null;
+let osc = null;
+let gain = null;
+
+let t = 0;
+let instability = 0;
+
+/* ---------- AUDIO ---------- */
 function startAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
   osc = audioCtx.createOscillator();
   gain = audioCtx.createGain();
 
   osc.type = "sine";
-  osc.frequency.value = 220;        // neutral, non-instructional
-  gain.gain.value = 0.02;            // very low salience
+  osc.frequency.value = 120;
+
+  gain.gain.value = 0.015;
 
   osc.connect(gain);
   gain.connect(audioCtx.destination);
   osc.start();
 }
 
-// ---- RENDER ----
-let t = 0;
+function resumeAudio() {
+  if (audioCtx && audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
+}
 
+/* ---------- INPUT ---------- */
+document.addEventListener("pointerdown", () => {
+  if (!started) {
+    started = true;
+    startAudio();
+  } else {
+    resumeAudio(); // iOS safeguard
+  }
+});
+
+/* ---------- LOOP ---------- */
 function draw() {
-  if (!started) return;
-
   ctx.clearRect(0, 0, w, h);
 
-  // subtle, continuous micro-instability (not flicker)
-  const drift = Math.sin(t * 0.001) * 0.6;
-  const x = w / 2 + drift;
+  if (started) {
+    t += 0.01;
 
-  ctx.strokeStyle = "rgba(255,255,255,0.18)";
-  ctx.lineWidth = 1;
+    // slow micro-instability
+    instability = 0.98 * instability + 0.02 * (Math.random() - 0.5);
 
-  ctx.beginPath();
-  ctx.moveTo(x, 0);
-  ctx.lineTo(x, h);
-  ctx.stroke();
+    const alpha = 0.2 + Math.abs(instability);
+    const x = w / 2 + instability * 40;
 
-  t++;
+    ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+    ctx.lineWidth = 1;
+
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+
+    // subtle audio drift
+    if (audioCtx) {
+      osc.frequency.value = 120 + instability * 30;
+    }
+  }
+
   requestAnimationFrame(draw);
 }
 
-// ---- INPUT (single gate) ----
-function start() {
-  if (started) return;
-  started = true;
-
-  startAudio();
-  requestAnimationFrame(draw);
-}
-
-// hard block Safari behaviors
-["touchstart","touchmove","touchend"].forEach(evt =>
-  document.addEventListener(evt, e => e.preventDefault(), { passive: false })
-);
-
-// first interaction starts everything
-document.addEventListener("pointerdown", start, { once: true });
+draw();
 </script>
+
 </body>
 </html>
