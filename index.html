@@ -4,29 +4,27 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Initiation</title>
-
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #050505;
-  overflow: hidden;
-  touch-action: manipulation;
-}
-
-canvas {
-  display: block;
-}
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    height: 100%;
+    overflow: hidden;
+    touch-action: manipulation;
+  }
+  canvas {
+    display: block;
+  }
 </style>
 </head>
-
 <body>
 <canvas id="c"></canvas>
 
 <script>
-/* ===============================
+/* =========================
    CANVAS SETUP
-================================ */
+========================= */
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
@@ -37,68 +35,81 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
-/* ===============================
-   CORE STATE (ONLY ONE VARIABLE)
-================================ */
-let reactionWindow = 0.45; // hidden, adaptive
-let lastTap = null;
+/* =========================
+   STATE
+========================= */
+let started = false;
+let audioCtx = null;
+let noiseNode = null;
 
-/* ===============================
-   LINE PARAMETERS (FIXED)
-================================ */
-const baseX = () => canvas.width / 2;
-const color = "rgba(235,235,225,0.12)";
-const width = 1;
+/* =========================
+   AUDIO (iOS SAFE)
+========================= */
+function startAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-/* degenerate spiral */
-let t = 0;
+  const bufferSize = audioCtx.sampleRate * 2;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
 
-/* ===============================
-   INPUT
-================================ */
-canvas.addEventListener("pointerdown", () => {
-  const now = performance.now();
-
-  if (lastTap !== null) {
-    const dt = (now - lastTap) / 1000;
-
-    if (dt < reactionWindow) {
-      reactionWindow *= 0.985; // tighten
-    } else {
-      reactionWindow *= 1.015; // loosen
-    }
-
-    reactionWindow = Math.max(0.15, Math.min(0.9, reactionWindow));
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = (Math.random() * 2 - 1) * 0.015; // ultra-low salience
   }
 
-  lastTap = now;
-});
+  noiseNode = audioCtx.createBufferSource();
+  noiseNode.buffer = buffer;
+  noiseNode.loop = true;
 
-/* ===============================
-   DRAW LOOP
-================================ */
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0.025;
 
-  t += 0.0006; // imperceptible drift
+  noiseNode.connect(gain).connect(audioCtx.destination);
+  noiseNode.start();
+}
 
-  const drift =
-    Math.sin(t) * 0.4 +
-    Math.sin(t * 0.37) * 0.25;
+/* =========================
+   START (ONE TAP ONLY)
+========================= */
+function start() {
+  if (started) return;
+  started = true;
 
-  const x = baseX() + drift;
-
-  ctx.beginPath();
-  ctx.moveTo(x, 0);
-  ctx.lineTo(x, canvas.height);
-  ctx.lineWidth = width;
-  ctx.strokeStyle = color;
-  ctx.stroke();
+  startAudio();
+  audioCtx.resume();
 
   requestAnimationFrame(draw);
 }
 
-draw();
+document.addEventListener("touchstart", start, { once: true });
+document.addEventListener("mousedown", start, { once: true });
+
+/* =========================
+   DRAW LOOP
+========================= */
+function draw() {
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // fade-to-black (no full clear)
+  ctx.fillStyle = "rgba(0,0,0,0.12)";
+  ctx.fillRect(0, 0, w, h);
+
+  // micro-instability
+  const baseX = w / 2;
+  const jitterX = (Math.random() - 0.5) * 0.7; // sub-pixel drift
+  const alpha = 0.06 + Math.random() * 0.05;
+  const width = 0.6 + Math.random() * 0.4;
+
+  ctx.strokeStyle = `rgba(240,240,240,${alpha})`;
+  ctx.lineWidth = width;
+
+  ctx.beginPath();
+  ctx.moveTo(baseX + jitterX, 0);
+  ctx.lineTo(baseX + jitterX, h);
+  ctx.stroke();
+
+  requestAnimationFrame(draw);
+}
 </script>
 </body>
 </html>
