@@ -3,97 +3,112 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation</title>
+<title>Signal</title>
 
 <style>
-  html, body {
-    margin: 0;
-    height: 100%;
-    background: #000;
-    overflow: hidden;
-    touch-action: manipulation;
-  }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  overflow: hidden;
+  touch-action: manipulation;
+}
 
-  canvas {
-    display: block;
-  }
-
-  #audioBtn {
-    position: fixed;
-    bottom: 28px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 12px 20px;
-    border-radius: 18px;
-    border: none;
-    background: #eee;
-    color: #111;
-    font-size: 15px;
-  }
+#line {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 100%;
+  background: rgba(255,255,255,0.12);
+  transform: translateX(-50%);
+}
 </style>
 </head>
 
 <body>
-<canvas id="c"></canvas>
-<button id="audioBtn">Enable Audio</button>
+<div id="line"></div>
 
 <script>
-/* ---------- CANVAS ---------- */
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+/* -------------------------
+   CORE STATE
+-------------------------- */
+let started = false;
+let ctx, osc, gain;
+let entropy = 0;
+let lastEvent = null;
+let frozen = false;
 
-function resize() {
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
-}
-resize();
-addEventListener("resize", resize);
-
-/* ---------- VISUAL ---------- */
-let t = 0;
-
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // continuous, non-blinking drift
-  const drift = Math.sin(t * 0.001) * 0.5;
-
-  ctx.strokeStyle = "rgba(255,255,255,0.35)";
-  ctx.lineWidth = 1;
-
-  ctx.beginPath();
-  ctx.moveTo(canvas.width / 2 + drift, 0);
-  ctx.lineTo(canvas.width / 2 + drift, canvas.height);
-  ctx.stroke();
-
-  t++;
-  requestAnimationFrame(draw);
-}
-draw();
-
-/* ---------- AUDIO (CRITICAL PART) ---------- */
-let audioCtx = null;
-let osc = null;
-let gain = null;
-
-document.getElementById("audioBtn").addEventListener("click", () => {
-  if (audioCtx) return;
-
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-  osc = audioCtx.createOscillator();
-  gain = audioCtx.createGain();
+/* -------------------------
+   AUDIO
+-------------------------- */
+function startAudio() {
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  osc = ctx.createOscillator();
+  gain = ctx.createGain();
 
   osc.type = "sine";
-  osc.frequency.value = 220;
+  osc.frequency.value = 110;
   gain.gain.value = 0.015;
 
   osc.connect(gain);
-  gain.connect(audioCtx.destination);
+  gain.connect(ctx.destination);
   osc.start();
 
-  document.getElementById("audioBtn").innerText = "Audio On";
-});
+  // slow, unconscious drift
+  setInterval(() => {
+    if (!frozen) {
+      osc.frequency.value += (Math.random() - 0.5) * 0.15;
+    }
+  }, 800);
+}
+
+/* -------------------------
+   LINE MICRO-INSTABILITY
+-------------------------- */
+const line = document.getElementById("line");
+
+setInterval(() => {
+  if (!started) return;
+
+  const jitter = frozen ? 0 : (Math.random() - 0.5) * 0.6;
+  line.style.transform = `translateX(calc(-50% + ${jitter}px))`;
+}, 120);
+
+/* -------------------------
+   ENTROPY OBSERVATION
+-------------------------- */
+function observeInteraction() {
+  const now = performance.now();
+
+  if (lastEvent !== null) {
+    const dt = now - lastEvent;
+    entropy = 0.98 * entropy + Math.abs(dt - 600) * 0.001;
+  }
+
+  lastEvent = now;
+
+  // silent hard gate
+  if (entropy > 1.2) frozen = true;
+  if (entropy < 0.6) frozen = false;
+
+  // adaptive fading (very slow)
+  const alpha = Math.max(0.04, 0.12 - entropy * 0.03);
+  line.style.background = `rgba(255,255,255,${alpha})`;
+}
+
+/* -------------------------
+   START (single gesture)
+-------------------------- */
+function start() {
+  if (started) return;
+  started = true;
+
+  startAudio();
+  document.addEventListener("pointerdown", observeInteraction);
+}
+
+document.addEventListener("pointerdown", start, { once: true });
 </script>
 </body>
 </html>
