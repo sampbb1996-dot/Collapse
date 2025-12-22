@@ -10,36 +10,18 @@ html, body {
   height: 100%;
   background: #070707;
   overflow: hidden;
-  touch-action: none;
+  touch-action: manipulation;
 }
-
-canvas {
-  display: block;
-}
-
-#audioBtn {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 14px 22px;
-  font-size: 15px;
-  border-radius: 18px;
-  border: none;
-  background: #f0f0f0;
-  color: #111;
-  z-index: 9999; /* critical */
-}
+canvas { display:block; }
 </style>
 </head>
 
 <body>
-<button id="audioBtn">Enable Audio</button>
 <canvas id="c"></canvas>
 
 <script>
 const c = document.getElementById("c");
-const ctx = c.getContext("2d");
+const g = c.getContext("2d");
 
 function resize(){
   c.width = innerWidth;
@@ -48,43 +30,46 @@ function resize(){
 resize();
 addEventListener("resize", resize);
 
-/* ---------- audio (FIXED) ---------- */
-let audioCtx;
+/* ---------- audio ---------- */
+let audioStarted = false;
+let audioCtx, osc, gain;
 
-document.getElementById("audioBtn").onclick = async (e) => {
-  e.stopPropagation();
+function startAudio(){
+  if (audioStarted) return;
+  audioStarted = true;
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  await audioCtx.resume(); // REQUIRED on iOS
 
-  const osc = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
+  osc = audioCtx.createOscillator();
+  gain = audioCtx.createGain();
 
   osc.type = "sine";
-  osc.frequency.value = 220;
-  gain.gain.value = 0.08;
+  osc.frequency.value = 180;
+  gain.gain.value = 0.06;
 
   osc.connect(gain).connect(audioCtx.destination);
   osc.start();
+}
 
-  document.getElementById("audioBtn").remove();
-};
+/* iOS-safe: first touch anywhere */
+document.addEventListener("touchstart", startAudio, { once:true });
+document.addEventListener("pointerdown", startAudio, { once:true });
 
 /* ---------- visual ---------- */
 let t = 0;
 function loop(){
-  t += 0.003;
+  t += 0.0025;
 
-  ctx.clearRect(0,0,c.width,c.height);
+  g.clearRect(0,0,c.width,c.height);
 
-  const x = c.width / 2 + Math.sin(t) * 1.2;
-  ctx.strokeStyle = "rgba(240,240,240,0.25)";
-  ctx.lineWidth = 1;
+  const x = c.width/2 + Math.sin(t)*1.5;
+  g.strokeStyle = "rgba(240,240,240,0.22)";
+  g.lineWidth = 1;
 
-  ctx.beginPath();
-  ctx.moveTo(x, 0);
-  ctx.lineTo(x, c.height);
-  ctx.stroke();
+  g.beginPath();
+  g.moveTo(x,0);
+  g.lineTo(x,c.height);
+  g.stroke();
 
   requestAnimationFrame(loop);
 }
