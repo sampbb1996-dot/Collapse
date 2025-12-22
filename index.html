@@ -9,12 +9,12 @@ html,body{margin:0;padding:0;background:#000;overflow:hidden;height:100%;touch-a
 canvas{display:block}
 #overlay{
   position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
-  color:#888;font-family:system-ui,sans-serif;font-size:18px;z-index:10
+  color:#888;font-family:system-ui,sans-serif;font-size:18px;z-index:10;
+  -webkit-user-select:none; user-select:none;
 }
 </style>
 </head>
 <body>
-
 <div id="overlay">tap to begin</div>
 <canvas id="c"></canvas>
 
@@ -23,36 +23,47 @@ const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 const overlay = document.getElementById("overlay");
 
-function resize(){
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
+function resize(){ canvas.width = innerWidth; canvas.height = innerHeight; }
+addEventListener("resize", resize); resize();
+
+let audioCtx=null, noise=null, gain=null;
+let started=false;
+let lastX=null, entropy=0;
+
+function makeNoiseBuffer(ctx){
+  const len = Math.floor(ctx.sampleRate * 2);
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i=0;i<len;i++) data[i] = Math.random()*2-1;
+  return buf;
 }
-addEventListener("resize", resize);
-resize();
 
-let audioCtx, noise, gain;
-let started = false;
-let lastX = null;
-let entropy = 0;
-
-function start(){
-  if(started) return;
+async function start(){
+  if (started) return;
   started = true;
   overlay.remove();
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  audioCtx.resume(); // ✅ iOS Safari unlock
 
-  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for(let i=0;i<data.length;i++) data[i] = Math.random()*2-1;
+  // ✅ iOS: wait for resume to COMPLETE inside the gesture
+  if (audioCtx.state !== "running") {
+    try { await audioCtx.resume(); } catch (e) {}
+  }
 
-  noise = audioCtx.createBufferSource();
-  noise.buffer = buffer;
-  noise.loop = true;
+  // ✅ “Prime” the output (tiny blip) — helps on some iOS versions
+  const prime = audioCtx.createOscillator();
+  const primeGain = audioCtx.createGain();
+  primeGain.gain.value = 0.0001;
+  prime.connect(primeGain).connect(audioCtx.destination);
+  prime.start();
+  prime.stop(audioCtx.currentTime + 0.02);
 
   gain = audioCtx.createGain();
   gain.gain.value = 0.02;
+
+  noise = audioCtx.createBufferSource();
+  noise.buffer = makeNoiseBuffer(audioCtx);
+  noise.loop = true;
 
   noise.connect(gain).connect(audioCtx.destination);
   noise.start();
@@ -60,20 +71,27 @@ function start(){
   draw();
 }
 
-document.body.addEventListener("pointerdown", e=>{
-  start();
-  if(lastX !== null){
-    const dx = Math.abs(e.clientX - lastX);
+// Use touch + click (pointer can be unreliable on iOS)
+overlay.addEventListener("touchstart", (e)=>{ e.preventDefault(); start(); }, {passive:false});
+overlay.addEventListener("click", start);
+
+document.body.addEventListener("touchmove", (e)=>{
+  const t = e.touches && e.touches[0];
+  if (!t) return;
+  if (lastX !== null) {
+    const dx = Math.abs(t.clientX - lastX);
     entropy = entropy * 0.95 + dx * 0.001;
   }
-  lastX = e.clientX;
-});
+  lastX = t.clientX;
+}, {passive:true});
 
 function draw(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  const target = 0.015 + entropy * 0.02;
-  gain.gain.value += (target - gain.gain.value) * 0.01;
+  if (gain) {
+    const target = 0.015 + entropy * 0.02;
+    gain.gain.value += (target - gain.gain.value) * 0.01;
+  }
 
   const wobble = (Math.random()-0.5) * entropy * 40;
   ctx.strokeStyle = "rgba(255,255,255,0.15)";
