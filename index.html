@@ -10,11 +10,7 @@ html, body {
   height: 100%;
   background: #070707;
   overflow: hidden;
-
   touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-touch-callout: none;
 }
 
 canvas {
@@ -32,6 +28,7 @@ canvas {
   border: none;
   background: #f0f0f0;
   color: #111;
+  z-index: 9999; /* critical */
 }
 </style>
 </head>
@@ -41,12 +38,6 @@ canvas {
 <canvas id="c"></canvas>
 
 <script>
-/* --------- iOS kill defaults --------- */
-["touchstart","touchmove","touchend"].forEach(t =>
-  document.addEventListener(t, e => e.preventDefault(), { passive:false })
-);
-
-/* --------- canvas --------- */
 const c = document.getElementById("c");
 const ctx = c.getContext("2d");
 
@@ -57,61 +48,39 @@ function resize(){
 resize();
 addEventListener("resize", resize);
 
-/* --------- audio --------- */
-let audioCtx, noise;
-document.getElementById("audioBtn").onclick = () => {
-  audioCtx = new AudioContext();
-  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.02;
+/* ---------- audio (FIXED) ---------- */
+let audioCtx;
 
-  noise = audioCtx.createBufferSource();
-  noise.buffer = buffer;
-  noise.loop = true;
+document.getElementById("audioBtn").onclick = async (e) => {
+  e.stopPropagation();
 
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  await audioCtx.resume(); // REQUIRED on iOS
+
+  const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
-  gain.gain.value = 0.12;
 
-  noise.connect(gain).connect(audioCtx.destination);
-  noise.start();
+  osc.type = "sine";
+  osc.frequency.value = 220;
+  gain.gain.value = 0.08;
+
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
 
   document.getElementById("audioBtn").remove();
 };
 
-/* --------- state --------- */
-let contact = false;
-let stability = 0;
-let target = 0;
+/* ---------- visual ---------- */
 let t = 0;
-
-/* --------- input --------- */
-c.addEventListener("pointerdown", () => {
-  contact = true;
-  target = 1;
-});
-
-c.addEventListener("pointerup", () => {
-  contact = false;
-  target = 0;
-});
-
-/* --------- loop --------- */
 function loop(){
   t += 0.003;
 
-  // very slow adaptation (macro only)
-  stability += (target - stability) * 0.001;
-
   ctx.clearRect(0,0,c.width,c.height);
 
-  const x =
-    c.width / 2 +
-    Math.sin(t) * (1 - stability) * 1.2;
-
-  const alpha = 0.06 + stability * 0.3;
-
-  ctx.strokeStyle = `rgba(240,240,240,${alpha})`;
+  const x = c.width / 2 + Math.sin(t) * 1.2;
+  ctx.strokeStyle = "rgba(240,240,240,0.25)";
   ctx.lineWidth = 1;
+
   ctx.beginPath();
   ctx.moveTo(x, 0);
   ctx.lineTo(x, c.height);
@@ -119,7 +88,6 @@ function loop(){
 
   requestAnimationFrame(loop);
 }
-
 loop();
 </script>
 </body>
