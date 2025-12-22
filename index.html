@@ -1,39 +1,35 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Signal</title>
-
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #000;
-  height: 100%;
-  overflow: hidden;
-  touch-action: none;
+html,body{
+  margin:0;
+  padding:0;
+  background:#000;
+  height:100%;
+  overflow:hidden;
+  touch-action:none;
 }
-canvas { display: block; }
-#overlay {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #777;
-  font-family: system-ui, sans-serif;
-  font-size: 18px;
+canvas{display:block}
+#overlay{
+  position:fixed;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#777;
+  font-family:system-ui,sans-serif;
+  font-size:18px;
 }
 </style>
 </head>
-
 <body>
 
 <div id="overlay">tap to begin</div>
 <canvas id="c"></canvas>
-
-<!-- iOS audio unlock -->
 <audio id="unlock" playsinline></audio>
 
 <script>
@@ -42,24 +38,28 @@ const ctx = canvas.getContext("2d");
 const overlay = document.getElementById("overlay");
 const unlock = document.getElementById("unlock");
 
-function resize() {
+function resize(){
   canvas.width = innerWidth;
   canvas.height = innerHeight;
 }
 addEventListener("resize", resize);
 resize();
 
-let audioCtx, osc, gain;
-let started = false;
+let audioCtx = null;
+let osc = null;
+let gain = null;
+
 let entropy = 0;
 let lastX = null;
+let running = false;
 
-async function start() {
-  if (started) return;
-  started = true;
-  overlay.remove();
+/* 🔥 HARD RESET AUDIO (required on iOS) */
+async function initAudio(){
+  if (audioCtx) {
+    try { audioCtx.close(); } catch {}
+    audioCtx = null;
+  }
 
-  /* 🔓 iOS SPEAKER UNLOCK */
   unlock.src =
     "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=";
   await unlock.play();
@@ -67,51 +67,58 @@ async function start() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   await audioCtx.resume();
 
-  /* iOS-safe noise substitute */
   osc = audioCtx.createOscillator();
   osc.type = "sawtooth";
-  osc.frequency.value = 120;
+  osc.frequency.value = 110;
 
   gain = audioCtx.createGain();
-  gain.gain.value = 0.01;
+  gain.gain.value = 0.008;
 
   osc.connect(gain).connect(audioCtx.destination);
   osc.start();
-
-  requestAnimationFrame(draw);
 }
 
-overlay.addEventListener("touchstart", e => {
+async function start(){
+  overlay.style.display = "none";
+  await initAudio();
+
+  if (!running) {
+    running = true;
+    requestAnimationFrame(draw);
+  }
+}
+
+overlay.addEventListener("touchstart", e=>{
   e.preventDefault();
   start();
-}, { passive: false });
+},{passive:false});
 
 overlay.addEventListener("click", start);
 
-document.addEventListener("touchmove", e => {
+document.addEventListener("touchmove", e=>{
   const t = e.touches[0];
   if (!t) return;
 
-  if (lastX !== null) {
+  if (lastX !== null){
     const dx = Math.abs(t.clientX - lastX);
     entropy = entropy * 0.95 + dx * 0.002;
   }
   lastX = t.clientX;
-}, { passive: true });
+},{passive:true});
 
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  const targetGain = 0.008 + entropy * 0.03;
-  gain.gain.value += (targetGain - gain.gain.value) * 0.02;
+  if (gain){
+    const target = 0.006 + entropy * 0.03;
+    gain.gain.value += (target - gain.gain.value) * 0.02;
+  }
 
-  const wobble = (Math.random() - 0.5) * entropy * 50;
+  const wobble = (Math.random()-0.5) * entropy * 50;
   ctx.strokeStyle = "rgba(255,255,255,0.15)";
-  ctx.lineWidth = 1;
-
   ctx.beginPath();
-  ctx.moveTo(canvas.width / 2 + wobble, 0);
-  ctx.lineTo(canvas.width / 2 + wobble, canvas.height);
+  ctx.moveTo(canvas.width/2 + wobble, 0);
+  ctx.lineTo(canvas.width/2 + wobble, canvas.height);
   ctx.stroke();
 
   requestAnimationFrame(draw);
