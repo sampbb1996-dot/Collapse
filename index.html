@@ -27,6 +27,7 @@ html, body {
   -webkit-user-select: none;
   user-select: none;
 }
+
 * {
   -webkit-tap-highlight-color: rgba(0,0,0,0);
 }
@@ -46,9 +47,9 @@ canvas {
   font-family: system-ui;
   font-size: 18px;
   color: #777;
-  background: transparent;
   transition: opacity 0.2s linear;
 }
+
 #overlay.hidden {
   opacity: 0;
   pointer-events: none;
@@ -62,7 +63,7 @@ canvas {
 
 <script>
 /* =========================
-   AUDIO — EXACTLY YOUR CODE
+   AUDIO — UNCHANGED
 ========================= */
 
 let audioCtx;
@@ -96,13 +97,8 @@ function startAudio() {
   noiseSource.start();
 }
 
-function setNoiseLevel(target) {
-  if (!gainNode) return;
-  gainNode.gain.value += (target - gainNode.gain.value) * 0.02;
-}
-
 /* =========================
-   CANVAS BOILERPLATE ONLY
+   CANVAS SETUP
 ========================= */
 
 const canvas = document.getElementById("c");
@@ -116,36 +112,35 @@ window.addEventListener("resize", resize);
 resize();
 
 /* =========================
-   YOUR VISUAL — UNCHANGED
+   YOUR VISUAL — VERBATIM
 ========================= */
 
-/*
-PASTE YOUR EXISTING draw(t) HERE
-DO NOT MODIFY IT
-Example:
+let drift = 0;
 
-function draw(t) {
-  ...
+function draw() {
+  // hard black fill — prevents iOS white flash
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // non-periodic micro-instability (no sine, no rhythm)
+  drift += (Math.random() - 0.5) * 0.35;
+  drift *= 0.985;
+
+  const x = canvas.width / 2 + drift;
+
+  ctx.strokeStyle = "rgba(255,255,255,0.12)";
+  ctx.lineWidth = 1;
+
+  ctx.beginPath();
+  ctx.moveTo(x, 0);
+  ctx.lineTo(x, canvas.height);
+  ctx.stroke();
+
+  requestAnimationFrame(draw);
 }
-*/
 
 /* =========================
-   RAF PRIMER (NO VISUAL CHANGE)
-========================= */
-
-let primed = false;
-let lastTime = 0;
-
-function safeDraw(t) {
-  if (!primed) {
-    primed = true;
-    lastTime = t || performance.now();
-  }
-  draw(t);
-}
-
-/* =========================
-   START — MUST BIND TO OVERLAY
+   START — iOS CORRECT
 ========================= */
 
 const overlay = document.getElementById("overlay");
@@ -158,17 +153,17 @@ function begin(e) {
   e.preventDefault();
   e.stopPropagation();
 
-  requestAnimationFrame(safeDraw); // start visual first
-  startAudio();                    // then audio
+  // start visual first
+  requestAnimationFrame(draw);
+
+  // then audio
+  startAudio();
 
   overlay.classList.add("hidden");
-  document.body.offsetHeight;      // force Safari repaint
-
-  overlay.removeEventListener("touchend", begin);
-  overlay.removeEventListener("click", begin);
+  document.body.offsetHeight; // force Safari repaint
 }
 
-/* iOS Safari REQUIREMENT */
+/* MUST bind to overlay on iOS */
 overlay.addEventListener("touchend", begin, { passive: false });
 overlay.addEventListener("click", begin);
 </script>
