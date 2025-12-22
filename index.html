@@ -2,81 +2,146 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation Threshold</title>
-
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>Initiation Threshold — Single-Variable Adaptive</title>
 <style>
   html, body {
     margin: 0;
-    padding: 0;
-    background: #0a0a0a;
     height: 100%;
+    background: #070707; /* near-black */
     overflow: hidden;
     touch-action: manipulation;
   }
-  canvas {
-    display: block;
-  }
+  canvas { display: block; }
+
+  /* Minimal audio toggle (must be user-initiated on iOS) */
   #audioBtn {
     position: fixed;
-    bottom: 10px;
     right: 10px;
-    font-size: 11px;
+    bottom: 10px;
     padding: 6px 9px;
-    background: #111;
-    color: #666;
-    border: 1px solid #222;
-    border-radius: 6px;
+    font-size: 12px;
+    background: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.50);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 7px;
     opacity: 0.35;
+    -webkit-tap-highlight-color: transparent;
   }
 </style>
 </head>
-
 <body>
 <canvas id="c"></canvas>
 <button id="audioBtn">audio</button>
 
 <script>
-/* ===============================
-   CONFIG — ONLY SPEED LAYER
-================================ */
+/* =========================================================
+   INITIATION THRESHOLD — CURRENT LOGIC
+   - Fixed cadence (no jitter).
+   - Only ONE adaptive variable: reaction window (PROMPT_MS).
+   - Calm gating: adaptation only when stable.
+   - Day-level carryover: subtle, soft reset.
+   - Constant audio noise (non-informative), optional.
+========================================================= */
 
-let PROMPT_WINDOW = 1400;   // ms (adaptive)
-const MIN_WINDOW = 900;
-const MAX_WINDOW = 1800;
+/* -------------------------
+   PERSISTENCE (day-level)
+-------------------------- */
+const STORAGE_KEY = "it_singlevar_v1";
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-const GAP = 1200;
-const JITTER = 100;
-const STEP = 50;
+function loadState() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (!s) return null;
+    return s;
+  } catch { return null; }
+}
+
+function saveState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    promptMs: PROMPT_MS,
+    lastSaved: Date.now()
+  }));
+}
+
+/* -------------------------
+   CONFIG (cadence fixed)
+-------------------------- */
+const BASELINE_MS = 1350;      // soft attractor for daily reset (not adaptation)
+let PROMPT_MS = 1400;          // ONLY adaptive variable
+const GAP_MS = 1200;           // fixed gap between prompts
+
+const MIN_PROMPT_MS = 900;
+const MAX_PROMPT_MS = 1800;
+
+const STEP_MS = 50;            // size of tighten/loosen
+const HITS_TO_TIGHTEN = 5;
+const MISSES_TO_LOOSEN = 3;
 
 /* Calm gating */
-const RT_HISTORY = 6;
-const MAX_STD = 120;
-const FREEZE_MISSES = 4;
+const RT_HISTORY_N = 6;
+const MAX_RT_STD_MS = 120;     // lower = stricter calm requirement
+const MAX_FALSESTARTS = 3;     // too many early taps => freeze adaptation
 
-/* ===============================
-   CANVAS
-================================ */
+/* Early tap handling */
+const EARLY_PENALTY_MS = 0;    // keep 0 to avoid adding another knob
 
+/* -------------------------
+   RESTORE + SOFT DAILY RESET
+-------------------------- */
+const saved = loadState();
+if (saved && typeof saved.promptMs === "number") {
+  PROMPT_MS = Math.max(MIN_PROMPT_MS, Math.min(MAX_PROMPT_MS, saved.promptMs));
+  // soft daily drift toward baseline (subtle), without changing cadence logic
+  const age = Date.now() - (saved.lastSaved || Date.now());
+  const days = Math.floor(age / DAY_MS);
+  if (days >= 1) {
+    // move slightly toward baseline once per day elapsed (capped)
+    const n = Math.min(days, 3);
+    for (let i = 0; i < n; i++) {
+      PROMPT_MS += (BASELINE_MS - PROMPT_MS) * 0.10; // gentle
+    }
+    PROMPT_MS = Math.round(PROMPT_MS / 25) * 25; // tiny quantization
+    PROMPT_MS = Math.max(MIN_PROMPT_MS, Math.min(MAX_PROMPT_MS, PROMPT_MS));
+  }
+}
+
+/* -------------------------
+   CANVAS + 1:1 FIELD
+-------------------------- */
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+const ctx = canvas.getContext("2d", { alpha: false });
+
+let W = 0, H = 0;
+let SQ = 0, ox = 0, oy = 0;
 
 function resize() {
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
+  W = canvas.width = innerWidth;
+  H = canvas.height = innerHeight;
+  SQ = Math.min(W, H);
+  ox = (W - SQ) / 2;
+  oy = (H - SQ) / 2;
+  clearAll();
 }
 addEventListener("resize", resize);
 resize();
 
-/* ===============================
-   AUDIO (OPTIONAL)
-================================ */
+function clearAll() {
+  ctx.fillStyle = "#070707";
+  ctx.fillRect(0, 0, W, H);
+}
 
+/* -------------------------
+   AUDIO (constant noise)
+-------------------------- */
 let audioCtx, noiseNode, gainNode;
 let audioOn = false;
 
 function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  // 1-second white noise buffer looped
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
@@ -86,41 +151,71 @@ function initAudio() {
   noiseNode.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.01;
+  gainNode.gain.value = 0.010; // quiet constant bed (non-informative)
 
   noiseNode.connect(gainNode).connect(audioCtx.destination);
   noiseNode.start();
 }
 
-document.getElementById("audioBtn").onclick = () => {
-  if (!audioOn) {
-    initAudio();
-    audioOn = true;
-    document.getElementById("audioBtn").remove();
-  }
+document.getElementById("audioBtn").onclick = async () => {
+  if (audioOn) return;
+  initAudio();
+  audioOn = true;
+  document.getElementById("audioBtn").remove();
 };
 
-/* ===============================
+/* -------------------------
    STATE
-================================ */
-
+-------------------------- */
 let active = false;
 let promptStart = 0;
-let timeoutId;
+let promptTimeout = null;
+let gapTimeout = null;
 
 let hitCount = 0;
 let missCount = 0;
-let recentMisses = 0;
+
 let rtHistory = [];
+let falseStarts = 0;
+let adaptFrozen = false;
 
-/* ===============================
-   UTILS
-================================ */
+/* -------------------------
+   DRAW PROMPT (faint, partial, rounded)
+   - Kept as an object (not a full-frame scaffold)
+   - Very low salience, off-white
+-------------------------- */
+function drawPrompt() {
+  clearAll();
 
-function jitter(ms) {
-  return ms + (Math.random() * 2 - 1) * JITTER;
+  // draw within the 1:1 square field only
+  const cx = ox + SQ * 0.52;
+  const cy = oy + SQ * 0.50;
+
+  // short line (not edge-to-edge)
+  const len = SQ * 0.42;
+
+  // slight fixed tilt so it doesn't become a rigid axis
+  const angle = -0.035; // ~ -2 degrees
+  const dx = Math.cos(angle) * (len / 2);
+  const dy = Math.sin(angle) * (len / 2);
+
+  // thickness is faint but visible; capped by device scale
+  const px = Math.max(1.2, SQ * 0.004);
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineWidth = px;
+  ctx.strokeStyle = "rgba(245, 244, 236, 0.10)"; // off-white, low alpha
+  ctx.beginPath();
+  ctx.moveTo(cx - dx, cy - dy);
+  ctx.lineTo(cx + dx, cy + dy);
+  ctx.stroke();
+  ctx.restore();
 }
 
+/* -------------------------
+   CALM GATING
+-------------------------- */
 function stdDev(arr) {
   const mean = arr.reduce((a,b)=>a+b,0) / arr.length;
   const variance = arr.reduce((a,b)=>a + (b-mean)**2,0) / arr.length;
@@ -128,93 +223,103 @@ function stdDev(arr) {
 }
 
 function canAdapt() {
-  if (rtHistory.length < RT_HISTORY) return false;
-  if (recentMisses > FREEZE_MISSES) return false;
-  if (stdDev(rtHistory) > MAX_STD) return false;
+  if (adaptFrozen) return false;
+  if (rtHistory.length < RT_HISTORY_N) return false;
+  if (falseStarts > MAX_FALSESTARTS) return false;
+  if (stdDev(rtHistory) > MAX_RT_STD_MS) return false;
   return true;
 }
 
-/* ===============================
-   DRAW
-================================ */
-
-function drawLine() {
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.strokeStyle = "rgba(245,245,240,0.12)";
-  ctx.lineWidth = 2;
-  ctx.lineCap = "round";
-
-  const x = canvas.width / 2 + (Math.random() - 0.5) * 4;
-  ctx.beginPath();
-  ctx.moveTo(x, canvas.height * 0.1);
-  ctx.lineTo(x, canvas.height * 0.9);
-  ctx.stroke();
+function freezeAdaptation() {
+  adaptFrozen = true;
+  // unfreeze only after a clean run of prompts (no extra knobs; deterministic)
+  // We’ll unfreeze when falseStarts has decayed to 0 AND we have a full RT history.
 }
 
-function clear() {
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-}
-
-/* ===============================
+/* -------------------------
    INPUT
-================================ */
-
+-------------------------- */
 document.body.addEventListener("pointerdown", () => {
-  if (!active) return;
+  // Tap only “counts” if prompt is active; otherwise it’s a false start
+  if (!active) {
+    falseStarts++;
+    hitCount = 0; // discourage rhythmic poking
+    if (falseStarts > MAX_FALSESTARTS) freezeAdaptation();
+    return;
+  }
 
   const rt = performance.now() - promptStart;
   rtHistory.push(rt);
-  if (rtHistory.length > RT_HISTORY) rtHistory.shift();
+  if (rtHistory.length > RT_HISTORY_N) rtHistory.shift();
 
   hitCount++;
   missCount = 0;
-  recentMisses = Math.max(0, recentMisses - 1);
 
-  if (canAdapt() && hitCount >= 5 && PROMPT_WINDOW > MIN_WINDOW) {
-    PROMPT_WINDOW -= STEP;
-    hitCount = 0;
+  // decay false starts slowly on clean hits
+  if (falseStarts > 0) falseStarts--;
+
+  // unfreeze if conditions are genuinely calm again
+  if (adaptFrozen && falseStarts === 0 && rtHistory.length >= RT_HISTORY_N && stdDev(rtHistory) <= MAX_RT_STD_MS) {
+    adaptFrozen = false;
   }
 
-  clearPrompt();
+  // Tighten only when calm + enough hits
+  if (canAdapt() && hitCount >= HITS_TO_TIGHTEN && PROMPT_MS > MIN_PROMPT_MS) {
+    PROMPT_MS = Math.max(MIN_PROMPT_MS, PROMPT_MS - STEP_MS);
+    hitCount = 0;
+    saveState();
+  }
+
+  endPrompt(); // prompt ends immediately on tap
 });
 
-/* ===============================
-   LOOP
-================================ */
-
-function showPrompt() {
+/* -------------------------
+   LOOP (fixed cadence)
+-------------------------- */
+function startPrompt() {
   active = true;
   promptStart = performance.now();
-  drawLine();
+  drawPrompt();
 
-  timeoutId = setTimeout(() => {
+  promptTimeout = setTimeout(() => {
+    // Miss
     active = false;
-    clear();
-
     missCount++;
     hitCount = 0;
-    recentMisses++;
 
-    if (canAdapt() && missCount >= 3 && PROMPT_WINDOW < MAX_WINDOW) {
-      PROMPT_WINDOW += STEP;
+    // Misses increase false start pressure too (keeps system honest)
+    falseStarts = Math.min(falseStarts + 1, MAX_FALSESTARTS + 2);
+    if (falseStarts > MAX_FALSESTARTS) freezeAdaptation();
+
+    // Loosen only when calm + enough misses
+    if (canAdapt() && missCount >= MISSES_TO_LOOSEN && PROMPT_MS < MAX_PROMPT_MS) {
+      PROMPT_MS = Math.min(MAX_PROMPT_MS, PROMPT_MS + STEP_MS);
       missCount = 0;
+      saveState();
     }
 
-    clearPrompt();
-  }, jitter(PROMPT_WINDOW));
+    endPrompt();
+  }, PROMPT_MS);
 }
 
-function clearPrompt() {
+function endPrompt() {
   active = false;
-  clear();
-  setTimeout(showPrompt, jitter(GAP));
+  clearTimeout(promptTimeout);
+  promptTimeout = null;
+
+  // Clear screen
+  clearAll();
+
+  // Fixed gap before next prompt
+  clearTimeout(gapTimeout);
+  gapTimeout = setTimeout(startPrompt, GAP_MS);
 }
 
-/* ===============================
+/* -------------------------
    START
-================================ */
-
-setTimeout(showPrompt, 1000);
+-------------------------- */
+clearAll();
+setTimeout(startPrompt, 800);
 </script>
 </body>
 </html>
