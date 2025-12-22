@@ -10,8 +10,21 @@ html, body {
   margin: 0;
   padding: 0;
   background: #000;
+  height: 100%;
   overflow: hidden;
-  touch-action: manipulation;
+}
+
+#start {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 16px 28px;
+  border-radius: 20px;
+  border: none;
+  font-size: 16px;
+  background: #eee;
+  color: #000;
 }
 
 #line {
@@ -22,25 +35,34 @@ html, body {
   height: 100%;
   background: rgba(255,255,255,0.12);
   transform: translateX(-50%);
+  display: none;
 }
 </style>
 </head>
 
 <body>
+
+<button id="start">Start</button>
 <div id="line"></div>
 
 <script>
-/* -------------------------
-   STATE
--------------------------- */
-let started = false;
 let audioCtx, osc, gain;
-const line = document.getElementById("line");
+let started = false;
 
-/* -------------------------
-   AUDIO (iOS SAFE)
--------------------------- */
-function startAudio() {
+const line = document.getElementById("line");
+const startBtn = document.getElementById("start");
+
+function startGame() {
+  if (started) return;
+  started = true;
+
+  // Remove button
+  startBtn.remove();
+
+  // Show line
+  line.style.display = "block";
+
+  // AUDIO (iOS-safe: triggered by button)
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   osc = audioCtx.createOscillator();
   gain = audioCtx.createGain();
@@ -53,32 +75,21 @@ function startAudio() {
   gain.connect(audioCtx.destination);
   osc.start();
 
-  // slow drift
+  // Subtle audio drift
   setInterval(() => {
     osc.frequency.value += (Math.random() - 0.5) * 0.2;
   }, 900);
+
+  // Line micro-instability (not flicker)
+  setInterval(() => {
+    const jitter = (Math.random() - 0.5) * 0.6;
+    line.style.transform =
+      `translateX(calc(-50% + ${jitter}px))`;
+  }, 120);
 }
 
-/* -------------------------
-   LINE MICRO-INSTABILITY
--------------------------- */
-setInterval(() => {
-  if (!started) return;
-  const jitter = (Math.random() - 0.5) * 0.6;
-  line.style.transform =
-    `translateX(calc(-50% + ${jitter}px))`;
-}, 120);
-
-/* -------------------------
-   START (FIRST TOUCH)
--------------------------- */
-function start() {
-  if (started) return;
-  started = true;
-  startAudio();
-}
-
-document.addEventListener("pointerdown", start, { once: true });
+startBtn.addEventListener("click", startGame);
 </script>
+
 </body>
 </html>
