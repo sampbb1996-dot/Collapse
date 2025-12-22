@@ -1,42 +1,82 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Initiation</title>
 
 <style>
-html, body {
-  margin: 0;
-  height: 100%;
-  background: #070707;
-  overflow: hidden;
-  touch-action: manipulation;
-}
-canvas { display:block; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+    touch-action: manipulation;
+  }
+
+  canvas {
+    display: block;
+  }
+
+  #audioBtn {
+    position: fixed;
+    bottom: 32px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 14px 22px;
+    border-radius: 20px;
+    border: none;
+    background: #eee;
+    color: #111;
+    font-size: 16px;
+  }
 </style>
 </head>
 
 <body>
 <canvas id="c"></canvas>
+<button id="audioBtn">Enable Audio</button>
 
 <script>
-const c = document.getElementById("c");
-const g = c.getContext("2d");
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
 
-function resize(){
-  c.width = innerWidth;
-  c.height = innerHeight;
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
 }
 resize();
-addEventListener("resize", resize);
+window.addEventListener("resize", resize);
 
-/* ---------- audio ---------- */
-let audioStarted = false;
-let audioCtx, osc, gain;
+// ---- VISUAL ----
+let t = 0;
 
-function startAudio(){
-  if (audioStarted) return;
-  audioStarted = true;
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // slight sub-pixel drift (NOT blinking)
+  const drift = Math.sin(t * 0.001) * 0.6;
+
+  ctx.strokeStyle = "rgba(255,255,255,0.35)";
+  ctx.lineWidth = 1;
+
+  ctx.beginPath();
+  ctx.moveTo(canvas.width / 2 + drift, 0);
+  ctx.lineTo(canvas.width / 2 + drift, canvas.height);
+  ctx.stroke();
+
+  t++;
+  requestAnimationFrame(draw);
+}
+draw();
+
+// ---- AUDIO (CORRECT iOS PATTERN) ----
+let audioCtx = null;
+let osc = null;
+let gain = null;
+
+document.getElementById("audioBtn").onclick = () => {
+  if (audioCtx) return; // prevent double start
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
@@ -44,36 +84,16 @@ function startAudio(){
   gain = audioCtx.createGain();
 
   osc.type = "sine";
-  osc.frequency.value = 180;
-  gain.gain.value = 0.06;
+  osc.frequency.value = 220; // low, neutral
+  gain.gain.value = 0.015;   // quiet
 
-  osc.connect(gain).connect(audioCtx.destination);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
   osc.start();
-}
 
-/* iOS-safe: first touch anywhere */
-document.addEventListener("touchstart", startAudio, { once:true });
-document.addEventListener("pointerdown", startAudio, { once:true });
-
-/* ---------- visual ---------- */
-let t = 0;
-function loop(){
-  t += 0.0025;
-
-  g.clearRect(0,0,c.width,c.height);
-
-  const x = c.width/2 + Math.sin(t)*1.5;
-  g.strokeStyle = "rgba(240,240,240,0.22)";
-  g.lineWidth = 1;
-
-  g.beginPath();
-  g.moveTo(x,0);
-  g.lineTo(x,c.height);
-  g.stroke();
-
-  requestAnimationFrame(loop);
-}
-loop();
+  document.getElementById("audioBtn").innerText = "Audio On";
+};
 </script>
 </body>
 </html>
