@@ -1,14 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport"
+  content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Signal</title>
+
+<style>
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+canvas {
+  position: fixed;
+  inset: 0;
+  display: block;
+}
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #777;
+  font-family: system-ui, sans-serif;
+  font-size: 18px;
+  background: transparent;
+  transition: opacity 0.2s linear;
+}
+
+#overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="c"></canvas>
+<div id="overlay">tap to begin</div>
+
 <script>
-/* ================= VISUAL (FIXED) ================= */
+/* =========================
+   AUDIO — CONTINUOUS NOISE
+   (iOS SAFE)
+========================= */
+
+let audioCtx, noiseSource, gainNode;
+let audioStarted = false;
+
+function startAudio() {
+  if (audioStarted) return;
+  audioStarted = true;
+
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  audioCtx.resume();
+
+  const size = audioCtx.sampleRate * 2;
+  const buffer = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+
+  for (let i = 0; i < size; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
+
+  noiseSource = audioCtx.createBufferSource();
+  noiseSource.buffer = buffer;
+  noiseSource.loop = true;
+
+  gainNode = audioCtx.createGain();
+  gainNode.gain.value = 0.015;
+
+  noiseSource.connect(gainNode).connect(audioCtx.destination);
+  noiseSource.start();
+}
+
+/* =========================
+   CANVAS SETUP
+========================= */
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+}
+addEventListener("resize", resize);
+resize();
+
+/* =========================
+   VISUAL STATE
+========================= */
 
 let drift = 0;
 
-function draw(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
+/* =========================
+   DRAW LOOP
+========================= */
 
-  // ultra-slow bounded drift (not oscillation)
-  drift += (Math.random() - 0.5) * 0.4;
-  drift *= 0.98; // damping
+function draw() {
+  /* HARD black fill — prevents iOS white flash */
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  /* Non-periodic micro-instability */
+  drift += (Math.random() - 0.5) * 0.35;
+  drift *= 0.985;
 
   const x = canvas.width / 2 + drift;
 
@@ -22,4 +130,30 @@ function draw(){
 
   requestAnimationFrame(draw);
 }
+
+/* =========================
+   START (USER GESTURE SAFE)
+========================= */
+
+let started = false;
+const overlay = document.getElementById("overlay");
+
+function begin(e) {
+  if (started) return;
+  started = true;
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  requestAnimationFrame(draw);
+  startAudio();
+
+  overlay.classList.add("hidden");
+}
+
+window.addEventListener("touchend", begin, { passive: false });
+window.addEventListener("click", begin);
 </script>
+
+</body>
+</html>
