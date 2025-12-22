@@ -2,338 +2,196 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-<title>Initiation Threshold — Φ (Invariant / Math-lean)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Initiation Threshold</title>
+
 <style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    height: 100%;
-    background: #0b0b0b; /* near-black */
-    overflow: hidden;
-    touch-action: manipulation;
-  }
-  canvas { display: block; }
-  #audioBtn{
-    position: fixed;
-    right: 10px;
-    bottom: 10px;
-    padding: 6px 10px;
-    font-size: 12px;
-    background: rgba(18,18,18,0.92);
-    color: rgba(230,230,230,0.55);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 8px;
-    opacity: 0.33;
-  }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #0a0a0a;
+  height: 100%;
+  overflow: hidden;
+  touch-action: manipulation;
+}
+canvas {
+  display: block;
+}
+#audioBtn {
+  position: fixed;
+  bottom: 8px;
+  right: 8px;
+  font-size: 11px;
+  padding: 5px 8px;
+  background: #111;
+  color: #666;
+  border: 1px solid #222;
+  border-radius: 5px;
+  opacity: 0.25;
+}
 </style>
 </head>
+
 <body>
 <canvas id="c"></canvas>
 <button id="audioBtn">audio</button>
 
 <script>
-/* =========================================================
-   Φ — INVARIANT / MATH-LEAN (NO SYMBOLS)
-   - Only adaptive parameter: REACTION_WINDOW_MS
-   - Cadence fixed (GAP_MS constant)
-   - Φ uses a single "admissibility" invariant:
-       score = meanRT + λ*stdRT + μ*recentMissRate
-     Tighten only if score improves while calm.
-   - No fades/drift/rotation. Straight line stimulus only.
-========================================================= */
+/* =========================
+   CONFIG (ONLY SPEED ADAPTS)
+========================= */
 
-const STORAGE_KEY = "phi_game_invariant_v1";
-
-/* -------------------------
-   FIXED CADENCE
--------------------------- */
-const GAP_MS = 1200;                 // fixed external rhythm
-let REACTION_WINDOW_MS = 1400;       // ONLY adaptive variable
-
-const MIN_WINDOW = 900;
+let REACTION_WINDOW = 1400;   // ms
+const MIN_WINDOW = 850;
 const MAX_WINDOW = 1800;
-const STEP_MS   = 50;
 
-/* -------------------------
-   Φ GOVERNANCE (invariant-based)
--------------------------- */
-const RT_HISTORY = 7;                // short window of recent RTs
-const MISS_HISTORY = 10;             // recent misses for miss-rate term
-const MAX_RT_STD = 120;              // calm gate
-const CALM_MISS_WINDOW = 5;          // if too many misses recently, freeze propagation
+const GAP = 1200;
+const JITTER = 120;
+const STEP = 50;
 
-// Invariant weights (math-lean, not user-facing)
-const LAMBDA_STD = 0.75;             // penalty on variability
-const MU_MISS    = 220;              // penalty on recent miss-rate (ms units)
-const IMPROVE_EPS = 8;               // ms improvement needed to count (prevents noise)
-// How often to allow a step, even if invariant improves (prevents rapid ratcheting)
-const MIN_STEP_INTERVAL_MS = 6000;
+/* Calm gating */
+const HISTORY = 6;
+const MAX_STD = 120;
 
-/* -------------------------
-   DAY-LEVEL CARRYOVER (subtle)
--------------------------- */
-function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
+/* =========================
+   CANVAS
+========================= */
 
-function loadState(){
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)); }
-  catch { return null; }
-}
-function saveState(){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    REACTION_WINDOW_MS,
-    lastSaved: Date.now()
-  }));
-}
-
-const saved = loadState();
-if (saved && typeof saved.REACTION_WINDOW_MS === "number") {
-  // tiny soft reset upward: avoids waking up into a too-tight state
-  REACTION_WINDOW_MS = clamp(saved.REACTION_WINDOW_MS + 25, MIN_WINDOW, MAX_WINDOW);
-}
-
-/* -------------------------
-   CANVAS (1:1 centered field)
--------------------------- */
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d", { alpha: false });
+const ctx = canvas.getContext("2d");
 
-let W=0, H=0, S=0, ox=0, oy=0;
-function resize(){
-  W = canvas.width = innerWidth;
-  H = canvas.height = innerHeight;
-  S = Math.min(W, H);
-  ox = (W - S) / 2;
-  oy = (H - S) / 2;
+function resize() {
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
 }
-addEventListener("resize", resize, { passive:true });
+addEventListener("resize", resize);
 resize();
 
-const BG = "#0b0b0b";
-const OFFWHITE = "rgba(245,240,230,0.18)";  // faint, constant
-const LINE_W = 2.0;                          // constant width
-const LINE_MARGIN = 0.00;                    // 0 => full-span inside square (no box artifacts)
+/* =========================
+   AUDIO (OPTIONAL)
+========================= */
 
-function clearAll(){
-  ctx.fillStyle = BG;
-  ctx.fillRect(0, 0, W, H);
-}
-clearAll();
-
-function drawPrompt(){
-  // background
-  ctx.fillStyle = BG;
-  ctx.fillRect(0, 0, W, H);
-
-  // clip to square
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(ox, oy, S, S);
-  ctx.clip();
-
-  // straight vertical line spanning the square
-  const x = ox + S/2;
-  const y1 = oy + S*LINE_MARGIN;
-  const y2 = oy + S*(1 - LINE_MARGIN);
-
-  ctx.strokeStyle = OFFWHITE;
-  ctx.lineWidth = LINE_W;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(x, y1);
-  ctx.lineTo(x, y2);
-  ctx.stroke();
-
-  ctx.restore();
-}
-
-/* -------------------------
-   AUDIO (optional, quiet, mapped to active state)
--------------------------- */
+let audioCtx, noiseNode, gainNode;
 let audioOn = false;
-let audioCtx, noiseSrc, gainNode, filterNode;
 
-function initAudio(){
+function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
-  for (let i=0;i<data.length;i++) data[i] = Math.random()*2 - 1;
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
 
-  noiseSrc = audioCtx.createBufferSource();
-  noiseSrc.buffer = buffer;
-  noiseSrc.loop = true;
-
-  filterNode = audioCtx.createBiquadFilter();
-  filterNode.type = "lowpass";
-  filterNode.frequency.value = 650;
+  noiseNode = audioCtx.createBufferSource();
+  noiseNode.buffer = buffer;
+  noiseNode.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.0;
+  gainNode.gain.value = 0.01;
 
-  noiseSrc.connect(filterNode).connect(gainNode).connect(audioCtx.destination);
-  noiseSrc.start();
-}
-async function enableAudio(){
-  if (audioOn) return;
-  initAudio();
-  audioOn = true;
-  if (audioCtx && audioCtx.state === "suspended") await audioCtx.resume();
-  document.getElementById("audioBtn").remove();
+  noiseNode.connect(gainNode).connect(audioCtx.destination);
+  noiseNode.start();
 }
 
-document.getElementById("audioBtn").addEventListener("click", enableAudio);
+document.getElementById("audioBtn").onclick = () => {
+  if (!audioOn) {
+    initAudio();
+    audioOn = true;
+    document.getElementById("audioBtn").remove();
+  }
+};
 
-function setGainTarget(v){
-  if (!audioOn || !gainNode) return;
-  // quiet cap
-  const target = clamp(v, 0, 0.010);
-  const g = gainNode.gain.value;
-  gainNode.gain.value = g + (target - g) * 0.06;
-}
+/* =========================
+   STATE
+========================= */
 
-/* -------------------------
-   Φ STATE
--------------------------- */
 let active = false;
-let promptStart = 0;
-let timeoutId = 0;
+let promptTime = 0;
+let rtHistory = [];
 
-let rtHist = [];              // last RTs (ms)
-let missHist = [];            // last misses (0/1)
-let recentMisses = 0;         // count in last CALM_MISS_WINDOW (approx)
-
-let baselineScore = null;     // latent reference for "improvement"
-let lastStepTime = 0;
-
-/* -------------------------
-   MATH HELPERS
--------------------------- */
-function mean(arr){
-  return arr.reduce((a,b)=>a+b,0)/arr.length;
-}
-function std(arr){
-  const m = mean(arr);
-  const v = arr.reduce((a,b)=>a + (b-m)**2,0)/arr.length;
-  return Math.sqrt(v);
-}
-function missRate(){
-  if (missHist.length === 0) return 0;
-  return missHist.reduce((a,b)=>a+b,0) / missHist.length; // 0..1
-}
-
-/* Φ admissibility gate (calm) */
-function calmEnough(){
-  if (rtHist.length < RT_HISTORY) return false;
-  if (recentMisses > CALM_MISS_WINDOW) return false;
-  if (std(rtHist) > MAX_RT_STD) return false;
-  return true;
-}
-
-/* The invariant score we try to improve (lower is better) */
-function currentScore(){
-  const m = mean(rtHist);
-  const s = std(rtHist);
-  const mr = missRate();
-  return m + LAMBDA_STD*s + MU_MISS*mr;
-}
-
-/* Φ propagation rule */
-function canStepNow(){
-  const now = Date.now();
-  if (now - lastStepTime < MIN_STEP_INTERVAL_MS) return false;
-  return true;
-}
-
-/* -------------------------
+/* =========================
    INPUT
--------------------------- */
+========================= */
+
 document.body.addEventListener("pointerdown", () => {
   if (!active) return;
 
-  const rt = performance.now() - promptStart;
+  const rt = performance.now() - promptTime;
+  rtHistory.push(rt);
+  if (rtHistory.length > HISTORY) rtHistory.shift();
 
-  // record hit
-  rtHist.push(rt);
-  if (rtHist.length > RT_HISTORY) rtHist.shift();
-
-  missHist.push(0);
-  if (missHist.length > MISS_HISTORY) missHist.shift();
-
-  // decay recent miss counter a bit on hits
-  recentMisses = Math.max(0, recentMisses - 1);
-
-  // establish baseline only when we have enough data and calm
-  if (baselineScore === null && calmEnough()) {
-    baselineScore = currentScore();
+  if (canAdapt() && rt < REACTION_WINDOW && REACTION_WINDOW > MIN_WINDOW) {
+    REACTION_WINDOW -= STEP;
   }
 
-  // Φ: tighten only if calm + score improved beyond epsilon + step interval ok
-  if (baselineScore !== null && calmEnough() && canStepNow()) {
-    const sc = currentScore();
-    if ((baselineScore - sc) >= IMPROVE_EPS && REACTION_WINDOW_MS > MIN_WINDOW) {
-      REACTION_WINDOW_MS = clamp(REACTION_WINDOW_MS - STEP_MS, MIN_WINDOW, MAX_WINDOW);
-      lastStepTime = Date.now();
-      saveState();
-      // update baseline slowly toward current (prevents ratchet from one lucky run)
-      baselineScore = baselineScore*0.7 + sc*0.3;
-    } else {
-      // mild baseline tracking when calm, even if no step
-      baselineScore = baselineScore*0.9 + sc*0.1;
-    }
-  }
+  clearPrompt();
+});
 
-  endPrompt();
-}, { passive:true });
+/* =========================
+   CALM GATING
+========================= */
 
-/* -------------------------
-   LOOP (fixed cadence; only window adapts)
--------------------------- */
-function startPrompt(){
+function stdDev(arr) {
+  const mean = arr.reduce((a,b)=>a+b,0) / arr.length;
+  return Math.sqrt(arr.reduce((a,b)=>a + (b-mean)**2,0) / arr.length);
+}
+
+function canAdapt() {
+  if (rtHistory.length < HISTORY) return false;
+  if (stdDev(rtHistory) > MAX_STD) return false;
+  return true;
+}
+
+/* =========================
+   VISUAL PROMPT
+========================= */
+
+function drawSignal() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+
+  ctx.strokeStyle = "rgba(235,235,235,0.08)";
+  ctx.lineWidth = 1.2;
+  ctx.lineCap = "round";
+
+  ctx.beginPath();
+  ctx.moveTo(cx - canvas.width * 0.25, cy);
+  ctx.lineTo(cx + canvas.width * 0.25, cy);
+  ctx.stroke();
+}
+
+/* =========================
+   LOOP
+========================= */
+
+function jitter(ms) {
+  return ms + (Math.random() * 2 - 1) * JITTER;
+}
+
+function showPrompt() {
   active = true;
-  promptStart = performance.now();
-  drawPrompt();
-  setGainTarget(0.008); // quiet presence while active
+  promptTime = performance.now();
+  drawSignal();
 
-  clearTimeout(timeoutId);
-  timeoutId = setTimeout(() => {
-    // miss
-    active = false;
-
-    // record miss
-    missHist.push(1);
-    if (missHist.length > MISS_HISTORY) missHist.shift();
-    recentMisses++;
-
-    // Φ: loosen only if calm enough and step interval ok
-    // (note: calmEnough uses RT history; misses typically freeze it anyway)
-    if (baselineScore !== null && calmEnough() && canStepNow() && REACTION_WINDOW_MS < MAX_WINDOW) {
-      const sc = currentScore();
-      // loosen when score is meaningfully worse than baseline (symmetry intentionally broken)
-      if ((sc - baselineScore) >= (IMPROVE_EPS * 1.3)) {
-        REACTION_WINDOW_MS = clamp(REACTION_WINDOW_MS + STEP_MS, MIN_WINDOW, MAX_WINDOW);
-        lastStepTime = Date.now();
-        saveState();
-        baselineScore = baselineScore*0.8 + sc*0.2;
-      }
+  setTimeout(() => {
+    if (active) {
+      active = false;
+      clearPrompt();
     }
-
-    endPrompt();
-  }, REACTION_WINDOW_MS);
+  }, jitter(REACTION_WINDOW));
 }
 
-function endPrompt(){
+function clearPrompt() {
   active = false;
-  clearAll();
-  setGainTarget(0.0);
-
-  clearTimeout(timeoutId);
-  timeoutId = setTimeout(startPrompt, GAP_MS);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  setTimeout(showPrompt, jitter(GAP));
 }
 
-/* -------------------------
+/* =========================
    START
--------------------------- */
-setTimeout(startPrompt, 900);
+========================= */
+
+setTimeout(showPrompt, 1000);
 </script>
 </body>
 </html>
