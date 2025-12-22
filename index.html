@@ -3,195 +3,102 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation Threshold</title>
+<title>Initiation</title>
 
 <style>
 html, body {
   margin: 0;
   padding: 0;
-  background: #0a0a0a;
-  height: 100%;
+  background: #050505;
   overflow: hidden;
   touch-action: manipulation;
 }
+
 canvas {
   display: block;
-}
-#audioBtn {
-  position: fixed;
-  bottom: 8px;
-  right: 8px;
-  font-size: 11px;
-  padding: 5px 8px;
-  background: #111;
-  color: #666;
-  border: 1px solid #222;
-  border-radius: 5px;
-  opacity: 0.25;
 }
 </style>
 </head>
 
 <body>
 <canvas id="c"></canvas>
-<button id="audioBtn">audio</button>
 
 <script>
-/* =========================
-   CONFIG (ONLY SPEED ADAPTS)
-========================= */
-
-let REACTION_WINDOW = 1400;   // ms
-const MIN_WINDOW = 850;
-const MAX_WINDOW = 1800;
-
-const GAP = 1200;
-const JITTER = 120;
-const STEP = 50;
-
-/* Calm gating */
-const HISTORY = 6;
-const MAX_STD = 120;
-
-/* =========================
-   CANVAS
-========================= */
-
+/* ===============================
+   CANVAS SETUP
+================================ */
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 function resize() {
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
 }
-addEventListener("resize", resize);
+window.addEventListener("resize", resize);
 resize();
 
-/* =========================
-   AUDIO (OPTIONAL)
-========================= */
+/* ===============================
+   CORE STATE (ONLY ONE VARIABLE)
+================================ */
+let reactionWindow = 0.45; // hidden, adaptive
+let lastTap = null;
 
-let audioCtx, noiseNode, gainNode;
-let audioOn = false;
+/* ===============================
+   LINE PARAMETERS (FIXED)
+================================ */
+const baseX = () => canvas.width / 2;
+const color = "rgba(235,235,225,0.12)";
+const width = 1;
 
-function initAudio() {
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+/* degenerate spiral */
+let t = 0;
 
-  noiseNode = audioCtx.createBufferSource();
-  noiseNode.buffer = buffer;
-  noiseNode.loop = true;
-
-  gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.01;
-
-  noiseNode.connect(gainNode).connect(audioCtx.destination);
-  noiseNode.start();
-}
-
-document.getElementById("audioBtn").onclick = () => {
-  if (!audioOn) {
-    initAudio();
-    audioOn = true;
-    document.getElementById("audioBtn").remove();
-  }
-};
-
-/* =========================
-   STATE
-========================= */
-
-let active = false;
-let promptTime = 0;
-let rtHistory = [];
-
-/* =========================
+/* ===============================
    INPUT
-========================= */
+================================ */
+canvas.addEventListener("pointerdown", () => {
+  const now = performance.now();
 
-document.body.addEventListener("pointerdown", () => {
-  if (!active) return;
+  if (lastTap !== null) {
+    const dt = (now - lastTap) / 1000;
 
-  const rt = performance.now() - promptTime;
-  rtHistory.push(rt);
-  if (rtHistory.length > HISTORY) rtHistory.shift();
+    if (dt < reactionWindow) {
+      reactionWindow *= 0.985; // tighten
+    } else {
+      reactionWindow *= 1.015; // loosen
+    }
 
-  if (canAdapt() && rt < REACTION_WINDOW && REACTION_WINDOW > MIN_WINDOW) {
-    REACTION_WINDOW -= STEP;
+    reactionWindow = Math.max(0.15, Math.min(0.9, reactionWindow));
   }
 
-  clearPrompt();
+  lastTap = now;
 });
 
-/* =========================
-   CALM GATING
-========================= */
-
-function stdDev(arr) {
-  const mean = arr.reduce((a,b)=>a+b,0) / arr.length;
-  return Math.sqrt(arr.reduce((a,b)=>a + (b-mean)**2,0) / arr.length);
-}
-
-function canAdapt() {
-  if (rtHistory.length < HISTORY) return false;
-  if (stdDev(rtHistory) > MAX_STD) return false;
-  return true;
-}
-
-/* =========================
-   VISUAL PROMPT
-========================= */
-
-function drawSignal() {
+/* ===============================
+   DRAW LOOP
+================================ */
+function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const cx = canvas.width / 2;
-  const cy = canvas.height / 2;
+  t += 0.0006; // imperceptible drift
 
-  ctx.strokeStyle = "rgba(235,235,235,0.08)";
-  ctx.lineWidth = 1.2;
-  ctx.lineCap = "round";
+  const drift =
+    Math.sin(t) * 0.4 +
+    Math.sin(t * 0.37) * 0.25;
+
+  const x = baseX() + drift;
 
   ctx.beginPath();
-  ctx.moveTo(cx - canvas.width * 0.25, cy);
-  ctx.lineTo(cx + canvas.width * 0.25, cy);
+  ctx.moveTo(x, 0);
+  ctx.lineTo(x, canvas.height);
+  ctx.lineWidth = width;
+  ctx.strokeStyle = color;
   ctx.stroke();
+
+  requestAnimationFrame(draw);
 }
 
-/* =========================
-   LOOP
-========================= */
-
-function jitter(ms) {
-  return ms + (Math.random() * 2 - 1) * JITTER;
-}
-
-function showPrompt() {
-  active = true;
-  promptTime = performance.now();
-  drawSignal();
-
-  setTimeout(() => {
-    if (active) {
-      active = false;
-      clearPrompt();
-    }
-  }, jitter(REACTION_WINDOW));
-}
-
-function clearPrompt() {
-  active = false;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  setTimeout(showPrompt, jitter(GAP));
-}
-
-/* =========================
-   START
-========================= */
-
-setTimeout(showPrompt, 1000);
+draw();
 </script>
 </body>
 </html>
