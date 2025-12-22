@@ -1,37 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Signal</title>
-
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #000;
-  overflow: hidden;
-  height: 100%;
-  touch-action: none;
-}
-canvas {
-  display: block;
-}
-#overlay {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #888;
-  font-family: system-ui, sans-serif;
-  font-size: 18px;
-  z-index: 10;
+html,body{margin:0;padding:0;background:#000;overflow:hidden;height:100%;touch-action:none}
+canvas{display:block}
+#overlay{
+  position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  color:#888;font-family:system-ui,sans-serif;font-size:18px;z-index:10
 }
 </style>
 </head>
-
 <body>
+
 <div id="overlay">tap to begin</div>
 <canvas id="c"></canvas>
 
@@ -40,72 +23,63 @@ const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 const overlay = document.getElementById("overlay");
 
-function resize() {
+function resize(){
   canvas.width = innerWidth;
   canvas.height = innerHeight;
 }
 addEventListener("resize", resize);
 resize();
 
-let audioCtx, noiseNode, gainNode;
+let audioCtx, noise, gain;
 let started = false;
-
-// entropy tracking
 let lastX = null;
 let entropy = 0;
 
-function start() {
-  if (started) return;
+function start(){
+  if(started) return;
   started = true;
   overlay.remove();
 
-  // ---- AUDIO (guaranteed iOS-safe) ----
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  audioCtx.resume(); // ✅ iOS Safari unlock
 
-  const bufferSize = audioCtx.sampleRate * 2;
-  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
-  for (let i = 0; i < bufferSize; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
+  for(let i=0;i<data.length;i++) data[i] = Math.random()*2-1;
 
-  noiseNode = audioCtx.createBufferSource();
-  noiseNode.buffer = buffer;
-  noiseNode.loop = true;
+  noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  noise.loop = true;
 
-  gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.02;
+  gain = audioCtx.createGain();
+  gain.gain.value = 0.02;
 
-  noiseNode.connect(gainNode).connect(audioCtx.destination);
-  noiseNode.start();
+  noise.connect(gain).connect(audioCtx.destination);
+  noise.start();
 
   draw();
 }
 
-document.body.addEventListener("pointerdown", e => {
+document.body.addEventListener("pointerdown", e=>{
   start();
-  if (lastX !== null) {
+  if(lastX !== null){
     const dx = Math.abs(e.clientX - lastX);
     entropy = entropy * 0.95 + dx * 0.001;
   }
   lastX = e.clientX;
 });
 
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  // adaptive audio drift
-  const targetGain = 0.015 + entropy * 0.02;
-  gainNode.gain.value += (targetGain - gainNode.gain.value) * 0.01;
+  const target = 0.015 + entropy * 0.02;
+  gain.gain.value += (target - gain.gain.value) * 0.01;
 
-  // line instability
-  const wobble = (Math.random() - 0.5) * entropy * 40;
+  const wobble = (Math.random()-0.5) * entropy * 40;
   ctx.strokeStyle = "rgba(255,255,255,0.15)";
-  ctx.lineWidth = 1;
-
   ctx.beginPath();
-  ctx.moveTo(canvas.width / 2 + wobble, 0);
-  ctx.lineTo(canvas.width / 2 + wobble, canvas.height);
+  ctx.moveTo(canvas.width/2 + wobble, 0);
+  ctx.lineTo(canvas.width/2 + wobble, canvas.height);
   ctx.stroke();
 
   requestAnimationFrame(draw);
