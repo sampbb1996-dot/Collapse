@@ -4,100 +4,114 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Signal</title>
+
 <style>
-html,body{margin:0;padding:0;background:#000;overflow:hidden;height:100%;touch-action:none}
-canvas{display:block}
-#overlay{
-  position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
-  color:#888;font-family:system-ui,sans-serif;font-size:18px;z-index:10;
-  -webkit-user-select:none; user-select:none;
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  height: 100%;
+  overflow: hidden;
+  touch-action: none;
+}
+canvas { display: block; }
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #777;
+  font-family: system-ui, sans-serif;
+  font-size: 18px;
 }
 </style>
 </head>
+
 <body>
+
 <div id="overlay">tap to begin</div>
 <canvas id="c"></canvas>
+
+<!-- iOS audio unlock -->
+<audio id="unlock" playsinline></audio>
 
 <script>
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 const overlay = document.getElementById("overlay");
+const unlock = document.getElementById("unlock");
 
-function resize(){ canvas.width = innerWidth; canvas.height = innerHeight; }
-addEventListener("resize", resize); resize();
-
-let audioCtx=null, noise=null, gain=null;
-let started=false;
-let lastX=null, entropy=0;
-
-function makeNoiseBuffer(ctx){
-  const len = Math.floor(ctx.sampleRate * 2);
-  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-  const data = buf.getChannelData(0);
-  for (let i=0;i<len;i++) data[i] = Math.random()*2-1;
-  return buf;
+function resize() {
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
 }
+addEventListener("resize", resize);
+resize();
 
-async function start(){
+let audioCtx, osc, gain;
+let started = false;
+let entropy = 0;
+let lastX = null;
+
+async function start() {
   if (started) return;
   started = true;
   overlay.remove();
 
+  /* 🔓 iOS SPEAKER UNLOCK */
+  unlock.src =
+    "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=";
+  await unlock.play();
+
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  await audioCtx.resume();
 
-  // ✅ iOS: wait for resume to COMPLETE inside the gesture
-  if (audioCtx.state !== "running") {
-    try { await audioCtx.resume(); } catch (e) {}
-  }
-
-  // ✅ “Prime” the output (tiny blip) — helps on some iOS versions
-  const prime = audioCtx.createOscillator();
-  const primeGain = audioCtx.createGain();
-  primeGain.gain.value = 0.0001;
-  prime.connect(primeGain).connect(audioCtx.destination);
-  prime.start();
-  prime.stop(audioCtx.currentTime + 0.02);
+  /* iOS-safe noise substitute */
+  osc = audioCtx.createOscillator();
+  osc.type = "sawtooth";
+  osc.frequency.value = 120;
 
   gain = audioCtx.createGain();
-  gain.gain.value = 0.02;
+  gain.gain.value = 0.01;
 
-  noise = audioCtx.createBufferSource();
-  noise.buffer = makeNoiseBuffer(audioCtx);
-  noise.loop = true;
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
 
-  noise.connect(gain).connect(audioCtx.destination);
-  noise.start();
-
-  draw();
+  requestAnimationFrame(draw);
 }
 
-// Use touch + click (pointer can be unreliable on iOS)
-overlay.addEventListener("touchstart", (e)=>{ e.preventDefault(); start(); }, {passive:false});
+overlay.addEventListener("touchstart", e => {
+  e.preventDefault();
+  start();
+}, { passive: false });
+
 overlay.addEventListener("click", start);
 
-document.body.addEventListener("touchmove", (e)=>{
-  const t = e.touches && e.touches[0];
+document.addEventListener("touchmove", e => {
+  const t = e.touches[0];
   if (!t) return;
+
   if (lastX !== null) {
     const dx = Math.abs(t.clientX - lastX);
-    entropy = entropy * 0.95 + dx * 0.001;
+    entropy = entropy * 0.95 + dx * 0.002;
   }
   lastX = t.clientX;
-}, {passive:true});
+}, { passive: true });
 
-function draw(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  if (gain) {
-    const target = 0.015 + entropy * 0.02;
-    gain.gain.value += (target - gain.gain.value) * 0.01;
-  }
+  const targetGain = 0.008 + entropy * 0.03;
+  gain.gain.value += (targetGain - gain.gain.value) * 0.02;
 
-  const wobble = (Math.random()-0.5) * entropy * 40;
+  const wobble = (Math.random() - 0.5) * entropy * 50;
   ctx.strokeStyle = "rgba(255,255,255,0.15)";
+  ctx.lineWidth = 1;
+
   ctx.beginPath();
-  ctx.moveTo(canvas.width/2 + wobble, 0);
-  ctx.lineTo(canvas.width/2 + wobble, canvas.height);
+  ctx.moveTo(canvas.width / 2 + wobble, 0);
+  ctx.lineTo(canvas.width / 2 + wobble, canvas.height);
   ctx.stroke();
 
   requestAnimationFrame(draw);
