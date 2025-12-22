@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
 html, body {
@@ -11,7 +11,6 @@ html, body {
   background: #070707;
   overflow: hidden;
 
-  /* iOS hard disable */
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -20,21 +19,34 @@ html, body {
 
 canvas {
   display: block;
-  touch-action: none;
+}
+
+#audioBtn {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 14px 22px;
+  font-size: 15px;
+  border-radius: 18px;
+  border: none;
+  background: #f0f0f0;
+  color: #111;
 }
 </style>
 </head>
 
 <body>
+<button id="audioBtn">Enable Audio</button>
 <canvas id="c"></canvas>
 
 <script>
-/* ---------- iOS gesture kill ---------- */
+/* --------- iOS kill defaults --------- */
 ["touchstart","touchmove","touchend"].forEach(t =>
   document.addEventListener(t, e => e.preventDefault(), { passive:false })
 );
 
-/* ---------- canvas ---------- */
+/* --------- canvas --------- */
 const c = document.getElementById("c");
 const ctx = c.getContext("2d");
 
@@ -45,12 +57,34 @@ function resize(){
 resize();
 addEventListener("resize", resize);
 
-/* ---------- state ---------- */
-let contact = false;
-let stability = 0;      // slow-moving internal score
-let target = 0;         // where stability wants to go
+/* --------- audio --------- */
+let audioCtx, noise;
+document.getElementById("audioBtn").onclick = () => {
+  audioCtx = new AudioContext();
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.02;
 
-/* ---------- input ---------- */
+  noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  noise.loop = true;
+
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0.12;
+
+  noise.connect(gain).connect(audioCtx.destination);
+  noise.start();
+
+  document.getElementById("audioBtn").remove();
+};
+
+/* --------- state --------- */
+let contact = false;
+let stability = 0;
+let target = 0;
+let t = 0;
+
+/* --------- input --------- */
 c.addEventListener("pointerdown", () => {
   contact = true;
   target = 1;
@@ -61,23 +95,26 @@ c.addEventListener("pointerup", () => {
   target = 0;
 });
 
-/* ---------- loop ---------- */
+/* --------- loop --------- */
 function loop(){
-  // slow, non-arbitrary adaptation
-  stability += (target - stability) * 0.002;
+  t += 0.003;
+
+  // very slow adaptation (macro only)
+  stability += (target - stability) * 0.001;
 
   ctx.clearRect(0,0,c.width,c.height);
 
-  // line properties
-  const x = c.width / 2;
-  const alpha = 0.05 + stability * 0.35;
-  const jitter = (1 - stability) * 1.5;
+  const x =
+    c.width / 2 +
+    Math.sin(t) * (1 - stability) * 1.2;
+
+  const alpha = 0.06 + stability * 0.3;
 
   ctx.strokeStyle = `rgba(240,240,240,${alpha})`;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(x + (Math.random()-0.5)*jitter, 0);
-  ctx.lineTo(x + (Math.random()-0.5)*jitter, c.height);
+  ctx.moveTo(x, 0);
+  ctx.lineTo(x, c.height);
   ctx.stroke();
 
   requestAnimationFrame(loop);
