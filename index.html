@@ -5,24 +5,24 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Signal</title>
 <style>
-html,body{
-  margin:0;
-  padding:0;
-  background:#000;
-  height:100%;
-  overflow:hidden;
-  touch-action:none;
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  height: 100%;
+  overflow: hidden;
+  touch-action: none;
 }
-canvas{display:block}
-#overlay{
-  position:fixed;
-  inset:0;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  color:#777;
-  font-family:system-ui,sans-serif;
-  font-size:18px;
+canvas { display: block; }
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #777;
+  font-family: system-ui, sans-serif;
+  font-size: 18px;
 }
 </style>
 </head>
@@ -30,95 +30,112 @@ canvas{display:block}
 
 <div id="overlay">tap to begin</div>
 <canvas id="c"></canvas>
-<audio id="unlock" playsinline></audio>
+<audio id="noise" loop playsinline></audio>
 
 <script>
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 const overlay = document.getElementById("overlay");
-const unlock = document.getElementById("unlock");
+const noise = document.getElementById("noise");
 
-function resize(){
+function resize() {
   canvas.width = innerWidth;
   canvas.height = innerHeight;
 }
 addEventListener("resize", resize);
 resize();
 
-let audioCtx = null;
-let osc = null;
-let gain = null;
+/* ---------- NOISE GENERATION ---------- */
+function makeNoiseWav(seconds = 2, sampleRate = 44100) {
+  const length = seconds * sampleRate;
+  const buffer = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    buffer[i] = Math.random() * 2 - 1;
+  }
 
+  const pcm = new Int16Array(length);
+  for (let i = 0; i < length; i++) {
+    pcm[i] = buffer[i] * 32767;
+  }
+
+  const wav = new Uint8Array(44 + pcm.length * 2);
+  const view = new DataView(wav.buffer);
+
+  function writeString(o, s) {
+    for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i));
+  }
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + pcm.length * 2, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, pcm.length * 2, true);
+
+  for (let i = 0; i < pcm.length; i++) {
+    view.setInt16(44 + i * 2, pcm[i], true);
+  }
+
+  return URL.createObjectURL(new Blob([wav], { type: "audio/wav" }));
+}
+
+/* ---------- STATE ---------- */
+let started = false;
 let entropy = 0;
 let lastX = null;
-let running = false;
 
-/* 🔥 HARD RESET AUDIO (required on iOS) */
-async function initAudio(){
-  if (audioCtx) {
-    try { audioCtx.close(); } catch {}
-    audioCtx = null;
-  }
+/* ---------- START ---------- */
+async function start() {
+  if (started) return;
+  started = true;
+  overlay.remove();
 
-  unlock.src =
-    "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=";
-  await unlock.play();
+  noise.src = makeNoiseWav();
+  noise.volume = 0.02;
+  await noise.play();
 
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  await audioCtx.resume();
-
-  osc = audioCtx.createOscillator();
-  osc.type = "sawtooth";
-  osc.frequency.value = 110;
-
-  gain = audioCtx.createGain();
-  gain.gain.value = 0.008;
-
-  osc.connect(gain).connect(audioCtx.destination);
-  osc.start();
+  requestAnimationFrame(draw);
 }
 
-async function start(){
-  overlay.style.display = "none";
-  await initAudio();
-
-  if (!running) {
-    running = true;
-    requestAnimationFrame(draw);
-  }
-}
-
-overlay.addEventListener("touchstart", e=>{
+overlay.addEventListener("touchstart", e => {
   e.preventDefault();
   start();
-},{passive:false});
+}, { passive: false });
 
 overlay.addEventListener("click", start);
 
-document.addEventListener("touchmove", e=>{
+document.addEventListener("touchmove", e => {
   const t = e.touches[0];
   if (!t) return;
 
-  if (lastX !== null){
+  if (lastX !== null) {
     const dx = Math.abs(t.clientX - lastX);
-    entropy = entropy * 0.95 + dx * 0.002;
+    entropy = entropy * 0.95 + dx * 0.0015;
   }
   lastX = t.clientX;
-},{passive:true});
+}, { passive: true });
 
-function draw(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
+/* ---------- DRAW ---------- */
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  if (gain){
-    const target = 0.006 + entropy * 0.03;
-    gain.gain.value += (target - gain.gain.value) * 0.02;
-  }
+  const targetVolume = 0.015 + entropy * 0.04;
+  noise.volume += (targetVolume - noise.volume) * 0.02;
 
-  const wobble = (Math.random()-0.5) * entropy * 50;
+  const wobble = (Math.random() - 0.5) * entropy * 50;
   ctx.strokeStyle = "rgba(255,255,255,0.15)";
+  ctx.lineWidth = 1;
+
   ctx.beginPath();
-  ctx.moveTo(canvas.width/2 + wobble, 0);
-  ctx.lineTo(canvas.width/2 + wobble, canvas.height);
+  ctx.moveTo(canvas.width / 2 + wobble, 0);
+  ctx.lineTo(canvas.width / 2 + wobble, canvas.height);
   ctx.stroke();
 
   requestAnimationFrame(draw);
