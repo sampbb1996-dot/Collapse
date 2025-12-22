@@ -1,60 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport"
+  content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Signal</title>
+
+<style>
+html,body{
+  margin:0;
+  width:100%;
+  height:100%;
+  background:#000;
+  overflow:hidden;
+  touch-action:none;
+  -webkit-user-select:none;
+  user-select:none;
+  -webkit-tap-highlight-color:transparent;
+}
+canvas{display:block;}
+#overlay{
+  position:fixed;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#888;
+  font-family:system-ui;
+}
+</style>
+</head>
+
+<body>
+<div id="overlay">tap to begin</div>
+<canvas id="c"></canvas>
+
 <script>
-/* =========================
-   AUDIO — CONTINUOUS NOISE
-   (iOS SAFE)
-========================= */
+/* AUDIO — EXACT LOGIC */
+let audioCtx,noiseSource,gainNode,audioStarted=false;
 
-let audioCtx;
-let noiseSource;
-let gainNode;
-let audioStarted = false;
-
-function startAudio() {
-  if (audioStarted) return;
-  audioStarted = true;
-
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  audioCtx.resume();
-
-  const bufferSize = audioCtx.sampleRate * 2;
-  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-
-  for (let i = 0; i < bufferSize; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
-
-  noiseSource = audioCtx.createBufferSource();
-  noiseSource.buffer = buffer;
-  noiseSource.loop = true;
-
-  gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.015;
-
-  noiseSource.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
-  noiseSource.start();
+function startAudio(){
+ if(audioStarted) return;
+ audioStarted=true;
+ audioCtx=new (window.AudioContext||webkitAudioContext)();
+ audioCtx.resume();
+ const b=audioCtx.createBuffer(1,audioCtx.sampleRate*2,audioCtx.sampleRate);
+ const d=b.getChannelData(0);
+ for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+ noiseSource=audioCtx.createBufferSource();
+ noiseSource.buffer=b; noiseSource.loop=true;
+ gainNode=audioCtx.createGain(); gainNode.gain.value=0.015;
+ noiseSource.connect(gainNode).connect(audioCtx.destination);
+ noiseSource.start();
 }
 
-/* =========================
-   OPTIONAL: ADAPT VOLUME
-========================= */
-
-function setNoiseLevel(target) {
-  if (!gainNode) return;
-  gainNode.gain.value += (target - gainNode.gain.value) * 0.02;
-}
-
-/* =========================
-   START ON FIRST SCREEN TAP
-========================= */
-
-window.addEventListener(
-  "pointerdown",
-  () => {
-    startAudio();
-    startGame(); // your game start
-  },
-  { once: true }
-);
+window.addEventListener("pointerdown",()=>{
+ document.getElementById("overlay").remove();
+ startAudio();
+ startGame(); // your game
+},{once:true});
 </script>
+</body>
+</html>
