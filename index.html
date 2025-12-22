@@ -3,104 +3,75 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Initiation Threshold — Probabilistic</title>
-
+<title>Initiation Threshold — Single-Variable Adaptive</title>
 <style>
   html, body {
     margin: 0;
-    padding: 0;
-    background: #0b0b0b;
     height: 100%;
+    background: #070707; /* near-black */
     overflow: hidden;
     touch-action: manipulation;
   }
-  canvas {
-    display: block;
-  }
-  #audioBtn {
+  canvas { display: block; }
+  #audioBtn{
     position: fixed;
-    bottom: 10px;
     right: 10px;
+    bottom: 10px;
     padding: 6px 10px;
     font-size: 12px;
-    background: #111;
-    color: #666;
-    border: 1px solid #222;
-    border-radius: 6px;
-    opacity: 0.3;
+    border-radius: 10px;
+    border: 1px solid #1b1b1b;
+    background: #0e0e0e;
+    color: #777;
+    opacity: 0.35;
+    user-select: none;
   }
 </style>
 </head>
-
 <body>
 <canvas id="c"></canvas>
 <button id="audioBtn">audio</button>
 
 <script>
-/* =========================
-   CONFIG (ONLY ADAPTIVE VAR)
-========================= */
+/*
+  INVARIANTS (locked):
+  - Fixed cadence (prompt/gap); only the REACTION WINDOW changes (BASE_PROMPT).
+  - No modes. No scoring. No UI feedback. No extra adaptive variables.
+  - Difficulty emerges only as a side-effect of a tighter reaction window.
+*/
 
-let REACTION_WINDOW = 1400; // ms
-const MIN_WINDOW = 900;
-const MAX_WINDOW = 1800;
-const ADAPT_STEP = 40;
-
-/* =========================
-   PROBABILITY PARAMETERS
-========================= */
-
-const HISTORY = 8;
-const VARIANCE_MIN = 180;
-const VARIANCE_MAX = 800;
-const AUTOCORR_MAX = 0.35;
+const STORAGE_KEY = "initiation_threshold_v3";
 
 /* =========================
-   CANVAS
+   CONFIG (single adaptive var)
 ========================= */
 
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+// Only this adapts:
+let BASE_PROMPT = 1350;        // ms (reaction window / prompt duration)
 
-function resize() {
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
-}
-addEventListener("resize", resize);
-resize();
+// Fixed cadence (non-adaptive):
+const BASE_GAP   = 1200;       // ms
+const JITTER_MS  = 80;         // tiny timing jitter, non-adaptive
 
-/* =========================
-   AUDIO (CONSTANT, OPTIONAL)
-========================= */
+// Bounds:
+const MIN_PROMPT = 900;
+const MAX_PROMPT = 1800;
 
-let audioCtx, noiseNode, gainNode;
-let audioOn = false;
+// Adapt step (fixed quantum):
+const STEP_MS = 35;
 
-function initAudio() {
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
-  noiseNode = audioCtx.createBufferSource();
-  noiseNode.buffer = buffer;
-  noiseNode.loop = true;
+// Calm gating (fixed):
+const RT_HISTORY = 7;
+const MAX_RT_STD = 110;        // ms
+const MAX_RECENT_MISSES = 4;
 
-  gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.012;
+// Thresholds (fixed):
+const HIT_THRESHOLD  = 6;
+const MISS_THRESHOLD = 3;
 
-  noiseNode.connect(gainNode).connect(audioCtx.destination);
-  noiseNode.start();
-}
-
-document.getElementById("audioBtn").onclick = () => {
-  if (!audioOn) {
-    initAudio();
-    audioOn = true;
-    document.getElementById("audioBtn").remove();
-  }
-};
+// Day-level carryover (subtle):
+const SOFT_RESET_MS = 25;      // nudges slightly easier on reload/day
+const MIN_SAVE_GAP_MS = 10_000;
 
 /* =========================
    STATE
@@ -108,118 +79,265 @@ document.getElementById("audioBtn").onclick = () => {
 
 let active = false;
 let promptStart = 0;
-let timeoutId;
+let promptEndAt = 0;
 
-let tapTimes = [];
+let hitCount = 0;
+let missCount = 0;
+
+let rtHistory = [];
+let recentMisses = 0;
+
+let lastSaveAt = 0;
+
+// Visual envelope for current prompt
+let env = 0;        // 0..1
+let envStart = 0;
+
+/* =========================
+   PERSISTENCE
+========================= */
+
+function loadState() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (!s || typeof s.BASE_PROMPT !== "number") return null;
+    return s;
+  } catch { return null; }
+}
+
+function saveState() {
+  const now = Date.now();
+  if (now - lastSaveAt < MIN_SAVE_GAP_MS) return;
+  lastSaveAt = now;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    BASE_PROMPT,
+    savedAt: now
+  }));
+}
+
+(function restore() {
+  const saved = loadState();
+  if (!saved) return;
+
+  // Soft reset: make it *slightly* easier on reload/day so you can re-enter cleanly.
+  BASE_PROMPT = clamp(saved.BASE_PROMPT + SOFT_RESET_MS, MIN_PROMPT, MAX_PROMPT);
+})();
+
+/* =========================
+   CANVAS + 1:1 FIELD
+========================= */
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+let W=0,H=0;
+let field = { x:0, y:0, s:0 };
+
+function resize() {
+  W = canvas.width  = innerWidth;
+  H = canvas.height = innerHeight;
+  const s = Math.min(W, H);
+  field.s = s;
+  field.x = (W - s) * 0.5;
+  field.y = (H - s) * 0.5;
+}
+addEventListener("resize", resize);
+resize();
+
+function clearAll() {
+  ctx.clearRect(0,0,W,H);
+}
+
+/* =========================
+   AUDIO (optional, mapped to same envelope)
+========================= */
+
+let audioCtx, noiseNode, gainNode;
+let audioOn = false;
+
+function initAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  // White noise buffer
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+
+  noiseNode = audioCtx.createBufferSource();
+  noiseNode.buffer = buffer;
+  noiseNode.loop = true;
+
+  gainNode = audioCtx.createGain();
+  gainNode.gain.value = 0.0;
+
+  noiseNode.connect(gainNode).connect(audioCtx.destination);
+  noiseNode.start();
+}
+
+document.getElementById("audioBtn").onclick = () => {
+  if (audioOn) return;
+  initAudio();
+  audioOn = true;
+  document.getElementById("audioBtn").remove();
+};
+
+/* =========================
+   HELPERS
+========================= */
+
+function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
+
+function stdDev(arr) {
+  if (arr.length < 2) return Infinity;
+  const mean = arr.reduce((s,x)=>s+x,0) / arr.length;
+  const varr = arr.reduce((s,x)=>s + (x-mean)*(x-mean), 0) / arr.length;
+  return Math.sqrt(varr);
+}
+
+function canAdapt() {
+  if (rtHistory.length < RT_HISTORY) return false;
+  if (recentMisses > MAX_RECENT_MISSES) return false;
+  if (stdDev(rtHistory) > MAX_RT_STD) return false;
+  return true;
+}
+
+function jitter(ms) {
+  return ms + (Math.random()*2 - 1) * JITTER_MS;
+}
 
 /* =========================
    INPUT
 ========================= */
 
 document.body.addEventListener("pointerdown", () => {
-  if (!active) return;
+  if (!active) return; // tapping outside prompt is ignored (no extra mechanics)
 
   const now = performance.now();
-  tapTimes.push(now);
-  if (tapTimes.length > HISTORY) tapTimes.shift();
+  const rt = now - promptStart;
 
-  evaluateBehavior();
-  clearPrompt();
+  rtHistory.push(rt);
+  if (rtHistory.length > RT_HISTORY) rtHistory.shift();
+
+  hitCount++;
+  missCount = 0;
+  recentMisses = Math.max(0, recentMisses - 1);
+
+  // Only adapt the reaction window (single variable)
+  if (canAdapt() && hitCount >= HIT_THRESHOLD && BASE_PROMPT > MIN_PROMPT) {
+    BASE_PROMPT = clamp(BASE_PROMPT - STEP_MS, MIN_PROMPT, MAX_PROMPT);
+    hitCount = 0;
+    saveState();
+  }
+
+  endPrompt();
 });
 
 /* =========================
-   PROBABILITY CHECKS
+   VISUAL RENDER (faint off-white line, fade-to-infinity)
 ========================= */
 
-function variance(arr) {
-  const mean = arr.reduce((a,b)=>a+b,0) / arr.length;
-  return arr.reduce((a,b)=>a + (b-mean)**2,0) / arr.length;
-}
+function draw() {
+  clearAll();
 
-function autocorr(arr) {
-  if (arr.length < 3) return 0;
-  let sum = 0;
-  for (let i = 1; i < arr.length; i++) {
-    sum += (arr[i] - arr[i-1]);
+  // background already near-black via body; draw field border subtly
+  ctx.save();
+  ctx.translate(field.x, field.y);
+
+  // Field is intentionally almost invisible (non-gamey)
+  ctx.strokeStyle = "rgba(255,255,255,0.03)";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, field.s-1, field.s-1);
+
+  if (active) {
+    const tNorm = (BASE_PROMPT - MIN_PROMPT) / (MAX_PROMPT - MIN_PROMPT); // 0..1
+    // As window tightens (tNorm -> 0), signal weakens.
+    const baseAlpha = 0.12 * tNorm;     // off-white faintness
+    const baseWidth = 1.6 * tNorm + 0.55;
+
+    // Fade-to-infinity during the prompt (exponential-ish)
+    const now = performance.now();
+    const p = clamp((now - envStart) / Math.max(1, (promptEndAt - envStart)), 0, 1);
+    const fade = Math.exp(-4.2 * p);    // decays toward 0
+
+    // Degenerate spiral drift: infinitesimal angular change, no legible rotation
+    // (fixed behavior; NOT adaptive)
+    const drift = 0.012 * Math.sin(now * 0.00035) + 0.009 * Math.sin(now * 0.00017);
+
+    const angle = drift;               // near 0 => "degenerate"
+    const cx = field.s * 0.5;
+    const cy = field.s * 0.5;
+
+    // Short line segment (not full-width), rounded caps
+    const halfLen = field.s * 0.18;    // constant geometry
+    const dx = Math.cos(angle) * halfLen;
+    const dy = Math.sin(angle) * halfLen;
+
+    ctx.beginPath();
+    ctx.lineCap = "round";
+    ctx.lineWidth = baseWidth * fade;
+    ctx.strokeStyle = `rgba(248,248,242,${baseAlpha * fade})`; // off-white
+    ctx.moveTo(cx - dx, cy - dy);
+    ctx.lineTo(cx + dx, cy + dy);
+    ctx.stroke();
+
+    // Audio envelope follows the same fade (quiet)
+    if (audioOn && gainNode) {
+      const maxGain = 0.010; // quieter than before
+      gainNode.gain.value = maxGain * (baseAlpha / 0.12) * fade;
+    }
+  } else {
+    if (audioOn && gainNode) gainNode.gain.value = 0.0;
   }
-  return Math.abs(sum / (arr.length * 1000));
+
+  ctx.restore();
+  requestAnimationFrame(draw);
 }
-
-function behaviorProbability() {
-  if (tapTimes.length < HISTORY) return null;
-
-  const intervals = tapTimes.slice(1).map((t,i)=>t - tapTimes[i]);
-  const v = variance(intervals);
-  const a = autocorr(intervals);
-
-  if (v < VARIANCE_MIN) return 0.1;
-  if (v > VARIANCE_MAX) return 0.9;
-  if (a > AUTOCORR_MAX) return 0.2;
-
-  return 0.8;
-}
+requestAnimationFrame(draw);
 
 /* =========================
-   LOGIC-GATED ADAPTATION
+   LOOP (fixed cadence, single-variable adaptation)
 ========================= */
 
-function evaluateBehavior() {
-  const p = behaviorProbability();
-  if (p === null) return;
+let timeoutId = null;
 
-  if (p > 0.75 && REACTION_WINDOW > MIN_WINDOW) {
-    REACTION_WINDOW -= ADAPT_STEP;
-  } else if (p < 0.3 && REACTION_WINDOW < MAX_WINDOW) {
-    REACTION_WINDOW += ADAPT_STEP;
-  }
-}
-
-/* =========================
-   LOOP
-========================= */
-
-function showPrompt() {
+function startPrompt() {
   active = true;
   promptStart = performance.now();
-  drawField();
+  envStart = promptStart;
+
+  const dur = jitter(BASE_PROMPT);
+  promptEndAt = promptStart + dur;
 
   timeoutId = setTimeout(() => {
+    // Miss (no tap during window)
     active = false;
-    clearPrompt();
-  }, REACTION_WINDOW);
+    missCount++;
+    hitCount = 0;
+    recentMisses++;
+
+    // Only adapt the reaction window (single variable)
+    if (canAdapt() && missCount >= MISS_THRESHOLD && BASE_PROMPT < MAX_PROMPT) {
+      BASE_PROMPT = clamp(BASE_PROMPT + STEP_MS, MIN_PROMPT, MAX_PROMPT);
+      missCount = 0;
+      saveState();
+    }
+
+    endPrompt();
+  }, dur);
 }
 
-function clearPrompt() {
+function endPrompt() {
+  if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
   active = false;
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  setTimeout(showPrompt, 600 + Math.random()*400);
-}
 
-/* =========================
-   VISUAL (NON-INSTRUCTIVE)
-========================= */
-
-function drawField() {
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-
-  ctx.strokeStyle = "rgba(240,240,230,0.04)";
-  ctx.lineWidth = 2;
-  ctx.lineCap = "round";
-
-  const drift = (Math.random()-0.5)*6;
-  const x = canvas.width/2 + drift;
-
-  ctx.beginPath();
-  ctx.moveTo(x, canvas.height*0.1);
-  ctx.lineTo(x, canvas.height*0.9);
-  ctx.stroke();
+  setTimeout(startPrompt, jitter(BASE_GAP));
 }
 
 /* =========================
    START
 ========================= */
 
-setTimeout(showPrompt, 1000);
+setTimeout(startPrompt, 900);
 </script>
 </body>
 </html>
