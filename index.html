@@ -21,7 +21,7 @@ html, body {
   background: #000;
   overflow: hidden;
 
-  /* iOS hard fixes */
+  /* iOS hard disables */
   touch-action: manipulation;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
@@ -46,6 +46,7 @@ canvas {
   font-family: system-ui;
   font-size: 18px;
   color: #777;
+  background: transparent;
   transition: opacity 0.2s linear;
 }
 #overlay.hidden {
@@ -109,3 +110,67 @@ const ctx = canvas.getContext("2d");
 
 function resize() {
   canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* =========================
+   YOUR VISUAL — UNCHANGED
+========================= */
+
+/*
+PASTE YOUR EXISTING draw(t) HERE
+DO NOT MODIFY IT
+Example:
+
+function draw(t) {
+  ...
+}
+*/
+
+/* =========================
+   RAF PRIMER (NO VISUAL CHANGE)
+========================= */
+
+let primed = false;
+let lastTime = 0;
+
+function safeDraw(t) {
+  if (!primed) {
+    primed = true;
+    lastTime = t || performance.now();
+  }
+  draw(t);
+}
+
+/* =========================
+   START — MUST BIND TO OVERLAY
+========================= */
+
+const overlay = document.getElementById("overlay");
+let started = false;
+
+function begin(e) {
+  if (started) return;
+  started = true;
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  requestAnimationFrame(safeDraw); // start visual first
+  startAudio();                    // then audio
+
+  overlay.classList.add("hidden");
+  document.body.offsetHeight;      // force Safari repaint
+
+  overlay.removeEventListener("touchend", begin);
+  overlay.removeEventListener("click", begin);
+}
+
+/* iOS Safari REQUIREMENT */
+overlay.addEventListener("touchend", begin, { passive: false });
+overlay.addEventListener("click", begin);
+</script>
+</body>
+</html>
