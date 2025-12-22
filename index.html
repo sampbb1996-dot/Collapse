@@ -38,89 +38,18 @@ canvas{display:block;}
 <canvas id="c"></canvas>
 
 <script>
-/* =========================
-   AUDIO — CONTINUOUS NOISE
-   (UNCHANGED)
-========================= */
+/* ================= AUDIO (UNCHANGED) ================= */
 
-let audioCtx;
-let noiseSource;
-let gainNode;
-let audioStarted = false;
+let audioCtx, noiseSource, gainNode, audioStarted=false;
 
-function startAudio() {
-  if (audioStarted) return;
-  audioStarted = true;
+function startAudio(){
+  if(audioStarted) return;
+  audioStarted=true;
 
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  audioCtx=new (window.AudioContext||window.webkitAudioContext)();
   audioCtx.resume();
 
-  const bufferSize = audioCtx.sampleRate * 2;
-  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-
-  for (let i = 0; i < bufferSize; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
-
-  noiseSource = audioCtx.createBufferSource();
-  noiseSource.buffer = buffer;
-  noiseSource.loop = true;
-
-  gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.015;
-
-  noiseSource.connect(gainNode).connect(audioCtx.destination);
-  noiseSource.start();
-}
-
-function setNoiseLevel(target){
-  if(!gainNode) return;
-  gainNode.gain.value += (target - gainNode.gain.value) * 0.02;
-}
-
-/* =========================
-   CANVAS (PROOF OF LIFE)
-========================= */
-
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
-
-function resize(){
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener("resize", resize);
-resize();
-
-function draw(){
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0,0,canvas.width,canvas.height);
-
-  // minimal non-zero render (prevents iOS black freeze)
-  ctx.fillStyle = "#111";
-  ctx.fillRect(canvas.width/2, canvas.height/2, 1, 1);
-
-  requestAnimationFrame(draw);
-}
-
-/* =========================
-   START — iOS CORRECT
-========================= */
-
-function begin(e){
-  e.preventDefault();
-  e.stopPropagation();
-
-  document.getElementById("overlay")?.remove();
-  startAudio();
-  draw();
-}
-
-/* iOS Safari MUST use touchend */
-window.addEventListener("touchend", begin, { once:true, passive:false });
-window.addEventListener("click", begin, { once:true }); // fallback
-</script>
-
-</body>
-</html>
+  const size=audioCtx.sampleRate*2;
+  const buffer=audioCtx.createBuffer(1,size,audioCtx.sampleRate);
+  const data=buffer.getChannelData(0);
+ 
