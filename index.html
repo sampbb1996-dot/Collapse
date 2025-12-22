@@ -15,92 +15,90 @@ html, body {
   touch-action: manipulation;
 }
 
-#screen {
+#overlay {
   position: fixed;
   inset: 0;
-  background: #000;
-}
-
-#prompt {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: #777;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 18px;
-  pointer-events: none;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont;
 }
 
 #line {
-  position: absolute;
+  position: fixed;
   top: 0;
-  bottom: 0;
   left: 50%;
   width: 1px;
-  background: rgba(255,255,255,0.15);
-  transform: translateX(-50%);
+  height: 100%;
+  background: rgba(255,255,255,0.12);
+  transform: translateX(-0.5px);
   opacity: 0;
+  transition: opacity 1.5s linear;
 }
 </style>
 </head>
 
 <body>
-<div id="screen">
-  <div id="prompt">tap to begin</div>
-  <div id="line"></div>
-</div>
+
+<div id="overlay">tap to begin</div>
+<div id="line"></div>
 
 <script>
 let started = false;
-let audioCtx, osc, gain;
+let ctx, noise, filter, gain;
 
-function startGame() {
+function start() {
   if (started) return;
   started = true;
 
-  // --- AUDIO (iOS SAFE) ---
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  // Remove overlay
+  document.getElementById("overlay").remove();
 
-  osc = audioCtx.createOscillator();
-  gain = audioCtx.createGain();
-
-  osc.type = "sine";
-  osc.frequency.value = 110;      // low, neutral tone
-  gain.gain.value = 0.03;         // subtle volume
-
-  osc.connect(gain);
-  gain.connect(audioCtx.destination);
-
-  osc.start();
-
-  // --- VISUAL ---
-  document.getElementById("prompt").style.display = "none";
+  // Show line
   const line = document.getElementById("line");
   line.style.opacity = "1";
 
-  animate(line);
-}
+  // --- AUDIO (iOS SAFE) ---
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
 
-function animate(line) {
-  let t = 0;
-  function frame() {
-    t += 0.01;
-
-    // micro instability (non-flicker)
-    const drift = Math.sin(t * 1.7) * 0.3;
-    line.style.transform = `translateX(-50%) translateX(${drift}px)`;
-
-    // subtle audio drift
-    osc.frequency.value = 110 + Math.sin(t) * 2;
-
-    requestAnimationFrame(frame);
+  // Noise buffer
+  const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) {
+    data[i] = Math.random() * 2 - 1;
   }
-  frame();
+
+  noise = ctx.createBufferSource();
+  noise.buffer = buffer;
+  noise.loop = true;
+
+  filter = ctx.createBiquadFilter();
+  filter.type = "bandpass";
+  filter.frequency.value = 600;
+  filter.Q.value = 0.6;
+
+  gain = ctx.createGain();
+  gain.gain.value = 0.03;
+
+  noise.connect(filter);
+  filter.connect(gain);
+  gain.connect(ctx.destination);
+
+  noise.start();
+
+  // Slow, non-periodic drift
+  setInterval(() => {
+    filter.frequency.value += (Math.random() - 0.5) * 30;
+    filter.frequency.value = Math.max(200, Math.min(1200, filter.frequency.value));
+  }, 400);
 }
 
-// IMPORTANT: must be a direct user gesture
-document.body.addEventListener("pointerdown", startGame, { once: true });
+// iOS requires direct user gesture
+document.addEventListener("touchstart", start, { once: true });
+document.addEventListener("mousedown", start, { once: true });
 </script>
+
 </body>
 </html>
