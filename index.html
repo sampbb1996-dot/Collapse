@@ -4,101 +4,11 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Signal</title>
-
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #000;
-  height: 100%;
-  overflow: hidden;
-  touch-action: manipulation;
-}
-
-#overlay {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #777;
-  font-size: 18px;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont;
-}
-
-#line {
-  position: fixed;
-  top: 0;
-  left: 50%;
-  width: 1px;
-  height: 100%;
-  background: rgba(255,255,255,0.12);
-  transform: translateX(-0.5px);
-  opacity: 0;
-  transition: opacity 1.5s linear;
-}
-</style>
-</head>
-
-<body>
-
-<div id="overlay">tap to begin</div>
-<div id="line"></div>
-
-<script>
-let started = false;
-let ctx, noise, filter, gain;
-
-function start() {
-  if (started) return;
-  started = true;
-
-  // Remove overlay
-  document.getElementById("overlay").remove();
-
-  // Show line
-  const line = document.getElementById("line");
-  line.style.opacity = "1";
-
-  // --- AUDIO (iOS SAFE) ---
-  ctx = new (window.AudioContext || window.webkitAudioContext)();
-
-  // Noise buffer
-  const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
-
-  noise = ctx.createBufferSource();
-  noise.buffer = buffer;
-  noise.loop = true;
-
-  filter = ctx.createBiquadFilter();
-  filter.type = "bandpass";
-  filter.frequency.value = 600;
-  filter.Q.value = 0.6;
-
-  gain = ctx.createGain();
-  gain.gain.value = 0.03;
-
-  noise.connect(filter);
-  filter.connect(gain);
-  gain.connect(ctx.destination);
-
-  noise.start();
-
-  // Slow, non-periodic drift
-  setInterval(() => {
-    filter.frequency.value += (Math.random() - 0.5) * 30;
-    filter.frequency.value = Math.max(200, Math.min(1200, filter.frequency.value));
-  }, 400);
-}
-
-// iOS requires direct user gesture
-document.addEventListener("touchstart", start, { once: true });
-document.addEventListener("mousedown", start, { once: true });
-</script>
-
-</body>
-</html>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    height: 100%;
+    overflow: hidden;
+    touch-action:
