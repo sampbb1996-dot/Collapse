@@ -9,6 +9,92 @@
     margin: 0;
     padding: 0;
     background: #000;
-    height: 100%;
     overflow: hidden;
-    touch-action:
+    height: 100%;
+    touch-action: manipulation;
+  }
+  #overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #aaa;
+    font-family: system-ui, sans-serif;
+    font-size: 20px;
+    z-index: 10;
+  }
+  canvas {
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+<div id="overlay">tap to begin</div>
+<canvas id="c"></canvas>
+
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const overlay = document.getElementById("overlay");
+
+function resize() {
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+}
+addEventListener("resize", resize);
+resize();
+
+let audioStarted = false;
+let audioCtx, noiseNode, gainNode;
+
+function startAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  const bufferSize = 2 * audioCtx.sampleRate;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
+
+  noiseNode = audioCtx.createBufferSource();
+  noiseNode.buffer = buffer;
+  noiseNode.loop = true;
+
+  gainNode = audioCtx.createGain();
+  gainNode.gain.value = 0.04; // AUDIBLE
+
+  noiseNode.connect(gainNode).connect(audioCtx.destination);
+  noiseNode.start();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // vertical line
+  ctx.strokeStyle = "rgba(255,255,255,0.15)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(canvas.width / 2, 0);
+  ctx.lineTo(canvas.width / 2, canvas.height);
+  ctx.stroke();
+
+  requestAnimationFrame(draw);
+}
+
+document.body.addEventListener("pointerdown", async () => {
+  if (audioStarted) return;
+  audioStarted = true;
+
+  overlay.remove();
+
+  await audioCtx?.resume?.(); // safe even if undefined
+  startAudio();
+  draw();
+}, { once: true });
+</script>
+
+</body>
+</html>
