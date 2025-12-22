@@ -20,15 +20,15 @@
 
   #audioBtn {
     position: fixed;
-    bottom: 32px;
+    bottom: 28px;
     left: 50%;
     transform: translateX(-50%);
-    padding: 14px 22px;
-    border-radius: 20px;
+    padding: 12px 20px;
+    border-radius: 18px;
     border: none;
     background: #eee;
     color: #111;
-    font-size: 16px;
+    font-size: 15px;
   }
 </style>
 </head>
@@ -38,24 +38,25 @@
 <button id="audioBtn">Enable Audio</button>
 
 <script>
+/* ---------- CANVAS ---------- */
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
 }
 resize();
-window.addEventListener("resize", resize);
+addEventListener("resize", resize);
 
-// ---- VISUAL ----
+/* ---------- VISUAL ---------- */
 let t = 0;
 
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // slight sub-pixel drift (NOT blinking)
-  const drift = Math.sin(t * 0.001) * 0.6;
+  // continuous, non-blinking drift
+  const drift = Math.sin(t * 0.001) * 0.5;
 
   ctx.strokeStyle = "rgba(255,255,255,0.35)";
   ctx.lineWidth = 1;
@@ -70,13 +71,13 @@ function draw() {
 }
 draw();
 
-// ---- AUDIO (CORRECT iOS PATTERN) ----
+/* ---------- AUDIO (CRITICAL PART) ---------- */
 let audioCtx = null;
 let osc = null;
 let gain = null;
 
-document.getElementById("audioBtn").onclick = () => {
-  if (audioCtx) return; // prevent double start
+document.getElementById("audioBtn").addEventListener("click", () => {
+  if (audioCtx) return;
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
@@ -84,16 +85,15 @@ document.getElementById("audioBtn").onclick = () => {
   gain = audioCtx.createGain();
 
   osc.type = "sine";
-  osc.frequency.value = 220; // low, neutral
-  gain.gain.value = 0.015;   // quiet
+  osc.frequency.value = 220;
+  gain.gain.value = 0.015;
 
   osc.connect(gain);
   gain.connect(audioCtx.destination);
-
   osc.start();
 
   document.getElementById("audioBtn").innerText = "Audio On";
-};
+});
 </script>
 </body>
 </html>
