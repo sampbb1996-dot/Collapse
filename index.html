@@ -2,8 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+
 <meta name="viewport"
-  content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no">
+  content="width=device-width,
+           initial-scale=1,
+           maximum-scale=1,
+           minimum-scale=1,
+           user-scalable=no">
+
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Signal</title>
 
@@ -15,14 +21,17 @@ html, body {
   background: #000;
   overflow: hidden;
 
-  touch-action: manipulation;
-  -webkit-touch-callout: none;
+  touch-action: none;
   -webkit-user-select: none;
   user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
-* { -webkit-tap-highlight-color: rgba(0,0,0,0); }
 
-canvas { position: fixed; inset: 0; display: block; }
+canvas {
+  position: fixed;
+  inset: 0;
+  display: block;
+}
 
 #overlay {
   position: fixed;
@@ -33,10 +42,13 @@ canvas { position: fixed; inset: 0; display: block; }
   font-family: system-ui;
   font-size: 18px;
   color: #777;
-  background: transparent;
   transition: opacity 0.2s linear;
 }
-#overlay.hidden { opacity: 0; pointer-events: none; }
+
+#overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
 </style>
 </head>
 
@@ -46,8 +58,9 @@ canvas { position: fixed; inset: 0; display: block; }
 
 <script>
 /* =========================
-   AUDIO — iOS SAFE (unchanged style)
+   AUDIO — UNCHANGED / WORKING
 ========================= */
+
 let audioCtx, noiseSource, gainNode, audioStarted = false;
 
 function startAudio() {
@@ -55,143 +68,92 @@ function startAudio() {
   audioStarted = true;
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  audioCtx.resume();
 
-  // resume inside the user gesture
-  if (audioCtx.state === "suspended") audioCtx.resume();
-
-  const size = audioCtx.sampleRate * 2;            // 2s buffer
+  const size = audioCtx.sampleRate * 2;
   const buffer = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
 
-  for (let i = 0; i < size; i++) data[i] = Math.random() * 2 - 1;
+  for (let i = 0; i < size; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
 
   noiseSource = audioCtx.createBufferSource();
   noiseSource.buffer = buffer;
   noiseSource.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.012;                      // quieter baseline
+  gainNode.gain.value = 0.015;
 
   noiseSource.connect(gainNode).connect(audioCtx.destination);
   noiseSource.start();
 }
 
 /* =========================
-   CANVAS
+   CANVAS SETUP (ASPECT SAFE)
 ========================= */
+
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d", { alpha: false });
+const ctx = canvas.getContext("2d");
 
 function resize() {
-  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-  canvas.width  = Math.floor(window.innerWidth  * dpr);
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.floor(window.innerWidth * dpr);
   canvas.height = Math.floor(window.innerHeight * dpr);
-  canvas.style.width  = window.innerWidth + "px";
+  canvas.style.width = window.innerWidth + "px";
   canvas.style.height = window.innerHeight + "px";
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
-addEventListener("resize", resize);
+window.addEventListener("resize", resize);
 resize();
 
 /* =========================
-   VISUAL — FULL-FIELD (NO LINE)
-   - Near-black field
-   - Subtle grain over a 1:1 centered square
-   - Non-periodic micro-drift (no sine/rhythm)
-   - Fade-to-infinity: alpha + grain strength decay
+   FIELD STATE
 ========================= */
-let running = false;
 
-// square field (1:1) centered
-function squareField() {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  const s = Math.min(w, h);
-  const x = (w - s) * 0.5;
-  const y = (h - s) * 0.5;
-  return { x, y, s };
-}
+let entropy = 0;
+let contact = false;
 
-// grain image buffer (kept small, scaled up)
-const G = 160; // grain resolution (small = cheaper + softer)
-let grain = ctx.createImageData(G, G);
-let gd = grain.data;
+/* =========================
+   INPUT: ON / OFF ONLY
+========================= */
 
-// "state" that drifts stochastically (no periodicity)
-let drift = 0;
-let decay = 1;             // fade-to-infinity envelope
-let targetDecay = 1;
+document.addEventListener("touchstart", () => contact = true, { passive:true });
+document.addEventListener("touchend",   () => contact = false, { passive:true });
+document.addEventListener("mousedown",  () => contact = true);
+document.addEventListener("mouseup",    () => contact = false);
 
-// controls subtlety (keep tiny)
-const BASE_ALPHA = 0.018;  // overall visibility
-const BASE_GRAIN = 10;     // grain strength
-const FLOOR_DECAY = 0.20;  // never truly disappears
-
-function updateGrain() {
-  // non-periodic micro-instability
-  drift += (Math.random() - 0.5) * 0.10;
-  drift *= 0.985;
-
-  // very slow “fade-to-infinity”
-  // If you touch the screen, we momentarily "reset" decay upward.
-  decay += (targetDecay - decay) * 0.01;
-  targetDecay += (FLOOR_DECAY - targetDecay) * 0.0005;
-
-  const a = BASE_ALPHA * decay;
-  const strength = BASE_GRAIN * decay;
-
-  // near-black base with tiny off-white tint (so Night Shift doesn’t break it)
-  // These values are intentionally close to black.
-  const base = 7;
-
-  // Fill grain buffer with very small fluctuations
-  // (clamped to keep it near-black)
-  for (let i = 0; i < gd.length; i += 4) {
-    const n = (Math.random() - 0.5) * strength;
-    const v = Math.max(0, Math.min(18, base + n));
-    gd[i] = v; gd[i+1] = v; gd[i+2] = v;
-    gd[i+3] = Math.floor(255 * a);
-  }
-}
+/* =========================
+   DRAW LOOP
+========================= */
 
 function draw() {
-  if (!running) return;
-
-  // hard black fill — prevents iOS white flash
+  // hard black fill (prevents white flash)
   ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // build and render the subtle field
-  updateGrain();
+  // entropy evolves slowly
+  entropy += (contact ? 0.002 : -0.001);
+  entropy = Math.max(0, Math.min(entropy, 1));
 
-  const { x, y, s } = squareField();
+  // relevance decay: structure exists but stops paying off
+  const density = 800 + entropy * 1200;
 
-  // draw grain into the square field (scaled)
-  // slight sub-pixel offset from drift to avoid “static poster”
-  const ox = (drift * 0.6) % 1;
-  const oy = (drift * 0.35) % 1;
+  ctx.fillStyle = "rgba(255,255,255,0.015)";
 
-  // Put the grain to an offscreen canvas-free path:
-  // createImageBitmap is inconsistent on iOS; use putImageData to a temp canvas region.
-  // We'll draw the grain to the main canvas by scaling via drawImage from a tiny in-memory canvas.
-  if (!draw._gcan) {
-    draw._gcan = document.createElement("canvas");
-    draw._gcan.width = G;
-    draw._gcan.height = G;
-    draw._gctx = draw._gcan.getContext("2d");
+  for (let i = 0; i < density; i++) {
+    const x = Math.random() * canvas.width;
+    const y = Math.random() * canvas.height;
+    ctx.fillRect(x, y, 1, 1);
   }
-  draw._gctx.putImageData(grain, 0, 0);
-
-  ctx.imageSmoothingEnabled = true;
-  ctx.globalCompositeOperation = "source-over";
-  ctx.drawImage(draw._gcan, x + ox, y + oy, s, s);
 
   requestAnimationFrame(draw);
 }
 
 /* =========================
-   START — tap to begin (iOS correct)
+   START
 ========================= */
+
 const overlay = document.getElementById("overlay");
 let started = false;
 
@@ -202,29 +164,15 @@ function begin(e) {
   e.preventDefault();
   e.stopPropagation();
 
-  running = true;
-
-  // start visual first
+  startAudio();
   requestAnimationFrame(draw);
 
-  // then audio
-  startAudio();
-
-  // hide overlay
   overlay.classList.add("hidden");
-  document.body.offsetHeight; // force Safari repaint
+  document.body.offsetHeight; // Safari repaint
 }
 
-// Must bind to overlay for iOS gesture reliability
-overlay.addEventListener("touchend", begin, { passive: false });
+overlay.addEventListener("touchend", begin, { passive:false });
 overlay.addEventListener("click", begin);
-
-// Optional: tiny “interaction entropy” nudges the fade envelope without adding a new task.
-// (You can ignore this; it doesn’t require you to do anything.)
-document.addEventListener("pointerdown", () => {
-  // brief reset upward; then it decays again
-  targetDecay = Math.min(1, targetDecay + 0.06);
-}, { passive: true });
 </script>
 </body>
 </html>
