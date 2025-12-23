@@ -2,12 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-
-<meta name="viewport"
+<meta
+  name="viewport"
   content="width=device-width,
            initial-scale=1,
            maximum-scale=1,
-           minimum-scale=1,
            user-scalable=no">
 
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -22,13 +21,9 @@ html, body {
   overflow: hidden;
 
   touch-action: manipulation;
-  -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
-}
-
-* {
-  -webkit-tap-highlight-color: rgba(0,0,0,0);
+  -webkit-tap-highlight-color: transparent;
 }
 
 canvas {
@@ -43,11 +38,10 @@ canvas {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: system-ui, sans-serif;
+  font-family: system-ui;
   font-size: 18px;
-  color: #777;
-  background: transparent;
-  transition: opacity 0.2s linear;
+  color: #666;
+  transition: opacity 0.25s linear;
 }
 
 #overlay.hidden {
@@ -58,15 +52,14 @@ canvas {
 </head>
 
 <body>
-
 <canvas id="c"></canvas>
 <div id="overlay">tap to begin</div>
 
 <script>
-/* =========================
-   AUDIO — CONTINUOUS NOISE
+/* ======================
+   AUDIO — CONTINUOUS
    (iOS SAFE)
-========================= */
+====================== */
 
 let audioCtx, noiseSource, gainNode;
 let audioStarted = false;
@@ -78,11 +71,11 @@ function startAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   audioCtx.resume();
 
-  const bufferSize = audioCtx.sampleRate * 2;
-  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const size = audioCtx.sampleRate * 2;
+  const buffer = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
 
-  for (let i = 0; i < bufferSize; i++) {
+  for (let i = 0; i < size; i++) {
     data[i] = Math.random() * 2 - 1;
   }
 
@@ -91,51 +84,57 @@ function startAudio() {
   noiseSource.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.015;
+  gainNode.gain.value = 0.012; // quiet, stable
 
   noiseSource.connect(gainNode).connect(audioCtx.destination);
   noiseSource.start();
 }
 
-/* =========================
-   CANVAS SETUP
-========================= */
+/* ======================
+   CANVAS
+====================== */
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
 }
-window.addEventListener("resize", resize);
+addEventListener("resize", resize);
 resize();
 
-/* =========================
-   VISUAL — BRIGHTNESS SAFE
-   FULL-FIELD LOW-CONTRAST
-========================= */
+/* ======================
+   VISUAL — SUB-PERCEPTUAL
+====================== */
+
+let drift = 0;
 
 function draw() {
-  const img = ctx.createImageData(canvas.width, canvas.height);
-  const d = img.data;
+  // hard black fill prevents iOS flash
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  for (let i = 0; i < d.length; i += 4) {
-    // ultra-low luminance variance (undetectable)
-    const v = 2 + Math.random() * 3; // 2–5 / 255
-    d[i]     = v;
-    d[i + 1] = v;
-    d[i + 2] = v;
-    d[i + 3] = 255;
-  }
+  // slow, aperiodic micro-instability
+  drift += (Math.random() - 0.5) * 0.25;
+  drift *= 0.99;
 
-  ctx.putImageData(img, 0, 0);
+  const x = canvas.width / 2 + drift;
+
+  ctx.strokeStyle = "rgba(255,255,255,0.10)"; // tuned for lowest brightness
+  ctx.lineWidth = 1;
+
+  ctx.beginPath();
+  ctx.moveTo(x, 0);
+  ctx.lineTo(x, canvas.height);
+  ctx.stroke();
+
   requestAnimationFrame(draw);
 }
 
-/* =========================
-   START — SINGLE GESTURE
-========================= */
+/* ======================
+   START (iOS-CORRECT)
+====================== */
 
 const overlay = document.getElementById("overlay");
 let started = false;
@@ -147,19 +146,15 @@ function begin(e) {
   e.preventDefault();
   e.stopPropagation();
 
-  // start visual first
-  requestAnimationFrame(draw);
-
-  // then audio
-  startAudio();
+  requestAnimationFrame(draw); // visual first
+  startAudio();                // audio second
 
   overlay.classList.add("hidden");
-  document.body.offsetHeight; // force iOS repaint
+  document.body.offsetHeight; // Safari repaint
 }
 
 overlay.addEventListener("touchend", begin, { passive: false });
 overlay.addEventListener("click", begin);
 </script>
-
 </body>
 </html>
