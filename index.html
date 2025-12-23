@@ -7,7 +7,6 @@
   content="width=device-width,
            initial-scale=1,
            maximum-scale=1,
-           minimum-scale=1,
            user-scalable=no">
 
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -20,14 +19,14 @@ html, body {
   height: 100%;
   background: #000;
   overflow: hidden;
-
-  /* iOS hard disables */
   touch-action: manipulation;
-  -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
 }
-* { -webkit-tap-highlight-color: rgba(0,0,0,0); }
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
 
 canvas {
   position: fixed;
@@ -43,9 +42,11 @@ canvas {
   justify-content: center;
   font-family: system-ui;
   font-size: 18px;
-  color: #777;
+  color: #666;
+  background: #000;
   transition: opacity 0.2s linear;
 }
+
 #overlay.hidden {
   opacity: 0;
   pointer-events: none;
@@ -58,14 +59,22 @@ canvas {
 <div id="overlay">tap to begin</div>
 
 <script>
-/* =========================
-   AUDIO — UNCHANGED
-========================= */
+/* ===============================
+   PERSISTENCE (ONE VARIABLE)
+================================ */
 
-let audioCtx;
-let noiseSource;
-let gainNode;
-let audioStarted = false;
+const KEY = "signal_window";
+let windowMs = Number(localStorage.getItem(KEY)) || 1200;
+
+const MIN = 600;
+const MAX = 1800;
+const STEP = 40;
+
+/* ===============================
+   AUDIO — iOS SAFE WHITE NOISE
+================================ */
+
+let audioCtx, noiseSource, gainNode, audioStarted = false;
 
 function startAudio() {
   if (audioStarted) return;
@@ -74,97 +83,110 @@ function startAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   audioCtx.resume();
 
-  const bufferSize = audioCtx.sampleRate * 2;
-  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const size = audioCtx.sampleRate * 2;
+  const buffer = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
 
-  for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+  for (let i = 0; i < size; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
 
   noiseSource = audioCtx.createBufferSource();
   noiseSource.buffer = buffer;
   noiseSource.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.015; // quiet baseline
+  gainNode.gain.value = 0.012;
 
   noiseSource.connect(gainNode).connect(audioCtx.destination);
   noiseSource.start();
 }
 
-/* =========================
-   CANVAS SETUP
-========================= */
+/* ===============================
+   CANVAS
+================================ */
 
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d", { alpha: false });
-
-let W = 0, H = 0, DPR = 1;
+const ctx = canvas.getContext("2d");
 
 function resize() {
-  DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-  W = Math.floor(window.innerWidth * DPR);
-  H = Math.floor(window.innerHeight * DPR);
-  canvas.width = W;
-  canvas.height = H;
-  canvas.style.width = window.innerWidth + "px";
-  canvas.style.height = window.innerHeight + "px";
-
-  // hard black fill — prevents iOS white flash
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, W, H);
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
 }
-window.addEventListener("resize", resize);
+addEventListener("resize", resize);
 resize();
 
-/* =========================
-   VISUAL — UNBIASED FIELD
-   - no privileged center
-   - no edges as "targets"
-   - uniform expected relevance everywhere
-   - fade-to-infinity decay
-========================= */
+/* ===============================
+   VISUAL — DISTRIBUTED NOISE
+   (NO CENTER, NO EDGE, NO LINE)
+================================ */
 
-let started = false;
-
-// keep a tiny bit of temporal coherence without creating spatial "objects"
-let drift = 0;
+let phase = Math.random() * 1000;
 
 function draw() {
-  // Fade-to-infinity decay (not a clear)
-  // This avoids hard resets while staying black-dominant.
-  ctx.fillStyle = "rgba(0,0,0,0.22)";
-  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Non-periodic micro-instability (no sine, no rhythm)
-  drift += (Math.random() - 0.5) * 0.35;
-  drift *= 0.985;
+  const img = ctx.createImageData(canvas.width, canvas.height);
+  const d = img.data;
 
-  // Uniform field sampling: points are iid across the whole screen
-  // (no center, no frame, no border duty).
-  // Density scales with screen size but is capped for iOS safety.
-  const area = (W * H);
-  const N = Math.max(450, Math.min(1400, Math.floor(area / 18000)));
+  phase += 0.003;
 
-  ctx.fillStyle = "rgba(255,255,255,0.035)"; // off-white-ish, very faint
+  for (let i = 0; i < d.length; i += 4) {
+    const n =
+      (Math.sin(i * 0.00012 + phase) +
+       Math.sin(i * 0.00007 - phase * 0.8)) * 0.5;
 
-  for (let i = 0; i < N; i++) {
-    // add tiny sub-pixel jitter so it never "locks" into a grid look
-    const x = (Math.random() * W + drift) % W;
-    const y = Math.random() * H;
-
-    // draw a 1–2px speck; size variation prevents a single visual "token"
-    const s = (Math.random() < 0.75) ? 1 : 2;
-    ctx.fillRect(x, y, s, s);
+    const v = 6 + n * 6; // tuned for lowest brightness
+    d[i] = d[i + 1] = d[i + 2] = v;
+    d[i + 3] = 255;
   }
 
+  ctx.putImageData(img, 0, 0);
   requestAnimationFrame(draw);
 }
 
-/* =========================
-   START — iOS CORRECT
-========================= */
+/* ===============================
+   ADAPTATION (EVIDENCE ONLY)
+================================ */
+
+let active = false;
+let t0 = 0;
+
+function showWindow() {
+  active = true;
+  t0 = performance.now();
+
+  setTimeout(() => {
+    if (active) {
+      // miss → loosen
+      windowMs = Math.min(MAX, windowMs + STEP);
+      localStorage.setItem(KEY, windowMs);
+      active = false;
+      setTimeout(showWindow, windowMs);
+    }
+  }, windowMs);
+}
+
+document.addEventListener("pointerdown", () => {
+  if (!active) return;
+
+  const rt = performance.now() - t0;
+
+  // clean hit → tighten
+  windowMs = Math.max(MIN, windowMs - STEP);
+  localStorage.setItem(KEY, windowMs);
+
+  active = false;
+  setTimeout(showWindow, windowMs);
+});
+
+/* ===============================
+   START (ONE TAP)
+================================ */
 
 const overlay = document.getElementById("overlay");
+let started = false;
 
 function begin(e) {
   if (started) return;
@@ -173,17 +195,15 @@ function begin(e) {
   e.preventDefault();
   e.stopPropagation();
 
-  // start visual first
+  startAudio();
   requestAnimationFrame(draw);
 
-  // then audio
-  startAudio();
-
   overlay.classList.add("hidden");
-  document.body.offsetHeight; // force Safari repaint
+  document.body.offsetHeight; // Safari repaint
+
+  setTimeout(showWindow, windowMs);
 }
 
-/* bind to overlay on iOS */
 overlay.addEventListener("touchend", begin, { passive: false });
 overlay.addEventListener("click", begin);
 </script>
