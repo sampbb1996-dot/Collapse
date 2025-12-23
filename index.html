@@ -21,7 +21,6 @@ html, body {
   background: #000;
   overflow: hidden;
 
-  /* iOS hard disables */
   touch-action: manipulation;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
@@ -44,9 +43,10 @@ canvas {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: system-ui;
+  font-family: system-ui, sans-serif;
   font-size: 18px;
   color: #777;
+  background: transparent;
   transition: opacity 0.2s linear;
 }
 
@@ -58,17 +58,17 @@ canvas {
 </head>
 
 <body>
+
 <canvas id="c"></canvas>
 <div id="overlay">tap to begin</div>
 
 <script>
 /* =========================
-   AUDIO — UNCHANGED
+   AUDIO — CONTINUOUS NOISE
+   (iOS SAFE)
 ========================= */
 
-let audioCtx;
-let noiseSource;
-let gainNode;
+let audioCtx, noiseSource, gainNode;
 let audioStarted = false;
 
 function startAudio() {
@@ -112,35 +112,29 @@ window.addEventListener("resize", resize);
 resize();
 
 /* =========================
-   YOUR VISUAL — VERBATIM
+   VISUAL — BRIGHTNESS SAFE
+   FULL-FIELD LOW-CONTRAST
 ========================= */
 
-let drift = 0;
-
 function draw() {
-  // hard black fill — prevents iOS white flash
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const img = ctx.createImageData(canvas.width, canvas.height);
+  const d = img.data;
 
-  // non-periodic micro-instability (no sine, no rhythm)
-  drift += (Math.random() - 0.5) * 0.35;
-  drift *= 0.985;
+  for (let i = 0; i < d.length; i += 4) {
+    // ultra-low luminance variance (undetectable)
+    const v = 2 + Math.random() * 3; // 2–5 / 255
+    d[i]     = v;
+    d[i + 1] = v;
+    d[i + 2] = v;
+    d[i + 3] = 255;
+  }
 
-  const x = canvas.width / 2 + drift;
-
-  ctx.strokeStyle = "rgba(255,255,255,0.12)";
-  ctx.lineWidth = 1;
-
-  ctx.beginPath();
-  ctx.moveTo(x, 0);
-  ctx.lineTo(x, canvas.height);
-  ctx.stroke();
-
+  ctx.putImageData(img, 0, 0);
   requestAnimationFrame(draw);
 }
 
 /* =========================
-   START — iOS CORRECT
+   START — SINGLE GESTURE
 ========================= */
 
 const overlay = document.getElementById("overlay");
@@ -160,12 +154,12 @@ function begin(e) {
   startAudio();
 
   overlay.classList.add("hidden");
-  document.body.offsetHeight; // force Safari repaint
+  document.body.offsetHeight; // force iOS repaint
 }
 
-/* MUST bind to overlay on iOS */
 overlay.addEventListener("touchend", begin, { passive: false });
 overlay.addEventListener("click", begin);
 </script>
+
 </body>
 </html>
