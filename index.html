@@ -2,55 +2,45 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-
 <meta name="viewport"
-  content="width=device-width,
-           initial-scale=1,
-           maximum-scale=1,
-           user-scalable=no">
-
+  content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Signal</title>
 
 <style>
-html, body {
-  margin: 0;
-  width: 100%;
-  height: 100%;
-  background: #000;
-  overflow: hidden;
-  touch-action: manipulation;
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-* {
-  -webkit-tap-highlight-color: transparent;
-}
-
-canvas {
-  position: fixed;
-  inset: 0;
-  display: block;
-}
-
-#overlay {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: system-ui;
-  font-size: 18px;
-  color: #666;
-  background: #000;
-  transition: opacity 0.2s linear;
-}
-
-#overlay.hidden {
-  opacity: 0;
-  pointer-events: none;
-}
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+    touch-action: manipulation;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  * { -webkit-tap-highlight-color: rgba(0,0,0,0); }
+  canvas {
+    position: fixed;
+    inset: 0;
+    display: block;
+  }
+  #overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: system-ui;
+    font-size: 18px;
+    color: #777;
+    transition: opacity 0.2s linear;
+    background: transparent;
+  }
+  #overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
 </style>
 </head>
 
@@ -59,20 +49,10 @@ canvas {
 <div id="overlay">tap to begin</div>
 
 <script>
-/* ===============================
-   PERSISTENCE (ONE VARIABLE)
-================================ */
-
-const KEY = "signal_window";
-let windowMs = Number(localStorage.getItem(KEY)) || 1200;
-
-const MIN = 600;
-const MAX = 1800;
-const STEP = 40;
-
-/* ===============================
-   AUDIO — iOS SAFE WHITE NOISE
-================================ */
+/* =========================
+   AUDIO — CONTINUOUS NOISE
+   (iOS SAFE)
+========================= */
 
 let audioCtx, noiseSource, gainNode, audioStarted = false;
 
@@ -86,104 +66,237 @@ function startAudio() {
   const size = audioCtx.sampleRate * 2;
   const buffer = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
-
-  for (let i = 0; i < size; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
+  for (let i = 0; i < size; i++) data[i] = Math.random() * 2 - 1;
 
   noiseSource = audioCtx.createBufferSource();
   noiseSource.buffer = buffer;
   noiseSource.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.012;
+  gainNode.gain.value = 0.012; // quiet baseline
 
   noiseSource.connect(gainNode).connect(audioCtx.destination);
   noiseSource.start();
 }
 
-/* ===============================
-   CANVAS
-================================ */
+/* =========================
+   CANVAS + OFFSCREEN FIELD
+========================= */
 
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+const ctx = canvas.getContext("2d", { alpha: false });
+
+const off = document.createElement("canvas");
+const offCtx = off.getContext("2d", { willReadFrequently: true });
 
 function resize() {
-  canvas.width = innerWidth;
+  canvas.width  = innerWidth;
   canvas.height = innerHeight;
+
+  // low-res field (scaled up smoothly)
+  const base = Math.max(48, Math.floor(Math.min(canvas.width, canvas.height) / 14));
+  off.width  = base;
+  off.height = base;
 }
 addEventListener("resize", resize);
 resize();
 
-/* ===============================
-   VISUAL — DISTRIBUTED NOISE
-   (NO CENTER, NO EDGE, NO LINE)
-================================ */
+/* =========================
+   FIELD STATE (TOPOGRAPHIC)
+========================= */
 
-let phase = Math.random() * 1000;
+// 2D value field (low-res), slowly deformed
+let field = new Float32Array(off.width * off.height);
+let field2 = new Float32Array(off.width * off.height);
 
-function draw() {
+// init near-zero (no obvious structure)
+for (let i = 0; i < field.length; i++) field[i] = (Math.random() - 0.5) * 0.02;
+
+let t = 0;
+
+// interaction “entropy” (no instructions required)
+let lastX = null, lastY = null;
+let entropy = 0;          // fast estimate
+let calm = 0;             // slow “stability” estimate
+let sessionStart = 0;
+
+// subtle “hardness” carryover (day-level, very small)
+const KEY = "signal_field_hardness_v1";
+let hardness = 0.35; // 0..1 (higher = more invisible / harder)
+try {
+  const v = parseFloat(localStorage.getItem(KEY));
+  if (!Number.isNaN(v)) hardness = Math.min(0.9, Math.max(0.15, v));
+} catch {}
+
+function saveHardness() {
+  try { localStorage.setItem(KEY, String(hardness)); } catch {}
+}
+
+/* =========================
+   INPUT SENSING (NO PROMPTS)
+========================= */
+
+addEventListener("pointermove", (e) => {
+  if (lastX !== null) {
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    const d = Math.hypot(dx, dy);
+
+    // entropy rises with jittery movement, decays otherwise
+    entropy = entropy * 0.92 + Math.min(40, d) * 0.01;
+
+    // calm rises when entropy stays low
+    calm = calm * 0.995 + (entropy < 0.10 ? 0.005 : 0.0);
+    calm = Math.min(1, calm);
+  }
+  lastX = e.clientX;
+  lastY = e.clientY;
+}, { passive: true });
+
+addEventListener("pointerdown", () => {
+  // Treat taps as “commitments” but keep it silent:
+  // we only adjust hardness if calm is high (gated).
+  if (calm > 0.6) {
+    hardness = Math.min(0.9, hardness + 0.002); // tiny tightening
+    saveHardness();
+  }
+}, { passive: true });
+
+/* =========================
+   FIELD UPDATE
+========================= */
+
+// simple diffusion + micro-injection (avoids bars / axes)
+function stepField() {
+  const w = off.width, h = off.height;
+
+  // rates: keep changes sub-perceptual
+  const diffuse = 0.22;
+  const inject  = 0.0018;
+
+  // interaction affects only *very slowly*
+  // more jitter -> field becomes slightly “louder” (but still subtle)
+  const jitterGain = Math.min(1, entropy * 0.9);
+  const loudness = 0.10 + 0.22 * jitterGain;
+
+  // hardness makes it less visible overall (math / abstract mode)
+  const vis = (1 - hardness) * 0.55 + 0.05;
+
+  for (let y = 0; y < h; y++) {
+    const y0 = (y - 1 + h) % h;
+    const y1 = (y + 1) % h;
+
+    for (let x = 0; x < w; x++) {
+      const x0 = (x - 1 + w) % w;
+      const x1 = (x + 1) % w;
+
+      const i  = y * w + x;
+
+      // 4-neighbor diffusion (wrapped, no borders)
+      const c  = field[i];
+      const n  = field[y0 * w + x];
+      const s  = field[y1 * w + x];
+      const e  = field[y * w + x1];
+      const ww = field[y * w + x0];
+
+      const lap = (n + s + e + ww - 4 * c);
+
+      // micro injection: non-rhythmic, non-directional
+      const r = (Math.random() - 0.5) * 2;
+
+      // drift with time but avoid visible motion cues (no sine)
+      const drift = (Math.random() - 0.5) * 0.0006;
+
+      field2[i] = c
+        + diffuse * lap
+        + inject * r * loudness * vis
+        + drift;
+    }
+  }
+
+  // swap
+  const tmp = field; field = field2; field2 = tmp;
+}
+
+// render as “topographic relief”: shaded + faint contouring
+function renderField() {
+  const w = off.width, h = off.height;
+  const img = offCtx.createImageData(w, h);
+  const d = img.data;
+
+  // contour feel: quantize slightly, then soften via scaling
+  const contourSteps = 9 + Math.floor((1 - hardness) * 8); // harder => fewer obvious steps
+  const contourStrength = 0.12 * (1 - hardness);
+
+  for (let i = 0; i < w * h; i++) {
+    // normalize to ~0..1 around 0
+    let v = field[i];
+
+    // keep it extremely subtle
+    v = Math.max(-0.25, Math.min(0.25, v));
+
+    // shift to 0..1
+    let u = 0.5 + v;
+
+    // contouring without bars: mild quantization + bias
+    const q = Math.round(u * contourSteps) / contourSteps;
+    u = u * (1 - contourStrength) + q * contourStrength;
+
+    // map to near-black with off-white relief
+    // (works even if iPhone brightness is low; still not “bright”)
+    const base = 0; // black
+    const lift = 28; // how far it can lift toward off-white
+    const lum = base + u * lift;
+
+    d[i*4+0] = lum; // R
+    d[i*4+1] = lum; // G
+    d[i*4+2] = lum; // B
+    d[i*4+3] = 255; // A
+  }
+
+  offCtx.putImageData(img, 0, 0);
+
+  // draw scaled smoothly — removes pixel grid cues
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  const img = ctx.createImageData(canvas.width, canvas.height);
-  const d = img.data;
+  ctx.imageSmoothingEnabled = true;
+  ctx.globalAlpha = 1;
 
-  phase += 0.003;
+  ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+}
 
-  for (let i = 0; i < d.length; i += 4) {
-    const n =
-      (Math.sin(i * 0.00012 + phase) +
-       Math.sin(i * 0.00007 - phase * 0.8)) * 0.5;
+/* =========================
+   LOOP
+========================= */
 
-    const v = 6 + n * 6; // tuned for lowest brightness
-    d[i] = d[i + 1] = d[i + 2] = v;
-    d[i + 3] = 255;
+let running = false;
+
+function loop() {
+  if (!running) return;
+
+  // time only used as “latent context” (no rhythm)
+  t += 1;
+
+  // update field a few tiny steps per frame
+  stepField();
+  if ((t & 1) === 0) stepField();
+
+  // very subtle day/session easing:
+  // as session continues calmly, hardness can tighten a hair.
+  const minutes = (performance.now() - sessionStart) / 60000;
+  if (minutes > 1 && calm > 0.75 && (t % 240) === 0) {
+    hardness = Math.min(0.9, hardness + 0.001);
+    saveHardness();
   }
 
-  ctx.putImageData(img, 0, 0);
-  requestAnimationFrame(draw);
+  renderField();
+  requestAnimationFrame(loop);
 }
 
-/* ===============================
-   ADAPTATION (EVIDENCE ONLY)
-================================ */
-
-let active = false;
-let t0 = 0;
-
-function showWindow() {
-  active = true;
-  t0 = performance.now();
-
-  setTimeout(() => {
-    if (active) {
-      // miss → loosen
-      windowMs = Math.min(MAX, windowMs + STEP);
-      localStorage.setItem(KEY, windowMs);
-      active = false;
-      setTimeout(showWindow, windowMs);
-    }
-  }, windowMs);
-}
-
-document.addEventListener("pointerdown", () => {
-  if (!active) return;
-
-  const rt = performance.now() - t0;
-
-  // clean hit → tighten
-  windowMs = Math.max(MIN, windowMs - STEP);
-  localStorage.setItem(KEY, windowMs);
-
-  active = false;
-  setTimeout(showWindow, windowMs);
-});
-
-/* ===============================
-   START (ONE TAP)
-================================ */
+/* =========================
+   START — iOS CORRECT
+========================= */
 
 const overlay = document.getElementById("overlay");
 let started = false;
@@ -195,15 +308,20 @@ function begin(e) {
   e.preventDefault();
   e.stopPropagation();
 
+  sessionStart = performance.now();
+
+  // start visuals first (prevents iOS flash)
+  running = true;
+  requestAnimationFrame(loop);
+
+  // then audio in same gesture
   startAudio();
-  requestAnimationFrame(draw);
 
   overlay.classList.add("hidden");
-  document.body.offsetHeight; // Safari repaint
-
-  setTimeout(showWindow, windowMs);
+  document.body.offsetHeight; // force repaint
 }
 
+// MUST bind to overlay on iOS
 overlay.addEventListener("touchend", begin, { passive: false });
 overlay.addEventListener("click", begin);
 </script>
