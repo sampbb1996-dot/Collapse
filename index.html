@@ -2,10 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta
-  name="viewport"
-  content="width=device-width, initial-scale=1.0, user-scalable=no"
-/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 <title>Field</title>
 
 <style>
@@ -16,9 +13,7 @@ html, body {
   overflow: hidden;
   touch-action: none;
 }
-canvas {
-  display: block;
-}
+canvas { display: block; }
 #hint {
   position: fixed;
   inset: 0;
@@ -39,18 +34,15 @@ canvas {
 
 <script>
 /* ======================
-   INVERSION LOGIC
+   INVERSION STACK
 ====================== */
 
-// primary inversion
 const invert = true;
-
-// meta inversion (negates inversion itself)
 const metaInvert = true;
 
-// XOR — meta acts on inversion, not signal
+// meta acts on inversion, not signal
 function effectiveInvert() {
-  return invert !== metaInvert;
+  return invert !== metaInvert; // XOR
 }
 
 /* ======================
@@ -62,9 +54,7 @@ const ctx = canvas.getContext("2d");
 
 let w = 0, h = 0;
 let running = false;
-
-// pressure ∈ [0,1]
-let p = 0.5;
+let pressure = 0.5;
 
 /* ======================
    RESIZE
@@ -74,27 +64,25 @@ function resize() {
   w = canvas.width = window.innerWidth;
   h = canvas.height = window.innerHeight;
 }
-window.addEventListener("resize", resize, { passive: false });
+window.addEventListener("resize", resize);
 resize();
 
 /* ======================
-   AUDIO
+   AUDIO (iOS SAFE)
 ====================== */
 
 let audioCtx = null;
 let noise = null;
 let gain = null;
 
-function startAudio() {
+function initAudio() {
   if (audioCtx) return;
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
   const ch = buffer.getChannelData(0);
-  for (let i = 0; i < ch.length; i++) {
-    ch[i] = Math.random() * 2 - 1;
-  }
+  for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
 
   noise = audioCtx.createBufferSource();
   noise.buffer = buffer;
@@ -107,9 +95,19 @@ function startAudio() {
   noise.start();
 }
 
+function resumeAudio() {
+  if (audioCtx && audioCtx.state !== "running") {
+    audioCtx.resume();
+  }
+}
+
 function setAudio(level) {
-  if (!gain) return;
-  gain.gain.value = Math.max(0, Math.min(0.15, level));
+  if (!gain || !audioCtx) return;
+  gain.gain.setTargetAtTime(
+    Math.max(0, Math.min(0.12, level)),
+    audioCtx.currentTime,
+    0.03
+  );
 }
 
 /* ======================
@@ -117,18 +115,21 @@ function setAudio(level) {
 ====================== */
 
 function readPressure(e) {
-  let val = 0.5;
+  let p = 0.5;
   const t = e.touches && e.touches[0];
   if (t && typeof t.force === "number") {
-    val = t.force === 0 ? 0.05 : t.force;
+    p = t.force === 0 ? 0.05 : t.force;
   }
-  p = Math.max(0, Math.min(1, val));
+  pressure = Math.max(0, Math.min(1, p));
 }
 
 canvas.addEventListener("touchstart", e => {
   e.preventDefault();
+
   running = true;
-  startAudio();
+  initAudio();
+  resumeAudio(); // 🔑 THIS IS THE FIX
+
   document.getElementById("hint").style.display = "none";
   readPressure(e);
 }, { passive: false });
@@ -140,15 +141,14 @@ canvas.addEventListener("touchmove", e => {
 
 canvas.addEventListener("touchend", e => {
   e.preventDefault();
+
   running = false;
 
-  // hard black — no visual observation
+  // hard black — no observation
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
 
-  // mute instantly
   setAudio(0);
-
   document.getElementById("hint").style.display = "flex";
 }, { passive: false });
 
@@ -158,12 +158,11 @@ canvas.addEventListener("touchend", e => {
 
 function controlU() {
   const inv = effectiveInvert();
-  const u = inv ? (1 - p) : p;
+  const u = inv ? (1 - pressure) : pressure;
   return Math.max(0, Math.min(1, u));
 }
 
 function collapse(u, floor, range) {
-  // subtractive: higher u → less output
   return floor + range * (1 - u);
 }
 
@@ -173,16 +172,14 @@ function collapse(u, floor, range) {
 
 function step() {
   requestAnimationFrame(step);
-
   if (!running) return;
 
-  // keep screen black at all times
+  // visual always black
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
 
-  // audio only
   const u = controlU();
-  const level = collapse(u, 0.01, 0.05);
+  const level = collapse(u, 0.01, 0.045);
   setAudio(level);
 }
 
