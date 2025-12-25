@@ -1,175 +1,249 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
+<meta charset="UTF-8" />
 <meta name="viewport"
-  content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<meta name="apple-mobile-web-app-capable" content="yes">
+  content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
 <title>Signal</title>
 
 <style>
-html, body {
-  margin: 0;
-  width: 100%;
-  height: 100%;
-  background: #000;
-  overflow: hidden;
-  touch-action: none;
-  -webkit-user-select: none;
-  user-select: none;
-}
-canvas {
-  position: fixed;
-  inset: 0;
-  display: block;
-}
-#overlay {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #666;
-  font-family: system-ui;
-  font-size: 18px;
-}
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+
+    /* iOS hard disables */
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: rgba(0,0,0,0);
+  }
+
+  canvas {
+    position: fixed;
+    inset: 0;
+    display: block;
+  }
+
+  /* Only used to satisfy iOS audio gesture requirement */
+  #overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: system-ui;
+    font-size: 18px;
+    color: rgba(255,255,255,0.35);
+    background: transparent;
+  }
+  #overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
 </style>
 </head>
 
 <body>
 <canvas id="c"></canvas>
-<div id="overlay">tap to begin</div>
+<div id="overlay">touch and hold</div>
 
 <script>
-/* =======================
-   CANVAS
-======================= */
+/* =========================================================
+   GOAL (LOCKED)
+   - Full-screen, no line, no frame: low-contrast noise field
+   - Audio: continuous noise (iOS safe)
+   - Input: finger ON = runs, finger OFF = pauses (no tapping)
+   - No snapping, no obvious structure
+========================================================= */
+
+/* ---------- Canvas ---------- */
 
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+const ctx = canvas.getContext("2d", { alpha: false });
 
 function resize() {
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
+  canvas.width = Math.max(1, innerWidth);
+  canvas.height = Math.max(1, innerHeight);
 }
-addEventListener("resize", resize);
+addEventListener("resize", resize, { passive: true });
 resize();
 
-/* =======================
-   AUDIO
-======================= */
+/* ---------- Visual noise source (small -> scaled, smoothed) ---------- */
 
-let audioCtx, noiseSource, gainNode;
-let audioStarted = false;
+const nCanvas = document.createElement("canvas");
+const nCtx = nCanvas.getContext("2d", { willReadFrequently: true });
 
-function startAudio() {
-  if (audioStarted) return;
-  audioStarted = true;
+function setNoiseSize() {
+  // Small field, scaled up with smoothing to avoid pixel-grid handles.
+  // Pick size proportional to screen, capped.
+  const base = Math.max(96, Math.min(180, Math.floor(Math.min(canvas.width, canvas.height) / 5)));
+  nCanvas.width = base;
+  nCanvas.height = base;
+}
+setNoiseSize();
+addEventListener("resize", setNoiseSize, { passive: true });
+
+let nImg = nCtx.createImageData(nCanvas.width, nCanvas.height);
+function refreshNoiseImageData() {
+  if (nImg.width !== nCanvas.width || nImg.height !== nCanvas.height) {
+    nImg = nCtx.createImageData(nCanvas.width, nCanvas.height);
+  }
+}
+
+/* Visual parameters (kept tiny to avoid “game handles”) */
+let drift = 0;            // slow latent drift, non-periodic
+let contrast = 0.020;     // very low contrast (tuned for low phone brightness)
+let grain = 0.006;        // micro-dither to reduce banding/bars
+
+function drawVisual() {
+  // hard black fill (prevents Safari white flash)
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Non-periodic drift (no sine)
+  drift += (Math.random() - 0.5) * 0.0015;
+  drift *= 0.995;
+
+  refreshNoiseImageData();
+  const data = nImg.data;
+
+  // Generate low-contrast grayscale noise + micro-dither
+  // (avoid “bars” from quantization by always adding tiny random)
+  for (let i = 0; i < data.length; i += 4) {
+    const r = (Math.random() - 0.5);               // [-0.5, 0.5)
+    const d = (Math.random() - 0.5) * grain;       // tiny dither
+    const v = 0.5 + (r * contrast) + (drift * 0.15) + d; // around mid-gray
+    const c = Math.max(0, Math.min(1, v));
+    const px = (c * 255) | 0;
+
+    data[i] = px;
+    data[i + 1] = px;
+    data[i + 2] = px;
+    data[i + 3] = 255;
+  }
+
+  nCtx.putImageData(nImg, 0, 0);
+
+  // Scale up smoothly (no grid handle)
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(nCanvas, 0, 0, canvas.width, canvas.height);
+}
+
+/* ---------- Audio: continuous noise (iOS safe) ---------- */
+
+let audioCtx = null;
+let noiseSource = null;
+let gainNode = null;
+let audioReady = false;
+
+function initAudioOnce() {
+  if (audioReady) return;
+  audioReady = true;
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  audioCtx.resume();
 
-  const size = audioCtx.sampleRate * 2;
-  const buffer = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-
-  for (let i = 0; i < size; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
+  const bufferSize = audioCtx.sampleRate * 2;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const out = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) out[i] = Math.random() * 2 - 1;
 
   noiseSource = audioCtx.createBufferSource();
   noiseSource.buffer = buffer;
   noiseSource.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.01;
+  gainNode.gain.value = 0.0; // start muted; unmute only while finger is down
 
   noiseSource.connect(gainNode).connect(audioCtx.destination);
   noiseSource.start();
 }
 
-/* =======================
-   INPUT STATE
-======================= */
+function setAudioRunning(isRunning) {
+  if (!audioCtx || !gainNode) return;
+  // iOS sometimes suspends; resume on interaction
+  if (audioCtx.state !== "running") audioCtx.resume();
 
-let holding = false;
-let pressure = 0;
-
-canvas.addEventListener("pointerdown", e => {
-  holding = true;
-  pressure = e.pressure || 0.1;
-});
-
-canvas.addEventListener("pointermove", e => {
-  if (!holding) return;
-  pressure = e.pressure || pressure;
-});
-
-canvas.addEventListener("pointerup", () => {
-  holding = false;
-  pressure = 0;
-});
-
-canvas.addEventListener("pointercancel", () => {
-  holding = false;
-  pressure = 0;
-});
-
-/* =======================
-   VISUAL FIELD
-======================= */
-
-function draw() {
-  if (!holding) {
-    // PAUSED — do nothing, preserve last frame
-    requestAnimationFrame(draw);
-    return;
-  }
-
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  const intensity = Math.min(pressure * 0.15, 0.04);
-
-  const img = ctx.createImageData(canvas.width, canvas.height);
-  const d = img.data;
-
-  for (let i = 0; i < d.length; i += 4) {
-    const n = (Math.random() - 0.5) * 255 * intensity;
-    d[i] = d[i+1] = d[i+2] = n;
-    d[i+3] = 255;
-  }
-
-  ctx.putImageData(img, 0, 0);
-
-  if (gainNode) {
-    const target = 0.008 + intensity * 0.25;
-    gainNode.gain.value += (target - gainNode.gain.value) * 0.02;
-  }
-
-  requestAnimationFrame(draw);
+  // Soft ramp to avoid clicks
+  const now = audioCtx.currentTime;
+  const target = isRunning ? 0.015 : 0.0;
+  gainNode.gain.cancelScheduledValues(now);
+  gainNode.gain.setValueAtTime(gainNode.gain.value, now);
+  gainNode.gain.linearRampToValueAtTime(target, now + 0.03);
 }
 
-/* =======================
-   START
-======================= */
+/* ---------- Run/Pause: finger on = run, finger off = pause ---------- */
+
+let running = false;
+let rafId = 0;
+
+function startLoop() {
+  if (running) return;
+  running = true;
+  setAudioRunning(true);
+
+  const tick = () => {
+    if (!running) return;
+    drawVisual();
+    rafId = requestAnimationFrame(tick);
+  };
+  rafId = requestAnimationFrame(tick);
+}
+
+function stopLoop() {
+  if (!running) return;
+  running = false;
+  setAudioRunning(false);
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = 0;
+
+  // Keep the last frame (don’t clear to white)
+  // (optional) you can uncomment to hard-black on pause:
+  // ctx.fillStyle = "#000"; ctx.fillRect(0,0,canvas.width,canvas.height);
+}
+
+/* ---------- Input wiring (single-touch, iOS safe) ---------- */
 
 const overlay = document.getElementById("overlay");
-let started = false;
+let everStarted = false;
 
-function begin(e) {
-  if (started) return;
-  started = true;
+function onDown(e) {
+  // IMPORTANT: first user gesture initializes audio.
+  if (!everStarted) {
+    everStarted = true;
+    initAudioOnce();
+    overlay.classList.add("hidden");
+    document.body.offsetHeight; // Safari repaint
+  }
 
   e.preventDefault();
-  overlay.remove();
-
-  startAudio();
-  requestAnimationFrame(draw);
+  startLoop();
 }
 
-overlay.addEventListener("touchend", begin, { passive: false });
-overlay.addEventListener("click", begin);
+function onUp(e) {
+  e.preventDefault();
+  stopLoop();
+}
+
+// Finger on/off anywhere on screen
+window.addEventListener("touchstart", onDown, { passive: false });
+window.addEventListener("touchend", onUp, { passive: false });
+window.addEventListener("touchcancel", onUp, { passive: false });
+
+// Also support non-touch pointers (desktop)
+window.addEventListener("pointerdown", onDown, { passive: false });
+window.addEventListener("pointerup", onUp, { passive: false });
+window.addEventListener("pointercancel", onUp, { passive: false });
+
+/* ---------- Safety: prevent Safari double-tap zoom quirks ---------- */
+document.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false });
+
+/* ---------- Render one static frame immediately (never white) ---------- */
+drawVisual();
 </script>
 </body>
 </html>
