@@ -1,46 +1,39 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
+<meta charset="UTF-8" />
 <meta name="viewport"
-  content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no">
+  content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Signal</title>
 
 <style>
-  html, body {
-    margin: 0;
-    width: 100%;
-    height: 100%;
-    background: #000;
-    overflow: hidden;
-    touch-action: manipulation;
-    -webkit-touch-callout: none;
-    -webkit-user-select: none;
-    user-select: none;
-  }
-  * { -webkit-tap-highlight-color: rgba(0,0,0,0); }
-  canvas {
-    position: fixed;
-    inset: 0;
-    display: block;
-  }
-  #overlay {
-    position: fixed;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: system-ui;
-    font-size: 18px;
-    color: #777;
-    transition: opacity 0.2s linear;
-    background: transparent;
-  }
-  #overlay.hidden {
-    opacity: 0;
-    pointer-events: none;
-  }
+html,body{
+  margin:0;
+  width:100%;
+  height:100%;
+  background:#000;
+  overflow:hidden;
+  touch-action:none;
+  -webkit-user-select:none;
+  user-select:none;
+}
+canvas{
+  position:fixed;
+  inset:0;
+  display:block;
+}
+#overlay{
+  position:fixed;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#777;
+  font-family:system-ui;
+  font-size:18px;
+}
+#overlay.hidden{opacity:0;pointer-events:none;}
 </style>
 </head>
 
@@ -49,281 +42,140 @@
 <div id="overlay">tap to begin</div>
 
 <script>
-/* =========================
-   AUDIO — CONTINUOUS NOISE
-   (iOS SAFE)
-========================= */
+/* =======================
+   AUDIO — iOS SAFE
+======================= */
+let audioCtx, noiseSource, gainNode, audioStarted=false;
 
-let audioCtx, noiseSource, gainNode, audioStarted = false;
+function startAudio(){
+  if(audioStarted) return;
+  audioStarted=true;
 
-function startAudio() {
-  if (audioStarted) return;
-  audioStarted = true;
-
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  audioCtx=new (window.AudioContext||window.webkitAudioContext)();
   audioCtx.resume();
 
-  const size = audioCtx.sampleRate * 2;
-  const buffer = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < size; i++) data[i] = Math.random() * 2 - 1;
+  const size=audioCtx.sampleRate*2;
+  const buffer=audioCtx.createBuffer(1,size,audioCtx.sampleRate);
+  const data=buffer.getChannelData(0);
+  for(let i=0;i<size;i++) data[i]=Math.random()*2-1;
 
-  noiseSource = audioCtx.createBufferSource();
-  noiseSource.buffer = buffer;
-  noiseSource.loop = true;
+  noiseSource=audioCtx.createBufferSource();
+  noiseSource.buffer=buffer;
+  noiseSource.loop=true;
 
-  gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.012; // quiet baseline
+  gainNode=audioCtx.createGain();
+  gainNode.gain.value=0.015;
 
   noiseSource.connect(gainNode).connect(audioCtx.destination);
   noiseSource.start();
 }
 
-/* =========================
-   CANVAS + OFFSCREEN FIELD
-========================= */
+/* =======================
+   CANVAS
+======================= */
+const canvas=document.getElementById("c");
+const ctx=canvas.getContext("2d");
 
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d", { alpha: false });
-
-const off = document.createElement("canvas");
-const offCtx = off.getContext("2d", { willReadFrequently: true });
-
-function resize() {
-  canvas.width  = innerWidth;
-  canvas.height = innerHeight;
-
-  // low-res field (scaled up smoothly)
-  const base = Math.max(48, Math.floor(Math.min(canvas.width, canvas.height) / 14));
-  off.width  = base;
-  off.height = base;
+function resize(){
+  canvas.width=innerWidth;
+  canvas.height=innerHeight;
 }
-addEventListener("resize", resize);
+addEventListener("resize",resize);
 resize();
 
-/* =========================
-   FIELD STATE (TOPOGRAPHIC)
-========================= */
+/* =======================
+   STATE (PERSISTENT)
+======================= */
+const KEY="signal_hardness";
+let hardness=Number(localStorage.getItem(KEY))||1.0; // higher = harder
+let contact=false;
+let lastLift=0;
 
-// 2D value field (low-res), slowly deformed
-let field = new Float32Array(off.width * off.height);
-let field2 = new Float32Array(off.width * off.height);
-
-// init near-zero (no obvious structure)
-for (let i = 0; i < field.length; i++) field[i] = (Math.random() - 0.5) * 0.02;
-
-let t = 0;
-
-// interaction “entropy” (no instructions required)
-let lastX = null, lastY = null;
-let entropy = 0;          // fast estimate
-let calm = 0;             // slow “stability” estimate
-let sessionStart = 0;
-
-// subtle “hardness” carryover (day-level, very small)
-const KEY = "signal_field_hardness_v1";
-let hardness = 0.35; // 0..1 (higher = more invisible / harder)
-try {
-  const v = parseFloat(localStorage.getItem(KEY));
-  if (!Number.isNaN(v)) hardness = Math.min(0.9, Math.max(0.15, v));
-} catch {}
-
-function saveHardness() {
-  try { localStorage.setItem(KEY, String(hardness)); } catch {}
+/* =======================
+   INPUT (INVERTED)
+======================= */
+function onDown(){
+  contact=true;
+}
+function onUp(){
+  if(!contact) return;
+  contact=false;
+  registerAction();
 }
 
-/* =========================
-   INPUT SENSING (NO PROMPTS)
-========================= */
+/* ACTION = FINGER LIFT */
+function registerAction(){
+  const now=performance.now();
+  const dt=now-lastLift;
+  lastLift=now;
 
-addEventListener("pointermove", (e) => {
-  if (lastX !== null) {
-    const dx = e.clientX - lastX;
-    const dy = e.clientY - lastY;
-    const d = Math.hypot(dx, dy);
-
-    // entropy rises with jittery movement, decays otherwise
-    entropy = entropy * 0.92 + Math.min(40, d) * 0.01;
-
-    // calm rises when entropy stays low
-    calm = calm * 0.995 + (entropy < 0.10 ? 0.005 : 0.0);
-    calm = Math.min(1, calm);
+  // Adapt only by consistency (no feedback)
+  if(dt>300 && dt<3000){
+    hardness=Math.min(hardness*1.02,3);
+  }else{
+    hardness=Math.max(hardness*0.98,0.6);
   }
-  lastX = e.clientX;
-  lastY = e.clientY;
-}, { passive: true });
-
-addEventListener("pointerdown", () => {
-  // Treat taps as “commitments” but keep it silent:
-  // we only adjust hardness if calm is high (gated).
-  if (calm > 0.6) {
-    hardness = Math.min(0.9, hardness + 0.002); // tiny tightening
-    saveHardness();
-  }
-}, { passive: true });
-
-/* =========================
-   FIELD UPDATE
-========================= */
-
-// simple diffusion + micro-injection (avoids bars / axes)
-function stepField() {
-  const w = off.width, h = off.height;
-
-  // rates: keep changes sub-perceptual
-  const diffuse = 0.22;
-  const inject  = 0.0018;
-
-  // interaction affects only *very slowly*
-  // more jitter -> field becomes slightly “louder” (but still subtle)
-  const jitterGain = Math.min(1, entropy * 0.9);
-  const loudness = 0.10 + 0.22 * jitterGain;
-
-  // hardness makes it less visible overall (math / abstract mode)
-  const vis = (1 - hardness) * 0.55 + 0.05;
-
-  for (let y = 0; y < h; y++) {
-    const y0 = (y - 1 + h) % h;
-    const y1 = (y + 1) % h;
-
-    for (let x = 0; x < w; x++) {
-      const x0 = (x - 1 + w) % w;
-      const x1 = (x + 1) % w;
-
-      const i  = y * w + x;
-
-      // 4-neighbor diffusion (wrapped, no borders)
-      const c  = field[i];
-      const n  = field[y0 * w + x];
-      const s  = field[y1 * w + x];
-      const e  = field[y * w + x1];
-      const ww = field[y * w + x0];
-
-      const lap = (n + s + e + ww - 4 * c);
-
-      // micro injection: non-rhythmic, non-directional
-      const r = (Math.random() - 0.5) * 2;
-
-      // drift with time but avoid visible motion cues (no sine)
-      const drift = (Math.random() - 0.5) * 0.0006;
-
-      field2[i] = c
-        + diffuse * lap
-        + inject * r * loudness * vis
-        + drift;
-    }
-  }
-
-  // swap
-  const tmp = field; field = field2; field2 = tmp;
+  localStorage.setItem(KEY,hardness);
 }
 
-// render as “topographic relief”: shaded + faint contouring
-function renderField() {
-  const w = off.width, h = off.height;
-  const img = offCtx.createImageData(w, h);
-  const d = img.data;
+/* =======================
+   VISUAL — DIFFUSE FIELD
+======================= */
+let field=[];
+const N=400;
 
-  // contour feel: quantize slightly, then soften via scaling
-  const contourSteps = 9 + Math.floor((1 - hardness) * 8); // harder => fewer obvious steps
-  const contourStrength = 0.12 * (1 - hardness);
+function initField(){
+  field=[];
+  for(let i=0;i<N;i++){
+    field.push({
+      x:Math.random()*canvas.width,
+      y:Math.random()*canvas.height,
+      v:(Math.random()-0.5)*0.3
+    });
+  }
+}
+initField();
 
-  for (let i = 0; i < w * h; i++) {
-    // normalize to ~0..1 around 0
-    let v = field[i];
+function draw(){
+  ctx.fillStyle="#000";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
 
-    // keep it extremely subtle
-    v = Math.max(-0.25, Math.min(0.25, v));
-
-    // shift to 0..1
-    let u = 0.5 + v;
-
-    // contouring without bars: mild quantization + bias
-    const q = Math.round(u * contourSteps) / contourSteps;
-    u = u * (1 - contourStrength) + q * contourStrength;
-
-    // map to near-black with off-white relief
-    // (works even if iPhone brightness is low; still not “bright”)
-    const base = 0; // black
-    const lift = 28; // how far it can lift toward off-white
-    const lum = base + u * lift;
-
-    d[i*4+0] = lum; // R
-    d[i*4+1] = lum; // G
-    d[i*4+2] = lum; // B
-    d[i*4+3] = 255; // A
+  ctx.fillStyle="rgba(255,255,255,0.03)";
+  for(const p of field){
+    p.y+=p.v*hardness;
+    if(p.y<0) p.y+=canvas.height;
+    if(p.y>canvas.height) p.y-=canvas.height;
+    ctx.fillRect(p.x,p.y,1,1);
   }
 
-  offCtx.putImageData(img, 0, 0);
-
-  // draw scaled smoothly — removes pixel grid cues
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.imageSmoothingEnabled = true;
-  ctx.globalAlpha = 1;
-
-  ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+  requestAnimationFrame(draw);
 }
 
-/* =========================
-   LOOP
-========================= */
+/* =======================
+   START
+======================= */
+const overlay=document.getElementById("overlay");
+let started=false;
 
-let running = false;
-
-function loop() {
-  if (!running) return;
-
-  // time only used as “latent context” (no rhythm)
-  t += 1;
-
-  // update field a few tiny steps per frame
-  stepField();
-  if ((t & 1) === 0) stepField();
-
-  // very subtle day/session easing:
-  // as session continues calmly, hardness can tighten a hair.
-  const minutes = (performance.now() - sessionStart) / 60000;
-  if (minutes > 1 && calm > 0.75 && (t % 240) === 0) {
-    hardness = Math.min(0.9, hardness + 0.001);
-    saveHardness();
-  }
-
-  renderField();
-  requestAnimationFrame(loop);
-}
-
-/* =========================
-   START — iOS CORRECT
-========================= */
-
-const overlay = document.getElementById("overlay");
-let started = false;
-
-function begin(e) {
-  if (started) return;
-  started = true;
-
+function begin(e){
+  if(started) return;
+  started=true;
   e.preventDefault();
-  e.stopPropagation();
 
-  sessionStart = performance.now();
-
-  // start visuals first (prevents iOS flash)
-  running = true;
-  requestAnimationFrame(loop);
-
-  // then audio in same gesture
   startAudio();
+  initField();
+  requestAnimationFrame(draw);
 
   overlay.classList.add("hidden");
-  document.body.offsetHeight; // force repaint
 }
 
-// MUST bind to overlay on iOS
-overlay.addEventListener("touchend", begin, { passive: false });
-overlay.addEventListener("click", begin);
+overlay.addEventListener("touchstart",begin,{passive:false});
+overlay.addEventListener("click",begin);
+
+window.addEventListener("touchstart",onDown,{passive:false});
+window.addEventListener("touchend",onUp,{passive:false});
+window.addEventListener("mousedown",onDown);
+window.addEventListener("mouseup",onUp);
 </script>
 </body>
 </html>
