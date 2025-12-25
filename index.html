@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
+<meta charset="UTF-8" />
 <meta name="viewport"
-  content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no">
-<meta name="apple-mobile-web-app-capable" content="yes">
+  content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
 <title>Signal</title>
 
 <style>
@@ -15,174 +15,201 @@ html, body {
   background: #000;
   overflow: hidden;
 
-  touch-action: manipulation;
+  touch-action: none;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
+  -webkit-tap-highlight-color: rgba(0,0,0,0);
 }
-* { -webkit-tap-highlight-color: rgba(0,0,0,0); }
-
 canvas {
   position: fixed;
   inset: 0;
   display: block;
 }
-
-#overlay{
-  position:fixed;
-  inset:0;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-family:system-ui;
-  font-size:18px;
-  color:#777;
-  background:transparent;
-  transition:opacity 0.2s linear;
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: system-ui;
+  font-size: 18px;
+  color: #777;
+  background: transparent;
 }
-#overlay.hidden{
-  opacity:0;
-  pointer-events:none;
-}
+#overlay.hidden { opacity: 0; pointer-events: none; }
 </style>
 </head>
 
 <body>
 <canvas id="c"></canvas>
-<div id="overlay">tap to begin</div>
+<div id="overlay">touch and hold to begin</div>
 
 <script>
-/* =========================================================
-   AUDIO — CONTINUOUS NOISE (NO LOOP ARTIFACTS)
-   - iOS-safe: starts only on user gesture
-   - Generates noise in real time (not a looping buffer)
-   - No rhythm, no events, no feedback (anti-anchor)
-========================================================= */
+/* =========================
+   AUDIO — same engine, inverted CONTROL
+========================= */
 
-let audioCtx = null;
-let gainNode = null;
-let noiseNode = null;
+let audioCtx, noiseSource, gainNode;
 let audioStarted = false;
 
-function startAudio(){
-  if(audioStarted) return;
+function startAudio() {
+  if (audioStarted) return;
   audioStarted = true;
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  // iOS requires resume inside the gesture handler
   audioCtx.resume();
 
+  const size = audioCtx.sampleRate * 2;
+  const buffer = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < size; i++) data[i] = Math.random() * 2 - 1;
+
+  noiseSource = audioCtx.createBufferSource();
+  noiseSource.buffer = buffer;
+  noiseSource.loop = true;
+
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.012; // quiet by default
+  gainNode.gain.value = 0.015; // base audible level (will be suppressed on HOLD)
 
-  // ScriptProcessor is deprecated but still the most reliable iOS fallback.
-  // This avoids the "looping buffer" sound you disliked.
-  const bufferSize = 2048;
-  noiseNode = audioCtx.createScriptProcessor(bufferSize, 1, 1);
-
-  // very subtle slow drift in level (non-periodic; no sine)
-  let lvl = 1.0;
-  let target = 1.0;
-
-  function stepLevel(){
-    // random-walk target (no rhythm)
-    target += (Math.random() - 0.5) * 0.06;
-    if(target < 0.75) target = 0.75;
-    if(target > 1.25) target = 1.25;
-  }
-
-  let n = 0;
-  noiseNode.onaudioprocess = (e) => {
-    const out = e.outputBuffer.getChannelData(0);
-
-    // update drift target occasionally, irregularly
-    if ((n++ & 31) === 0) stepLevel();
-    lvl += (target - lvl) * 0.004;
-
-    // white noise, real-time generated
-    for(let i=0;i<out.length;i++){
-      out[i] = (Math.random() * 2 - 1) * lvl;
-    }
-  };
-
-  noiseNode.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
+  noiseSource.connect(gainNode).connect(audioCtx.destination);
+  noiseSource.start();
 }
 
-/* =========================================================
-   CANVAS
-========================================================= */
+// Inverted audio control:
+// HOLD (finger down) suppresses audio
+// RELEASE (finger up) restores audio
+let targetGain = 0.015;
+function setGainTarget(g) { targetGain = g; }
+function updateGain() {
+  if (!gainNode) return;
+  gainNode.gain.value += (targetGain - gainNode.gain.value) * 0.02;
+}
+
+/* =========================
+   CANVAS SETUP
+========================= */
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d", { alpha: false });
 
-function resize(){
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+function resize() {
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
 }
 addEventListener("resize", resize);
 resize();
 
-/* =========================================================
-   VISUAL — ORIGINAL MICRO-INSTABILITY LINE
-   - hard black fill (prevents iOS white flash)
-   - non-periodic drift (no sine / no rhythm)
-========================================================= */
+/* =========================
+   VISUAL — FULL-FIELD, NO GEOMETRY
+   "inverted polarity": modulation is subtractive / darkening
+   (no lines, no center, no borders doing work)
+========================= */
 
-let drift = 0;
+// We avoid scaled textures (which can create banding/bars).
+// Use sparse stochastic darkening + occasional faint brighten,
+// distributed uniformly across the whole screen.
 
-function draw(){
-  // hard black fill — prevents iOS white flash
-  ctx.fillStyle = "#000";
+let started = false;
+let holding = false;
+
+// “Field” baseline: very-dark, not pure black (so darkening has meaning)
+const base = 6; // 0..255 (keep tiny)
+function fillBase() {
+  ctx.fillStyle = `rgb(${base},${base},${base})`;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
 
-  // non-periodic micro-instability (no sine, no rhythm)
-  drift += (Math.random() - 0.5) * 0.35;
-  drift *= 0.985;
+// stochastic sprinkle
+function sprinkle() {
+  // density tuned for iPhone performance
+  const n = Math.floor((canvas.width * canvas.height) / 1800); // fewer = lighter
+  // inverted signal: mostly DARKENING marks (subtractive feel)
+  ctx.fillStyle = "rgba(0,0,0,0.055)";
+  for (let i = 0; i < n; i++) {
+    const x = Math.random() * canvas.width;
+    const y = Math.random() * canvas.height;
+    // tiny rectangles avoid “point shimmer” patterns
+    ctx.fillRect(x, y, 1.2, 1.2);
+  }
 
-  const x = canvas.width / 2 + drift;
+  // tiny compensating brighten so it never collapses into flat black
+  ctx.fillStyle = "rgba(255,255,255,0.004)";
+  for (let i = 0; i < n * 0.25; i++) {
+    const x = Math.random() * canvas.width;
+    const y = Math.random() * canvas.height;
+    ctx.fillRect(x, y, 1.0, 1.0);
+  }
+}
 
-  ctx.strokeStyle = "rgba(255,255,255,0.12)";
-  ctx.lineWidth = 1;
+function draw() {
+  // hard fill to prevent iOS white flash
+  fillBase();
 
-  ctx.beginPath();
-  ctx.moveTo(x, 0);
-  ctx.lineTo(x, canvas.height);
-  ctx.stroke();
+  // subtle field noise
+  sprinkle();
+
+  // audio smoothing (safe even if audio not started yet)
+  updateGain();
 
   requestAnimationFrame(draw);
 }
 
-/* =========================================================
-   START — iOS CORRECT
-   - starts visual first
-   - then starts audio (in same gesture)
-   - then hides overlay
-========================================================= */
+/* =========================
+   INPUT — INVERTED (ACTION ON RELEASE)
+   HOLD = suppression / no-action
+   RELEASE = action
+========================= */
 
 const overlay = document.getElementById("overlay");
-let started = false;
 
-function begin(e){
-  if(started) return;
+// Begin on first “down” (iOS needs gesture)
+function begin(e) {
+  if (started) return;
   started = true;
 
   e.preventDefault();
   e.stopPropagation();
 
-  // start visual first
+  // Start visual first (Safari-safe)
   requestAnimationFrame(draw);
 
-  // start continuous noise (no looping artifact)
+  // Start audio engine
   startAudio();
 
+  // Overlay hide
   overlay.classList.add("hidden");
-  document.body.offsetHeight; // force repaint on Safari
+  document.body.offsetHeight;
 }
 
-// MUST bind to overlay on iOS
-overlay.addEventListener("touchend", begin, { passive:false });
-overlay.addEventListener("click", begin);
+// HOLD suppresses audio (inverted)
+function onDown(e) {
+  if (!started) begin(e);
+
+  holding = true;
+  // suppress while holding
+  setGainTarget(0.0);
+}
+
+// RELEASE is the “action”
+function onUp(e) {
+  if (!started) return;
+
+  holding = false;
+  // restore on release
+  setGainTarget(0.015);
+
+  // (You can hook “action” here if needed)
+  // actionTimestamp = performance.now();
+}
+
+// Bind
+window.addEventListener("pointerdown", onDown, { passive: false });
+window.addEventListener("pointerup", onUp, { passive: false });
+
+// iOS fallback
+window.addEventListener("touchstart", onDown, { passive: false });
+window.addEventListener("touchend", onUp, { passive: false });
 </script>
 </body>
 </html>
