@@ -13,9 +13,7 @@ html, body {
   overflow: hidden;
   touch-action: none;
 }
-canvas {
-  display: block;
-}
+canvas { display: block; }
 #hint {
   position: fixed;
   inset: 0;
@@ -48,7 +46,7 @@ let running = false;
 // single continuous variable
 let pressure = 0.5;
 
-// latent field state (non-rhythmic)
+// latent field
 let field = 0;
 
 /* ======================
@@ -74,10 +72,7 @@ function startAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
   const ch = buffer.getChannelData(0);
-
-  for (let i = 0; i < ch.length; i++) {
-    ch[i] = Math.random() * 2 - 1;
-  }
+  for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
 
   noise = audioCtx.createBufferSource();
   noise.buffer = buffer;
@@ -95,8 +90,6 @@ function startAudio() {
 ====================== */
 
 function updatePressure(e) {
-  if (!running) return;
-
   let p = 0.5;
   if (e.touches && e.touches[0] && typeof e.touches[0].force === "number") {
     p = Math.max(0.05, e.touches[0].force);
@@ -127,27 +120,27 @@ canvas.addEventListener("touchend", () => {
 
 function step() {
   requestAnimationFrame(step);
-  if (!running) return;
 
-  // slow, non-periodic drift
+  // drift always exists (no hard zero state)
   field += (Math.random() - 0.5) * 0.002;
   field *= 0.995;
 
-  // perceptible but sub-salient luminance
+  // idle vs engaged floor
+  const base = running ? 14 : 18;
+
   const v = Math.max(
     0,
     Math.min(
       255,
-      12 + (field * 10) - pressure * 3
+      base + (field * 10) - (running ? pressure * 3 : 0)
     )
   );
 
   ctx.fillStyle = `rgb(${v},${v},${v})`;
   ctx.fillRect(0, 0, w, h);
 
-  // audio density bias only
   if (gain) {
-    gain.gain.value = 0.025 + pressure * 0.035;
+    gain.gain.value = running ? (0.025 + pressure * 0.035) : 0;
   }
 }
 
