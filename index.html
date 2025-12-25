@@ -4,21 +4,162 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Signal</title>
+
 <style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: #000;
-    overflow: hidden;
-    touch-action: none;
-  }
-  canvas {
-    display: block;
-  }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  overflow: hidden;
+  touch-action: none;
+  height: 100%;
+}
+
+canvas {
+  display: block;
+}
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #777;
+  font-family: system-ui, sans-serif;
+  font-size: 18px;
+  z-index: 10;
+}
 </style>
 </head>
+
 <body>
+<div id="overlay">tap to begin</div>
 <canvas id="c"></canvas>
-<script src="main.js"></script>
+
+<script>
+/* ------------------
+   CANVAS SETUP
+------------------ */
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const overlay = document.getElementById("overlay");
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* ------------------
+   STATE
+------------------ */
+
+let started = false;
+let fingerDown = false;
+let running = false;
+
+/* ------------------
+   AUDIO
+------------------ */
+
+let audioCtx, noiseNode, gainNode;
+
+function startAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  const bufferSize = 2 * audioCtx.sampleRate;
+  const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = noiseBuffer.getChannelData(0);
+
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
+
+  noiseNode = audioCtx.createBufferSource();
+  noiseNode.buffer = noiseBuffer;
+  noiseNode.loop = true;
+
+  gainNode = audioCtx.createGain();
+  gainNode.gain.value = 0.04;
+
+  noiseNode.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+  noiseNode.start();
+}
+
+/* ------------------
+   START GATE (CRITICAL)
+------------------ */
+
+function startApp() {
+  if (started) return;
+  started = true;
+
+  overlay.style.display = "none";
+  startAudio();
+
+  running = true;
+  requestAnimationFrame(draw);
+}
+
+document.addEventListener("touchstart", startApp, { once: true });
+document.addEventListener("mousedown", startApp, { once: true });
+
+/* ------------------
+   INPUT (PAUSE / RUN)
+------------------ */
+
+document.addEventListener("touchstart", () => {
+  fingerDown = true;
+});
+
+document.addEventListener("touchend", () => {
+  fingerDown = false;
+});
+
+document.addEventListener("mousedown", () => {
+  fingerDown = true;
+});
+
+document.addEventListener("mouseup", () => {
+  fingerDown = false;
+});
+
+/* ------------------
+   DRAW LOOP
+------------------ */
+
+function draw() {
+  if (!running) return;
+
+  if (!fingerDown) {
+    requestAnimationFrame(draw);
+    return;
+  }
+
+  // black base
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // ultra-low-contrast noise field
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = img.data;
+
+  for (let i = 0; i < d.length; i += 4) {
+    const v = Math.random() * 6; // subtle
+    d[i] = v;
+    d[i + 1] = v;
+    d[i + 2] = v;
+    d[i + 3] = 255;
+  }
+
+  ctx.putImageData(img, 0, 0);
+
+  requestAnimationFrame(draw);
+}
+</script>
 </body>
 </html>
