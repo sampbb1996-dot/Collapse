@@ -2,57 +2,83 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1.0, user-scalable=no"
+/>
 <title>Field</title>
+
 <style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: #000;
-    overflow: hidden;
-    touch-action: none;
-  }
-  canvas { display: block; }
-  #hint {
-    position: fixed;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(255,255,255,0.28);
-    font-family: system-ui, sans-serif;
-    font-size: 18px;
-    pointer-events: none;
-  }
+/* ===== GLOBAL HARD LOCK ===== */
+html, body, canvas {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  overflow: hidden;
+
+  /* kill ALL iOS selection / callout / focus UI */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: rgba(0,0,0,0);
+
+  touch-action: none;
+}
+
+canvas {
+  display: block;
+}
+
+#hint {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255,255,255,0.28);
+  font-family: system-ui, sans-serif;
+  font-size: 18px;
+  pointer-events: none;
+}
 </style>
 </head>
+
 <body>
+
 <canvas id="c"></canvas>
 <div id="hint">touch and hold</div>
 
 <script>
-/* ======================
+/* =========================
+   HARD BLOCK SAFARI UI
+========================= */
+document.addEventListener("contextmenu", e => e.preventDefault(), { passive: false });
+document.addEventListener("selectstart", e => e.preventDefault(), { passive: false });
+
+/* =========================
    INVERSION STACK
-====================== */
+========================= */
 const invert = true;
 const metaInvert = true;
-const effectiveInvert = () => invert !== metaInvert; // XOR
 
-/* ======================
+// meta-inversion acts on inversion, not signal
+function effectiveInvert() {
+  return invert !== metaInvert; // XOR
+}
+
+/* =========================
    STATE
-====================== */
+========================= */
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 let w = 0, h = 0;
 let running = false;
+let pressure = 0.5;
 
-// pressure in [0,1]
-let p = 0.5;
-
-/* ======================
+/* =========================
    RESIZE
-====================== */
+========================= */
 function resize() {
   w = canvas.width = window.innerWidth;
   h = canvas.height = window.innerHeight;
@@ -60,10 +86,12 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
-/* ======================
-   AUDIO (iOS)
-====================== */
-let audioCtx = null, noise = null, gain = null;
+/* =========================
+   AUDIO (iOS SAFE)
+========================= */
+let audioCtx = null;
+let noise = null;
+let gain = null;
 
 function initAudio() {
   if (audioCtx) return;
@@ -72,7 +100,9 @@ function initAudio() {
 
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
   const ch = buffer.getChannelData(0);
-  for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
+  for (let i = 0; i < ch.length; i++) {
+    ch[i] = Math.random() * 2 - 1;
+  }
 
   noise = audioCtx.createBufferSource();
   noise.buffer = buffer;
@@ -85,42 +115,30 @@ function initAudio() {
   noise.start();
 }
 
-function unlockAudio() {
-  if (!audioCtx) return;
-  if (audioCtx.state !== "running") audioCtx.resume();
+function resumeAudio() {
+  if (audioCtx && audioCtx.state !== "running") {
+    audioCtx.resume();
+  }
 }
 
 function setAudio(level) {
   if (!gain || !audioCtx) return;
-  const v = Math.max(0, Math.min(0.15, level));
-  gain.gain.setTargetAtTime(v, audioCtx.currentTime, 0.03);
+  gain.gain.setTargetAtTime(
+    Math.max(0, Math.min(0.12, level)),
+    audioCtx.currentTime,
+    0.03
+  );
 }
 
-/* ======================
-   CONTROL (subtractive)
-====================== */
-function controlU() {
-  const inv = effectiveInvert();
-  const u = inv ? (1 - p) : p;
-  return Math.max(0, Math.min(1, u));
-}
-
-// higher u => less output (negation)
-function collapse(u, floor, range) {
-  return floor + range * (1 - u);
-}
-
-/* ======================
-   INPUT (Pointer Events)
-====================== */
-
-// We can’t rely on iOS force. Treat it as optional.
-// If unavailable, we still get a valid u via default p=0.5.
-function updatePFromEvent(e) {
-  // PointerEvent.pressure is [0..1] on many devices; iOS Safari sometimes provides 0.5 default.
-  if (typeof e.pressure === "number" && e.pressure > 0) {
-    p = Math.max(0, Math.min(1, e.pressure));
+/* =========================
+   INPUT
+========================= */
+function readPressure(e) {
+  let p = 0.5;
+  if (e.pressure && e.pressure > 0) {
+    p = e.pressure;
   }
+  pressure = Math.max(0, Math.min(1, p));
 }
 
 function startHold(e) {
@@ -128,23 +146,22 @@ function startHold(e) {
   running = true;
 
   initAudio();
-  unlockAudio();
+  resumeAudio();
 
   document.getElementById("hint").style.display = "none";
-  updatePFromEvent(e);
+  readPressure(e);
 }
 
 function moveHold(e) {
   e.preventDefault();
-  if (!running) return;
-  updatePFromEvent(e);
+  if (running) readPressure(e);
 }
 
 function endHold(e) {
   e.preventDefault();
   running = false;
 
-  // hard-black + mute so no observation
+  // absolute black + silence
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
   setAudio(0);
@@ -157,23 +174,35 @@ canvas.addEventListener("pointermove", moveHold, { passive: false });
 canvas.addEventListener("pointerup", endHold, { passive: false });
 canvas.addEventListener("pointercancel", endHold, { passive: false });
 
-/* ======================
+/* =========================
+   CONTROL (SUBTRACTIVE)
+========================= */
+function controlU() {
+  const inv = effectiveInvert();
+  const u = inv ? (1 - pressure) : pressure;
+  return Math.max(0, Math.min(1, u));
+}
+
+function collapse(u, floor, range) {
+  return floor + range * (1 - u);
+}
+
+/* =========================
    LOOP
-====================== */
+========================= */
 function step() {
   requestAnimationFrame(step);
   if (!running) return;
 
-  // VISUAL: still no geometry/texture.
-  // Only a scalar black-level shift while holding so you can verify it's active.
-  const u = controlU();
-  const level = Math.floor(collapse(u, 8, 18)); // 8..26 (still very dark)
-  ctx.fillStyle = `rgb(${level},${level},${level})`;
+  // visual always invariant black
+  ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
 
-  // AUDIO: same u, subtractive
-  setAudio(collapse(u, 0.01, 0.05));
+  // audio carries the entire signal
+  const u = controlU();
+  setAudio(collapse(u, 0.01, 0.045));
 }
+
 step();
 </script>
 </body>
