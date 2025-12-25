@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 <title>Field</title>
+
 <style>
 html, body {
   margin: 0;
@@ -21,7 +22,7 @@ canvas {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255,255,255,0.25);
+  color: rgba(255,255,255,0.28);
   font-family: system-ui, sans-serif;
   font-size: 18px;
   pointer-events: none;
@@ -47,7 +48,7 @@ let running = false;
 // single continuous variable
 let pressure = 0.5;
 
-// latent field state
+// latent field state (non-rhythmic)
 let field = 0;
 
 /* ======================
@@ -79,4 +80,78 @@ function startAudio() {
   }
 
   noise = audioCtx.createBufferSource();
-  noise.buffer =
+  noise.buffer = buffer;
+  noise.loop = true;
+
+  gain = audioCtx.createGain();
+  gain.gain.value = 0;
+
+  noise.connect(gain).connect(audioCtx.destination);
+  noise.start();
+}
+
+/* ======================
+   INPUT
+====================== */
+
+function updatePressure(e) {
+  if (!running) return;
+
+  let p = 0.5;
+  if (e.touches && e.touches[0] && typeof e.touches[0].force === "number") {
+    p = Math.max(0.05, e.touches[0].force);
+  }
+  pressure = Math.min(1, p);
+}
+
+canvas.addEventListener("touchstart", e => {
+  e.preventDefault();
+  running = true;
+  startAudio();
+  document.getElementById("hint").style.display = "none";
+  updatePressure(e);
+});
+
+canvas.addEventListener("touchmove", e => {
+  e.preventDefault();
+  updatePressure(e);
+});
+
+canvas.addEventListener("touchend", () => {
+  running = false;
+});
+
+/* ======================
+   LOOP
+====================== */
+
+function step() {
+  requestAnimationFrame(step);
+  if (!running) return;
+
+  // slow, non-periodic drift
+  field += (Math.random() - 0.5) * 0.002;
+  field *= 0.995;
+
+  // perceptible but sub-salient luminance
+  const v = Math.max(
+    0,
+    Math.min(
+      255,
+      12 + (field * 10) - pressure * 3
+    )
+  );
+
+  ctx.fillStyle = `rgb(${v},${v},${v})`;
+  ctx.fillRect(0, 0, w, h);
+
+  // audio density bias only
+  if (gain) {
+    gain.gain.value = 0.025 + pressure * 0.035;
+  }
+}
+
+step();
+</script>
+</body>
+</html>
