@@ -2,164 +2,130 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 <title>Signal</title>
-
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #000;
-  overflow: hidden;
-  touch-action: none;
-  height: 100%;
-}
-
-canvas {
-  display: block;
-}
-
-#overlay {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #777;
-  font-family: system-ui, sans-serif;
-  font-size: 18px;
-  z-index: 10;
-}
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    overflow: hidden;
+    touch-action: none;
+  }
+  canvas {
+    display: block;
+  }
+  #overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255,255,255,0.35);
+    font-family: system-ui, sans-serif;
+    font-size: 18px;
+    pointer-events: none;
+  }
 </style>
 </head>
-
 <body>
-<div id="overlay">tap to begin</div>
+
+<div id="overlay">touch and hold</div>
 <canvas id="c"></canvas>
 
 <script>
-/* ------------------
+/* =======================
    CANVAS SETUP
------------------- */
+======================= */
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
-const overlay = document.getElementById("overlay");
 
 function resize() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 }
-window.addEventListener("resize", resize);
 resize();
+window.addEventListener("resize", resize);
 
-/* ------------------
+/* =======================
    STATE
------------------- */
+======================= */
 
-let started = false;
-let fingerDown = false;
 let running = false;
+let audioStarted = false;
 
-/* ------------------
-   AUDIO
------------------- */
+/* =======================
+   AUDIO (minimal, safe)
+======================= */
 
-let audioCtx, noiseNode, gainNode;
+const AudioContext = window.AudioContext || window.webkitAudioContext;
+const audioCtx = new AudioContext();
 
-function startAudio() {
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+const osc = audioCtx.createOscillator();
+const gain = audioCtx.createGain();
 
-  const bufferSize = 2 * audioCtx.sampleRate;
-  const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-  const data = noiseBuffer.getChannelData(0);
+osc.type = "sine";
+osc.frequency.value = 120;
+gain.gain.value = 0;
 
-  for (let i = 0; i < bufferSize; i++) {
-    data[i] = Math.random() * 2 - 1;
+osc.connect(gain);
+gain.connect(audioCtx.destination);
+osc.start();
+
+/* =======================
+   INPUT
+======================= */
+
+function start() {
+  if (!audioStarted) {
+    audioCtx.resume();
+    audioStarted = true;
   }
-
-  noiseNode = audioCtx.createBufferSource();
-  noiseNode.buffer = noiseBuffer;
-  noiseNode.loop = true;
-
-  gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.04;
-
-  noiseNode.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
-  noiseNode.start();
-}
-
-/* ------------------
-   START GATE (CRITICAL)
------------------- */
-
-function startApp() {
-  if (started) return;
-  started = true;
-
-  overlay.style.display = "none";
-  startAudio();
-
   running = true;
-  requestAnimationFrame(draw);
+  document.getElementById("overlay").style.display = "none";
+  gain.gain.setTargetAtTime(0.02, audioCtx.currentTime, 0.05);
 }
 
-document.addEventListener("touchstart", startApp, { once: true });
-document.addEventListener("mousedown", startApp, { once: true });
+function stop() {
+  running = false;
+  document.getElementById("overlay").style.display = "flex";
+  gain.gain.setTargetAtTime(0.0, audioCtx.currentTime, 0.05);
+}
 
-/* ------------------
-   INPUT (PAUSE / RUN)
------------------- */
+window.addEventListener("touchstart", start, { passive: true });
+window.addEventListener("touchend", stop, { passive: true });
+window.addEventListener("mousedown", start);
+window.addEventListener("mouseup", stop);
 
-document.addEventListener("touchstart", () => {
-  fingerDown = true;
-});
+/* =======================
+   VISUAL LOOP
+======================= */
 
-document.addEventListener("touchend", () => {
-  fingerDown = false;
-});
-
-document.addEventListener("mousedown", () => {
-  fingerDown = true;
-});
-
-document.addEventListener("mouseup", () => {
-  fingerDown = false;
-});
-
-/* ------------------
-   DRAW LOOP
------------------- */
-
-function draw() {
-  if (!running) return;
-
-  if (!fingerDown) {
-    requestAnimationFrame(draw);
-    return;
-  }
-
-  // black base
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // ultra-low-contrast noise field
-  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+function drawNoise() {
+  const w = canvas.width;
+  const h = canvas.height;
+  const img = ctx.createImageData(w, h);
   const d = img.data;
 
   for (let i = 0; i < d.length; i += 4) {
-    const v = Math.random() * 6; // subtle
-    d[i] = v;
-    d[i + 1] = v;
-    d[i + 2] = v;
-    d[i + 3] = 255;
+    const v = 8 + Math.random() * 16; // visible but subtle
+    d[i] = d[i+1] = d[i+2] = v;
+    d[i+3] = 255;
   }
 
   ctx.putImageData(img, 0, 0);
-
-  requestAnimationFrame(draw);
 }
+
+function loop() {
+  if (running) {
+    drawNoise();
+  }
+  requestAnimationFrame(loop);
+}
+
+loop();
 </script>
+
 </body>
 </html>
