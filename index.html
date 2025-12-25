@@ -3,129 +3,154 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-<title>Signal</title>
+<title>Field</title>
 <style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: #000;
-    overflow: hidden;
-    touch-action: none;
-  }
-  canvas {
-    display: block;
-  }
-  #overlay {
-    position: fixed;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(255,255,255,0.35);
-    font-family: system-ui, sans-serif;
-    font-size: 18px;
-    pointer-events: none;
-  }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  overflow: hidden;
+  touch-action: none;
+}
+canvas {
+  display: block;
+}
+#hint {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255,255,255,0.3);
+  font-family: system-ui, sans-serif;
+  font-size: 18px;
+  pointer-events: none;
+}
 </style>
 </head>
 <body>
 
-<div id="overlay">touch and hold</div>
 <canvas id="c"></canvas>
+<div id="hint">touch and hold</div>
 
 <script>
-/* =======================
-   CANVAS SETUP
-======================= */
+/* ======================
+   STATE
+====================== */
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-resize();
-window.addEventListener("resize", resize);
-
-/* =======================
-   STATE
-======================= */
-
+let w, h, img, data;
 let running = false;
-let audioStarted = false;
 
-/* =======================
-   AUDIO (minimal, safe)
-======================= */
+// control signal ∈ [-1, 1]
+let control = 0;
 
-const AudioContext = window.AudioContext || window.webkitAudioContext;
-const audioCtx = new AudioContext();
+// inversion flags
+let invert = true;        // primary inversion
+let metaInvert = true;   // inverts the inversion itself
 
-const osc = audioCtx.createOscillator();
-const gain = audioCtx.createGain();
+/* ======================
+   RESIZE
+====================== */
 
-osc.type = "sine";
-osc.frequency.value = 120;
-gain.gain.value = 0;
+function resize() {
+  w = canvas.width = window.innerWidth;
+  h = canvas.height = window.innerHeight;
+  img = ctx.createImageData(w, h);
+  data = img.data;
+}
+window.addEventListener("resize", resize);
+resize();
 
-osc.connect(gain);
-gain.connect(audioCtx.destination);
-osc.start();
+/* ======================
+   AUDIO
+====================== */
 
-/* =======================
+let audioCtx, noise, gain;
+
+function startAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
+  const ch = buffer.getChannelData(0);
+  for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
+
+  noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  noise.loop = true;
+
+  gain = audioCtx.createGain();
+  gain.gain.value = 0;
+
+  noise.connect(gain).connect(audioCtx.destination);
+  noise.start();
+}
+
+/* ======================
    INPUT
-======================= */
+====================== */
 
-function start() {
-  if (!audioStarted) {
-    audioCtx.resume();
-    audioStarted = true;
+function updateControlFromTouch(e) {
+  if (!running) return;
+
+  let p = 1; // fallback
+  if (e.touches && e.touches[0] && e.touches[0].force !== undefined) {
+    p = e.touches[0].force || 0.01;
   }
+
+  // normalize pressure to [-1, 1]
+  control = Math.max(-1, Math.min(1, (p * 2 - 1)));
+}
+
+canvas.addEventListener("touchstart", e => {
+  e.preventDefault();
   running = true;
-  document.getElementById("overlay").style.display = "none";
-  gain.gain.setTargetAtTime(0.02, audioCtx.currentTime, 0.05);
-}
+  startAudio();
+  document.getElementById("hint").style.display = "none";
+  updateControlFromTouch(e);
+});
 
-function stop() {
+canvas.addEventListener("touchmove", e => {
+  e.preventDefault();
+  updateControlFromTouch(e);
+});
+
+canvas.addEventListener("touchend", () => {
   running = false;
-  document.getElementById("overlay").style.display = "flex";
-  gain.gain.setTargetAtTime(0.0, audioCtx.currentTime, 0.05);
-}
+});
 
-window.addEventListener("touchstart", start, { passive: true });
-window.addEventListener("touchend", stop, { passive: true });
-window.addEventListener("mousedown", start);
-window.addEventListener("mouseup", stop);
+/* ======================
+   RENDER LOOP
+====================== */
 
-/* =======================
-   VISUAL LOOP
-======================= */
+function step() {
+  requestAnimationFrame(step);
 
-function drawNoise() {
-  const w = canvas.width;
-  const h = canvas.height;
-  const img = ctx.createImageData(w, h);
-  const d = img.data;
+  if (!running) return;
 
-  for (let i = 0; i < d.length; i += 4) {
-    const v = 8 + Math.random() * 16; // visible but subtle
-    d[i] = d[i+1] = d[i+2] = v;
-    d[i+3] = 255;
+  // apply inversion + meta-inversion
+  let s = control;
+  if (invert) s = -s;
+  if (metaInvert) s = -s;
+
+  // VISUAL
+  for (let i = 0; i < data.length; i += 4) {
+    const n = (Math.random() * 2 - 1) * (0.5 + 0.5 * s);
+    const v = Math.floor((n * 0.5 + 0.5) * 255);
+    data[i] = data[i+1] = data[i+2] = v;
+    data[i+3] = 255;
   }
-
   ctx.putImageData(img, 0, 0);
-}
 
-function loop() {
-  if (running) {
-    drawNoise();
+  // AUDIO
+  if (gain) {
+    gain.gain.value = Math.max(0, 0.05 + 0.05 * s);
   }
-  requestAnimationFrame(loop);
 }
 
-loop();
+step();
 </script>
-
 </body>
 </html>
