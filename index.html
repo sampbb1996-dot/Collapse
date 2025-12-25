@@ -12,14 +12,16 @@ html, body {
   overflow: hidden;
   touch-action: none;
 }
-canvas { display: block; }
+canvas {
+  display: block;
+}
 #hint {
   position: fixed;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255,255,255,0.3);
+  color: rgba(255,255,255,0.25);
   font-family: system-ui, sans-serif;
   font-size: 18px;
   pointer-events: none;
@@ -39,14 +41,14 @@ canvas { display: block; }
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
-let w, h, img, data;
+let w, h;
 let running = false;
 
-// pressure bias ∈ [0,1]
+// single continuous variable
 let pressure = 0.5;
 
-// single effective inversion (meta absorbed)
-const INVERT = -1;
+// latent field state
+let field = 0;
 
 /* ======================
    RESIZE
@@ -55,8 +57,6 @@ const INVERT = -1;
 function resize() {
   w = canvas.width = window.innerWidth;
   h = canvas.height = window.innerHeight;
-  img = ctx.createImageData(w, h);
-  data = img.data;
 }
 window.addEventListener("resize", resize);
 resize();
@@ -79,75 +79,4 @@ function startAudio() {
   }
 
   noise = audioCtx.createBufferSource();
-  noise.buffer = buffer;
-  noise.loop = true;
-
-  gain = audioCtx.createGain();
-  gain.gain.value = 0;
-
-  noise.connect(gain).connect(audioCtx.destination);
-  noise.start();
-}
-
-/* ======================
-   INPUT
-====================== */
-
-function updatePressure(e) {
-  if (!running) return;
-
-  let p = 0.5;
-  if (e.touches && e.touches[0] && typeof e.touches[0].force === "number") {
-    p = Math.max(0.05, e.touches[0].force);
-  }
-
-  pressure = Math.min(1, p);
-}
-
-canvas.addEventListener("touchstart", e => {
-  e.preventDefault();
-  running = true;
-  startAudio();
-  document.getElementById("hint").style.display = "none";
-  updatePressure(e);
-});
-
-canvas.addEventListener("touchmove", e => {
-  e.preventDefault();
-  updatePressure(e);
-});
-
-canvas.addEventListener("touchend", () => {
-  running = false;
-});
-
-/* ======================
-   RENDER LOOP
-====================== */
-
-function step() {
-  requestAnimationFrame(step);
-  if (!running) return;
-
-  // structural inversion
-  const bias = pressure * INVERT;
-
-  // VISUAL — always alive
-  for (let i = 0; i < data.length; i += 4) {
-    const n = Math.random();
-    const v = Math.floor((n * (0.6 + 0.4 * bias)) * 255);
-    data[i] = data[i+1] = data[i+2] = v;
-    data[i+3] = 255;
-  }
-  ctx.putImageData(img, 0, 0);
-
-  // AUDIO — pressure biases density, never silence
-  if (gain) {
-    gain.gain.value = 0.03 + 0.04 * pressure;
-  }
-}
-
-step();
-</script>
-</body>
-</html>
+  noise.buffer =
