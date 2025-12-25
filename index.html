@@ -2,29 +2,31 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1.0, user-scalable=no"
+/>
 <title>Field</title>
-
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #000;
-  overflow: hidden;
-  touch-action: none;
-}
-canvas { display: block; }
-#hint {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(255,255,255,0.28);
-  font-family: system-ui, sans-serif;
-  font-size: 18px;
-  pointer-events: none;
-}
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    overflow: hidden;
+    touch-action: none;
+  }
+  canvas { display: block; }
+  #hint {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255,255,255,0.30);
+    font-family: system-ui, sans-serif;
+    font-size: 18px;
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
@@ -34,20 +36,37 @@ canvas { display: block; }
 
 <script>
 /* ======================
+   CONFIG (locked)
+====================== */
+
+// Primary inversion (on/off)
+let invert = true;
+
+// Meta inversion (inverts the inversion itself)
+let metaInvert = true;
+
+// IMPORTANT:
+// metaInvert acts on invert (XOR), not on the signal twice.
+function effectiveInvert() {
+  return invert !== metaInvert; // XOR
+}
+
+/* ======================
    STATE
 ====================== */
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
-let w, h;
+let w = 0, h = 0;
 let running = false;
 
-// single continuous variable
-let pressure = 0.5;
+// pressure in [0,1]
+let p = 0.5;
 
-// latent field
-let field = 0;
+// latent band position state (only exists while touching)
+let x = 0;
+let vx = 0;
 
 /* ======================
    RESIZE
@@ -57,19 +76,23 @@ function resize() {
   w = canvas.width = window.innerWidth;
   h = canvas.height = window.innerHeight;
 }
-window.addEventListener("resize", resize);
+window.addEventListener("resize", resize, { passive: false });
 resize();
 
 /* ======================
    AUDIO
 ====================== */
 
-let audioCtx, noise, gain;
+let audioCtx = null;
+let noise = null;
+let gain = null;
 
 function startAudio() {
   if (audioCtx) return;
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  // simple looping noise buffer
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
   const ch = buffer.getChannelData(0);
   for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
@@ -85,63 +108,121 @@ function startAudio() {
   noise.start();
 }
 
+function setAudioLevel(level) {
+  if (!gain) return;
+  // clamp
+  gain.gain.value = Math.max(0, Math.min(0.2, level));
+}
+
 /* ======================
    INPUT
 ====================== */
 
-function updatePressure(e) {
-  let p = 0.5;
-  if (e.touches && e.touches[0] && typeof e.touches[0].force === "number") {
-    p = Math.max(0.05, e.touches[0].force);
+function readPressureFromTouch(e) {
+  // default if device doesn't support force
+  let val = 0.5;
+
+  const t = e.touches && e.touches[0];
+  if (t && typeof t.force === "number") {
+    // iOS often reports 0; keep a small floor to avoid hard-collapse
+    const f = t.force === 0 ? 0.05 : t.force;
+    val = Math.max(0, Math.min(1, f));
   }
-  pressure = Math.min(1, p);
+
+  p = val;
 }
 
-canvas.addEventListener("touchstart", e => {
+canvas.addEventListener("touchstart", (e) => {
   e.preventDefault();
+
   running = true;
   startAudio();
-  document.getElementById("hint").style.display = "none";
-  updatePressure(e);
-});
 
-canvas.addEventListener("touchmove", e => {
+  const hint = document.getElementById("hint");
+  hint.style.display = "none";
+
+  readPressureFromTouch(e);
+
+  // initialize band state on engagement (no observable carry-over)
+  x = w * (0.25 + Math.random() * 0.5);
+  vx = 0;
+}, { passive: false });
+
+canvas.addEventListener("touchmove", (e) => {
   e.preventDefault();
-  updatePressure(e);
-});
+  if (!running) return;
+  readPressureFromTouch(e);
+}, { passive: false });
 
-canvas.addEventListener("touchend", () => {
+canvas.addEventListener("touchend", (e) => {
+  e.preventDefault();
   running = false;
-});
+
+  // hard-black immediately; cannot observe state
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, w, h);
+
+  // mute immediately
+  setAudioLevel(0);
+
+  // show hint again (optional; remove if you want)
+  document.getElementById("hint").style.display = "flex";
+}, { passive: false });
 
 /* ======================
-   LOOP
+   CONTROL (subtractive)
+====================== */
+
+// Produce a control value u in [0,1], with inversion stack applied
+// effectiveInvert() decides whether we use p or (1-p).
+function controlU() {
+  const inv = effectiveInvert();
+  const u = inv ? (1 - p) : p;     // inversion/non-inversion + meta inversion over that
+  return Math.max(0, Math.min(1, u));
+}
+
+// Subtractive collapse: higher u => lower output
+function collapse01(u, floor, range) {
+  // output = floor + range*(1-u)
+  return floor + range * (1 - u);
+}
+
+/* ======================
+   RENDER LOOP
 ====================== */
 
 function step() {
   requestAnimationFrame(step);
 
-  // drift always exists (no hard zero state)
-  field += (Math.random() - 0.5) * 0.002;
-  field *= 0.995;
+  if (!running) return;
 
-  // idle vs engaged floor
-  const base = running ? 14 : 18;
-
-  const v = Math.max(
-    0,
-    Math.min(
-      255,
-      base + (field * 10) - (running ? pressure * 3 : 0)
-    )
-  );
-
-  ctx.fillStyle = `rgb(${v},${v},${v})`;
+  // Always clear to black while touching too (no trails, no accumulation)
+  ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
 
-  if (gain) {
-    gain.gain.value = running ? (0.025 + pressure * 0.035) : 0;
-  }
+  const u = controlU();
+
+  // --- Visual: faint unstable band (visible without becoming texture) ---
+  // Non-periodic micro-instability (random walk)
+  vx += (Math.random() - 0.5) * 0.25;
+  vx *= 0.985;
+  x += vx;
+
+  // wrap (no edges as "event")
+  if (x < 0) x += w;
+  if (x >= w) x -= w;
+
+  // Subtractive mapping: more u => dimmer band
+  const alpha = collapse01(u, 0.03, 0.10); // [0.03..0.13]
+  const bw = 1 + Math.floor(Math.random() * 2); // 1–2 px, no stable width
+
+  ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+  ctx.fillRect(Math.floor(x), 0, bw, h);
+
+  // --- Audio: subtractive + same u ---
+  // more u => quieter (punishes force after inversion stack)
+  const audioLevel = collapse01(u, 0.015, 0.050); // ~0.015..0.065
+  setAudioLevel(audioLevel);
 }
 
 step();
