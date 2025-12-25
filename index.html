@@ -3,48 +3,36 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport"
-  content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no">
+  content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Signal</title>
 
 <style>
-  html, body {
-    margin: 0;
-    width: 100%;
-    height: 100%;
-    background: #000;
-    overflow: hidden;
-
-    touch-action: none;
-    -webkit-touch-callout: none;
-    -webkit-user-select: none;
-    user-select: none;
-  }
-  * { -webkit-tap-highlight-color: rgba(0,0,0,0); }
-
-  canvas {
-    position: fixed;
-    inset: 0;
-    display: block;
-  }
-
-  #overlay {
-    position: fixed;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: system-ui;
-    font-size: 18px;
-    color: #777;
-    background: transparent;
-    transition: opacity 0.2s linear;
-    pointer-events: auto;
-  }
-  #overlay.hidden {
-    opacity: 0;
-    pointer-events: none;
-  }
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+canvas {
+  position: fixed;
+  inset: 0;
+  display: block;
+}
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  font-family: system-ui;
+  font-size: 18px;
+}
 </style>
 </head>
 
@@ -53,12 +41,26 @@
 <div id="overlay">tap to begin</div>
 
 <script>
-/* =========================================================
-   AUDIO — CONTINUOUS NOISE (iOS SAFE) — FIXED VOLUME
-   (No auto volume, no “looping artifact” tricks — just buffer loop)
-========================================================= */
+/* =======================
+   CANVAS
+======================= */
 
-let audioCtx, noiseSource, gainNode, audioStarted = false;
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+}
+addEventListener("resize", resize);
+resize();
+
+/* =======================
+   AUDIO
+======================= */
+
+let audioCtx, noiseSource, gainNode;
+let audioStarted = false;
 
 function startAudio() {
   if (audioStarted) return;
@@ -67,243 +69,90 @@ function startAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   audioCtx.resume();
 
-  const size = audioCtx.sampleRate * 2; // 2s buffer
+  const size = audioCtx.sampleRate * 2;
   const buffer = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
 
-  for (let i = 0; i < size; i++) data[i] = Math.random() * 2 - 1;
+  for (let i = 0; i < size; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
 
   noiseSource = audioCtx.createBufferSource();
   noiseSource.buffer = buffer;
   noiseSource.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = 0.015; // keep quiet + stable
+  gainNode.gain.value = 0.01;
 
   noiseSource.connect(gainNode).connect(audioCtx.destination);
   noiseSource.start();
 }
 
-/* =========================================================
-   CANVAS
-========================================================= */
+/* =======================
+   INPUT STATE
+======================= */
 
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d", { alpha: false });
+let holding = false;
+let pressure = 0;
 
-let dpr = 1;
-function resize() {
-  dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
-  canvas.width = Math.floor(innerWidth * dpr);
-  canvas.height = Math.floor(innerHeight * dpr);
-  ctx.imageSmoothingEnabled = true; // prevent “bars”
-}
-addEventListener("resize", resize);
-resize();
+canvas.addEventListener("pointerdown", e => {
+  holding = true;
+  pressure = e.pressure || 0.1;
+});
 
-/* =========================================================
-   VISUAL FIELD (NO LINE)
-   - Near-black full-field “topographic” drift
-   - Mixed normal + inverted mapping (MF blend)
-   - Blend changes VERY slowly (spread out)
-========================================================= */
+canvas.addEventListener("pointermove", e => {
+  if (!holding) return;
+  pressure = e.pressure || pressure;
+});
 
-// Low-res field for smooth scaling
-let fw = 96, fh = 168;
-function fitField() {
-  // keep roughly aspect-following but not a “frame”
-  const ar = canvas.width / canvas.height;
-  fw = Math.max(64, Math.min(160, Math.floor(120 * ar)));
-  fh = Math.max(96, Math.min(220, Math.floor(120 / ar)));
-}
-fitField();
+canvas.addEventListener("pointerup", () => {
+  holding = false;
+  pressure = 0;
+});
 
-const off = document.createElement("canvas");
-const ox = off.getContext("2d");
-let img, pix;
+canvas.addEventListener("pointercancel", () => {
+  holding = false;
+  pressure = 0;
+});
 
-function initField() {
-  fitField();
-  off.width = fw;
-  off.height = fh;
-  ox.imageSmoothingEnabled = true;
-  img = ox.createImageData(fw, fh);
-  pix = img.data;
+/* =======================
+   VISUAL FIELD
+======================= */
 
-  // field values in [0,1]
-  field = new Float32Array(fw * fh);
-  vel   = new Float32Array(fw * fh);
-
-  for (let i = 0; i < field.length; i++) {
-    field[i] = 0.5 + (Math.random() - 0.5) * 0.08;
-    vel[i] = (Math.random() - 0.5) * 0.002;
-  }
-}
-let field, vel;
-initField();
-addEventListener("resize", () => initField());
-
-/* =========================================================
-   INPUT / ENTROPY (for MF blend drift)
-   - You can keep finger down; lifting is “action”
-   - We do NOT require a rhythm; we just observe contact entropy.
-========================================================= */
-
-let down = false;
-let lastX = null, lastY = null;
-
-// entropyEMA: higher = more movement/instability
-let entropyEMA = 0;
-
-// action events (finger lifts)
-let liftEMA = 0;
-
-function noteMove(x, y) {
-  if (lastX === null) { lastX = x; lastY = y; return; }
-  const dx = x - lastX;
-  const dy = y - lastY;
-  lastX = x; lastY = y;
-
-  const dist = Math.hypot(dx, dy);
-  // tiny -> still; big -> unstable
-  entropyEMA = entropyEMA * 0.985 + dist * 0.0018;
-  entropyEMA = Math.min(entropyEMA, 2.0);
-}
-
-window.addEventListener("pointerdown", (e) => {
-  down = true;
-  lastX = e.clientX;
-  lastY = e.clientY;
-}, { passive: true });
-
-window.addEventListener("pointermove", (e) => {
-  if (!down) return;
-  noteMove(e.clientX, e.clientY);
-}, { passive: true });
-
-window.addEventListener("pointerup", () => {
-  if (!down) return;
-  down = false;
-  lastX = lastY = null;
-  // “action” = lift
-  liftEMA = liftEMA * 0.98 + 0.02;
-}, { passive: true });
-
-window.addEventListener("pointercancel", () => {
-  down = false;
-  lastX = lastY = null;
-}, { passive: true });
-
-/* =========================================================
-   MF BLEND (NORMAL <-> INVERTED)
-   - p in [0,1]: 0 = normal mapping, 1 = inverted mapping
-   - Drift is slow, spread out; “balance” is an attractor.
-========================================================= */
-
-let p = 0.5;              // MF balance (start centered)
-const P_RELAX = 0.00035;  // very slow pull back to 0.5
-const P_DRIFT = 0.00022;  // very slow drift from entropy
-
-/* =========================================================
-   FIELD DYNAMICS
-========================================================= */
-
-function idx(x, y) { return y * fw + x; }
-
-function stepField() {
-  // slow random-walk + diffusion-like smoothing
-  // (no bars; no obvious structures; just topology)
-  for (let k = 0; k < 220; k++) { // sparse updates per frame
-    const x = (Math.random() * fw) | 0;
-    const y = (Math.random() * fh) | 0;
-    const i = idx(x, y);
-
-    // local mean (4-neighbor)
-    const l = idx((x + fw - 1) % fw, y);
-    const r = idx((x + 1) % fw, y);
-    const u = idx(x, (y + fh - 1) % fh);
-    const d = idx(x, (y + 1) % fh);
-
-    const mean = (field[l] + field[r] + field[u] + field[d]) * 0.25;
-
-    // velocity nudged by noise + mean reversion
-    vel[i] += (Math.random() - 0.5) * 0.0010;
-    vel[i] += (mean - field[i]) * 0.015;
-    vel[i] *= 0.965;
-
-    field[i] += vel[i];
-    // keep bounded
-    if (field[i] < 0) field[i] = 0;
-    if (field[i] > 1) field[i] = 1;
-  }
-}
-
-function renderField() {
-  // MF blend drift (spread out)
-  // Pull toward balance (0.5) + small drift from entropy/lifts.
-  // No fast jumps.
-  p += (0.5 - p) * P_RELAX;
-
-  // entropy effect: more movement nudges toward inversion slightly, but mild
-  const ent = Math.min(entropyEMA, 1.0);
-  const lift = Math.min(liftEMA, 1.0);
-  const target = 0.5 + (ent - 0.15) * 0.18 + (lift - 0.02) * 0.10;
-
-  p += (target - p) * P_DRIFT;
-  p = Math.max(0, Math.min(1, p));
-
-  // decay lift indicator
-  liftEMA *= 0.985;
-
-  // near-black mapping
-  const base = 0.03;     // overall black level
-  const amp  = 0.06;     // contrast (keep subtle)
-  // (If you want “more visible”, increase amp slightly.)
-
-  let j = 0;
-  for (let i = 0; i < field.length; i++) {
-    const v = field[i] - 0.5;
-
-    const normal  = base + amp * v;
-    const invert  = base - amp * v;
-    const lum = normal + (invert - normal) * p;
-
-    // clamp + gamma-ish
-    const c = Math.max(0, Math.min(1, lum));
-    const g = Math.pow(c, 1.15);
-    const u = (g * 255) | 0;
-
-    pix[j++] = u; // R
-    pix[j++] = u; // G
-    pix[j++] = u; // B
-    pix[j++] = 255;
+function draw() {
+  if (!holding) {
+    // PAUSED — do nothing, preserve last frame
+    requestAnimationFrame(draw);
+    return;
   }
 
-  ox.putImageData(img, 0, 0);
-
-  // draw scaled to full screen
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+
+  const intensity = Math.min(pressure * 0.15, 0.04);
+
+  const img = ctx.createImageData(canvas.width, canvas.height);
+  const d = img.data;
+
+  for (let i = 0; i < d.length; i += 4) {
+    const n = (Math.random() - 0.5) * 255 * intensity;
+    d[i] = d[i+1] = d[i+2] = n;
+    d[i+3] = 255;
+  }
+
+  ctx.putImageData(img, 0, 0);
+
+  if (gainNode) {
+    const target = 0.008 + intensity * 0.25;
+    gainNode.gain.value += (target - gainNode.gain.value) * 0.02;
+  }
+
+  requestAnimationFrame(draw);
 }
 
-/* =========================================================
-   LOOP
-========================================================= */
-
-let running = false;
-function loop() {
-  if (!running) return;
-  stepField();
-  renderField();
-  requestAnimationFrame(loop);
-}
-
-/* =========================================================
-   START (tap to begin)
-   - Nothing changes / shows until you start
-   - Start visual first, then audio (iOS friendly)
-========================================================= */
+/* =======================
+   START
+======================= */
 
 const overlay = document.getElementById("overlay");
 let started = false;
@@ -313,14 +162,10 @@ function begin(e) {
   started = true;
 
   e.preventDefault();
-  e.stopPropagation();
+  overlay.remove();
 
-  running = true;
-  requestAnimationFrame(loop);
   startAudio();
-
-  overlay.classList.add("hidden");
-  document.body.offsetHeight; // Safari repaint nudge
+  requestAnimationFrame(draw);
 }
 
 overlay.addEventListener("touchend", begin, { passive: false });
