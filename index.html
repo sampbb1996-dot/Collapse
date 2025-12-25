@@ -12,9 +12,7 @@ html, body {
   overflow: hidden;
   touch-action: none;
 }
-canvas {
-  display: block;
-}
+canvas { display: block; }
 #hint {
   position: fixed;
   inset: 0;
@@ -44,12 +42,11 @@ const ctx = canvas.getContext("2d");
 let w, h, img, data;
 let running = false;
 
-// control signal ∈ [-1, 1]
-let control = 0;
+// pressure bias ∈ [0,1]
+let pressure = 0.5;
 
-// inversion flags
-let invert = true;        // primary inversion
-let metaInvert = true;   // inverts the inversion itself
+// single effective inversion (meta absorbed)
+const INVERT = -1;
 
 /* ======================
    RESIZE
@@ -72,10 +69,14 @@ let audioCtx, noise, gain;
 
 function startAudio() {
   if (audioCtx) return;
+
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
   const ch = buffer.getChannelData(0);
-  for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
+
+  for (let i = 0; i < ch.length; i++) {
+    ch[i] = Math.random() * 2 - 1;
+  }
 
   noise = audioCtx.createBufferSource();
   noise.buffer = buffer;
@@ -92,16 +93,15 @@ function startAudio() {
    INPUT
 ====================== */
 
-function updateControlFromTouch(e) {
+function updatePressure(e) {
   if (!running) return;
 
-  let p = 1; // fallback
-  if (e.touches && e.touches[0] && e.touches[0].force !== undefined) {
-    p = e.touches[0].force || 0.01;
+  let p = 0.5;
+  if (e.touches && e.touches[0] && typeof e.touches[0].force === "number") {
+    p = Math.max(0.05, e.touches[0].force);
   }
 
-  // normalize pressure to [-1, 1]
-  control = Math.max(-1, Math.min(1, (p * 2 - 1)));
+  pressure = Math.min(1, p);
 }
 
 canvas.addEventListener("touchstart", e => {
@@ -109,12 +109,12 @@ canvas.addEventListener("touchstart", e => {
   running = true;
   startAudio();
   document.getElementById("hint").style.display = "none";
-  updateControlFromTouch(e);
+  updatePressure(e);
 });
 
 canvas.addEventListener("touchmove", e => {
   e.preventDefault();
-  updateControlFromTouch(e);
+  updatePressure(e);
 });
 
 canvas.addEventListener("touchend", () => {
@@ -127,26 +127,23 @@ canvas.addEventListener("touchend", () => {
 
 function step() {
   requestAnimationFrame(step);
-
   if (!running) return;
 
-  // apply inversion + meta-inversion
-  let s = control;
-  if (invert) s = -s;
-  if (metaInvert) s = -s;
+  // structural inversion
+  const bias = pressure * INVERT;
 
-  // VISUAL
+  // VISUAL — always alive
   for (let i = 0; i < data.length; i += 4) {
-    const n = (Math.random() * 2 - 1) * (0.5 + 0.5 * s);
-    const v = Math.floor((n * 0.5 + 0.5) * 255);
+    const n = Math.random();
+    const v = Math.floor((n * (0.6 + 0.4 * bias)) * 255);
     data[i] = data[i+1] = data[i+2] = v;
     data[i+3] = 255;
   }
   ctx.putImageData(img, 0, 0);
 
-  // AUDIO
+  // AUDIO — pressure biases density, never silence
   if (gain) {
-    gain.gain.value = Math.max(0, 0.05 + 0.05 * s);
+    gain.gain.value = 0.03 + 0.04 * pressure;
   }
 }
 
