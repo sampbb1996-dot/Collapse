@@ -4,31 +4,29 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 <title>Field</title>
-
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #000;
-  overflow: hidden;
-  touch-action: none;
-}
-canvas { display: block; }
-#hint {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(255,255,255,0.28);
-  font-family: system-ui, sans-serif;
-  font-size: 18px;
-  pointer-events: none;
-}
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    overflow: hidden;
+    touch-action: none;
+  }
+  canvas { display: block; }
+  #hint {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255,255,255,0.28);
+    font-family: system-ui, sans-serif;
+    font-size: 18px;
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
-
 <canvas id="c"></canvas>
 <div id="hint">touch and hold</div>
 
@@ -36,30 +34,25 @@ canvas { display: block; }
 /* ======================
    INVERSION STACK
 ====================== */
-
 const invert = true;
 const metaInvert = true;
-
-// meta acts on inversion, not signal
-function effectiveInvert() {
-  return invert !== metaInvert; // XOR
-}
+const effectiveInvert = () => invert !== metaInvert; // XOR
 
 /* ======================
    STATE
 ====================== */
-
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 let w = 0, h = 0;
 let running = false;
-let pressure = 0.5;
+
+// pressure in [0,1]
+let p = 0.5;
 
 /* ======================
    RESIZE
 ====================== */
-
 function resize() {
   w = canvas.width = window.innerWidth;
   h = canvas.height = window.innerHeight;
@@ -68,12 +61,9 @@ window.addEventListener("resize", resize);
 resize();
 
 /* ======================
-   AUDIO (iOS SAFE)
+   AUDIO (iOS)
 ====================== */
-
-let audioCtx = null;
-let noise = null;
-let gain = null;
+let audioCtx = null, noise = null, gain = null;
 
 function initAudio() {
   if (audioCtx) return;
@@ -95,94 +85,95 @@ function initAudio() {
   noise.start();
 }
 
-function resumeAudio() {
-  if (audioCtx && audioCtx.state !== "running") {
-    audioCtx.resume();
-  }
+function unlockAudio() {
+  if (!audioCtx) return;
+  if (audioCtx.state !== "running") audioCtx.resume();
 }
 
 function setAudio(level) {
   if (!gain || !audioCtx) return;
-  gain.gain.setTargetAtTime(
-    Math.max(0, Math.min(0.12, level)),
-    audioCtx.currentTime,
-    0.03
-  );
+  const v = Math.max(0, Math.min(0.15, level));
+  gain.gain.setTargetAtTime(v, audioCtx.currentTime, 0.03);
 }
 
 /* ======================
-   INPUT
+   CONTROL (subtractive)
 ====================== */
-
-function readPressure(e) {
-  let p = 0.5;
-  const t = e.touches && e.touches[0];
-  if (t && typeof t.force === "number") {
-    p = t.force === 0 ? 0.05 : t.force;
-  }
-  pressure = Math.max(0, Math.min(1, p));
-}
-
-canvas.addEventListener("touchstart", e => {
-  e.preventDefault();
-
-  running = true;
-  initAudio();
-  resumeAudio(); // 🔑 THIS IS THE FIX
-
-  document.getElementById("hint").style.display = "none";
-  readPressure(e);
-}, { passive: false });
-
-canvas.addEventListener("touchmove", e => {
-  e.preventDefault();
-  if (running) readPressure(e);
-}, { passive: false });
-
-canvas.addEventListener("touchend", e => {
-  e.preventDefault();
-
-  running = false;
-
-  // hard black — no observation
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, w, h);
-
-  setAudio(0);
-  document.getElementById("hint").style.display = "flex";
-}, { passive: false });
-
-/* ======================
-   CONTROL (SUBTRACTIVE)
-====================== */
-
 function controlU() {
   const inv = effectiveInvert();
-  const u = inv ? (1 - pressure) : pressure;
+  const u = inv ? (1 - p) : p;
   return Math.max(0, Math.min(1, u));
 }
 
+// higher u => less output (negation)
 function collapse(u, floor, range) {
   return floor + range * (1 - u);
 }
 
 /* ======================
-   LOOP
+   INPUT (Pointer Events)
 ====================== */
 
+// We can’t rely on iOS force. Treat it as optional.
+// If unavailable, we still get a valid u via default p=0.5.
+function updatePFromEvent(e) {
+  // PointerEvent.pressure is [0..1] on many devices; iOS Safari sometimes provides 0.5 default.
+  if (typeof e.pressure === "number" && e.pressure > 0) {
+    p = Math.max(0, Math.min(1, e.pressure));
+  }
+}
+
+function startHold(e) {
+  e.preventDefault();
+  running = true;
+
+  initAudio();
+  unlockAudio();
+
+  document.getElementById("hint").style.display = "none";
+  updatePFromEvent(e);
+}
+
+function moveHold(e) {
+  e.preventDefault();
+  if (!running) return;
+  updatePFromEvent(e);
+}
+
+function endHold(e) {
+  e.preventDefault();
+  running = false;
+
+  // hard-black + mute so no observation
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, w, h);
+  setAudio(0);
+
+  document.getElementById("hint").style.display = "flex";
+}
+
+canvas.addEventListener("pointerdown", startHold, { passive: false });
+canvas.addEventListener("pointermove", moveHold, { passive: false });
+canvas.addEventListener("pointerup", endHold, { passive: false });
+canvas.addEventListener("pointercancel", endHold, { passive: false });
+
+/* ======================
+   LOOP
+====================== */
 function step() {
   requestAnimationFrame(step);
   if (!running) return;
 
-  // visual always black
-  ctx.fillStyle = "#000";
+  // VISUAL: still no geometry/texture.
+  // Only a scalar black-level shift while holding so you can verify it's active.
+  const u = controlU();
+  const level = Math.floor(collapse(u, 8, 18)); // 8..26 (still very dark)
+  ctx.fillStyle = `rgb(${level},${level},${level})`;
   ctx.fillRect(0, 0, w, h);
 
-  const u = controlU();
-  const level = collapse(u, 0.01, 0.045);
-  setAudio(level);
+  // AUDIO: same u, subtractive
+  setAudio(collapse(u, 0.01, 0.05));
 }
-
 step();
 </script>
 </body>
