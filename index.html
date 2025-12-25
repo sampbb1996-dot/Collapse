@@ -1,85 +1,76 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
+<meta charset="UTF-8">
 <meta name="viewport"
-  content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no" />
-<meta name="apple-mobile-web-app-capable" content="yes" />
+  content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>Signal</title>
 
 <style>
-html, body {
-  margin: 0;
-  width: 100%;
-  height: 100%;
-  background: #000;
-  overflow: hidden;
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
 
-  touch-action: none;
-  -webkit-touch-callout: none;
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-tap-highlight-color: rgba(0,0,0,0);
-}
-canvas { position: fixed; inset: 0; display: block; }
-#overlay{
-  position:fixed; inset:0;
-  display:flex; align-items:center; justify-content:center;
-  font-family:system-ui; font-size:18px; color:#777;
-  background:transparent;
-}
-#overlay.hidden{ opacity:0; pointer-events:none; }
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  * { -webkit-tap-highlight-color: rgba(0,0,0,0); }
+
+  canvas {
+    position: fixed;
+    inset: 0;
+    display: block;
+  }
+
+  #overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: system-ui;
+    font-size: 18px;
+    color: #777;
+    background: transparent;
+    transition: opacity 0.2s linear;
+    pointer-events: auto;
+  }
+  #overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
 </style>
 </head>
 
 <body>
 <canvas id="c"></canvas>
-<div id="overlay">touch and hold to begin</div>
+<div id="overlay">tap to begin</div>
 
 <script>
-/* =========================
-   AUDIO — iOS-RELIABLE UNLOCK
-   Inverted control:
-   HOLD = mute, RELEASE = restore
-========================= */
+/* =========================================================
+   AUDIO — CONTINUOUS NOISE (iOS SAFE) — FIXED VOLUME
+   (No auto volume, no “looping artifact” tricks — just buffer loop)
+========================================================= */
 
-let audioCtx, noiseSource, gainNode;
-let audioStarted = false;
+let audioCtx, noiseSource, gainNode, audioStarted = false;
 
-let targetGain = 0.04;        // audible baseline (adjust later)
-const RESTORE_GAIN = 0.04;    // on release
-const MUTE_GAIN = 0.0;        // on hold
-
-function setGainTarget(g){ targetGain = g; }
-
-function smoothGain(){
-  if (!gainNode) return;
-  gainNode.gain.value += (targetGain - gainNode.gain.value) * 0.03;
-}
-
-async function startAudioFromGesture(){
+function startAudio() {
   if (audioStarted) return;
   audioStarted = true;
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  audioCtx.resume();
 
-  // MUST be awaited on iOS
-  try { await audioCtx.resume(); } catch (_) {}
-
-  // iOS "route unlock": tiny oscillator burst (near-silent)
-  try {
-    const o = audioCtx.createOscillator();
-    const g = audioCtx.createGain();
-    g.gain.value = 0.0001;
-    o.connect(g).connect(audioCtx.destination);
-    o.start();
-    o.stop(audioCtx.currentTime + 0.01);
-  } catch (_) {}
-
-  // Build looping noise buffer
-  const size = audioCtx.sampleRate * 2;
+  const size = audioCtx.sampleRate * 2; // 2s buffer
   const buffer = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
+
   for (let i = 0; i < size; i++) data[i] = Math.random() * 2 - 1;
 
   noiseSource = audioCtx.createBufferSource();
@@ -87,117 +78,253 @@ async function startAudioFromGesture(){
   noiseSource.loop = true;
 
   gainNode = audioCtx.createGain();
-  gainNode.gain.value = RESTORE_GAIN;
+  gainNode.gain.value = 0.015; // keep quiet + stable
 
   noiseSource.connect(gainNode).connect(audioCtx.destination);
   noiseSource.start();
 }
 
-/* =========================
-   CANVAS — FULL FIELD, NO GEOMETRY
-========================= */
+/* =========================================================
+   CANVAS
+========================================================= */
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d", { alpha: false });
 
-function resize(){
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
+let dpr = 1;
+function resize() {
+  dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
+  canvas.width = Math.floor(innerWidth * dpr);
+  canvas.height = Math.floor(innerHeight * dpr);
+  ctx.imageSmoothingEnabled = true; // prevent “bars”
 }
 addEventListener("resize", resize);
 resize();
 
-// very-dark baseline so "darkening" is meaningful
-const base = 7;
+/* =========================================================
+   VISUAL FIELD (NO LINE)
+   - Near-black full-field “topographic” drift
+   - Mixed normal + inverted mapping (MF blend)
+   - Blend changes VERY slowly (spread out)
+========================================================= */
 
-function fillBase(){
-  ctx.fillStyle = `rgb(${base},${base},${base})`;
-  ctx.fillRect(0,0,canvas.width,canvas.height);
+// Low-res field for smooth scaling
+let fw = 96, fh = 168;
+function fitField() {
+  // keep roughly aspect-following but not a “frame”
+  const ar = canvas.width / canvas.height;
+  fw = Math.max(64, Math.min(160, Math.floor(120 * ar)));
+  fh = Math.max(96, Math.min(220, Math.floor(120 / ar)));
+}
+fitField();
+
+const off = document.createElement("canvas");
+const ox = off.getContext("2d");
+let img, pix;
+
+function initField() {
+  fitField();
+  off.width = fw;
+  off.height = fh;
+  ox.imageSmoothingEnabled = true;
+  img = ox.createImageData(fw, fh);
+  pix = img.data;
+
+  // field values in [0,1]
+  field = new Float32Array(fw * fh);
+  vel   = new Float32Array(fw * fh);
+
+  for (let i = 0; i < field.length; i++) {
+    field[i] = 0.5 + (Math.random() - 0.5) * 0.08;
+    vel[i] = (Math.random() - 0.5) * 0.002;
+  }
+}
+let field, vel;
+initField();
+addEventListener("resize", () => initField());
+
+/* =========================================================
+   INPUT / ENTROPY (for MF blend drift)
+   - You can keep finger down; lifting is “action”
+   - We do NOT require a rhythm; we just observe contact entropy.
+========================================================= */
+
+let down = false;
+let lastX = null, lastY = null;
+
+// entropyEMA: higher = more movement/instability
+let entropyEMA = 0;
+
+// action events (finger lifts)
+let liftEMA = 0;
+
+function noteMove(x, y) {
+  if (lastX === null) { lastX = x; lastY = y; return; }
+  const dx = x - lastX;
+  const dy = y - lastY;
+  lastX = x; lastY = y;
+
+  const dist = Math.hypot(dx, dy);
+  // tiny -> still; big -> unstable
+  entropyEMA = entropyEMA * 0.985 + dist * 0.0018;
+  entropyEMA = Math.min(entropyEMA, 2.0);
 }
 
-function sprinkle(){
-  // density tuned to avoid banding/bars from scaling
-  const n = Math.floor((canvas.width * canvas.height) / 2000);
+window.addEventListener("pointerdown", (e) => {
+  down = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+}, { passive: true });
 
-  // subtractive (inverted) marks
-  ctx.fillStyle = "rgba(0,0,0,0.06)";
-  for (let i = 0; i < n; i++){
-    const x = (Math.random() * canvas.width) | 0;
-    const y = (Math.random() * canvas.height) | 0;
-    ctx.fillRect(x, y, 2, 2);
+window.addEventListener("pointermove", (e) => {
+  if (!down) return;
+  noteMove(e.clientX, e.clientY);
+}, { passive: true });
+
+window.addEventListener("pointerup", () => {
+  if (!down) return;
+  down = false;
+  lastX = lastY = null;
+  // “action” = lift
+  liftEMA = liftEMA * 0.98 + 0.02;
+}, { passive: true });
+
+window.addEventListener("pointercancel", () => {
+  down = false;
+  lastX = lastY = null;
+}, { passive: true });
+
+/* =========================================================
+   MF BLEND (NORMAL <-> INVERTED)
+   - p in [0,1]: 0 = normal mapping, 1 = inverted mapping
+   - Drift is slow, spread out; “balance” is an attractor.
+========================================================= */
+
+let p = 0.5;              // MF balance (start centered)
+const P_RELAX = 0.00035;  // very slow pull back to 0.5
+const P_DRIFT = 0.00022;  // very slow drift from entropy
+
+/* =========================================================
+   FIELD DYNAMICS
+========================================================= */
+
+function idx(x, y) { return y * fw + x; }
+
+function stepField() {
+  // slow random-walk + diffusion-like smoothing
+  // (no bars; no obvious structures; just topology)
+  for (let k = 0; k < 220; k++) { // sparse updates per frame
+    const x = (Math.random() * fw) | 0;
+    const y = (Math.random() * fh) | 0;
+    const i = idx(x, y);
+
+    // local mean (4-neighbor)
+    const l = idx((x + fw - 1) % fw, y);
+    const r = idx((x + 1) % fw, y);
+    const u = idx(x, (y + fh - 1) % fh);
+    const d = idx(x, (y + 1) % fh);
+
+    const mean = (field[l] + field[r] + field[u] + field[d]) * 0.25;
+
+    // velocity nudged by noise + mean reversion
+    vel[i] += (Math.random() - 0.5) * 0.0010;
+    vel[i] += (mean - field[i]) * 0.015;
+    vel[i] *= 0.965;
+
+    field[i] += vel[i];
+    // keep bounded
+    if (field[i] < 0) field[i] = 0;
+    if (field[i] > 1) field[i] = 1;
+  }
+}
+
+function renderField() {
+  // MF blend drift (spread out)
+  // Pull toward balance (0.5) + small drift from entropy/lifts.
+  // No fast jumps.
+  p += (0.5 - p) * P_RELAX;
+
+  // entropy effect: more movement nudges toward inversion slightly, but mild
+  const ent = Math.min(entropyEMA, 1.0);
+  const lift = Math.min(liftEMA, 1.0);
+  const target = 0.5 + (ent - 0.15) * 0.18 + (lift - 0.02) * 0.10;
+
+  p += (target - p) * P_DRIFT;
+  p = Math.max(0, Math.min(1, p));
+
+  // decay lift indicator
+  liftEMA *= 0.985;
+
+  // near-black mapping
+  const base = 0.03;     // overall black level
+  const amp  = 0.06;     // contrast (keep subtle)
+  // (If you want “more visible”, increase amp slightly.)
+
+  let j = 0;
+  for (let i = 0; i < field.length; i++) {
+    const v = field[i] - 0.5;
+
+    const normal  = base + amp * v;
+    const invert  = base - amp * v;
+    const lum = normal + (invert - normal) * p;
+
+    // clamp + gamma-ish
+    const c = Math.max(0, Math.min(1, lum));
+    const g = Math.pow(c, 1.15);
+    const u = (g * 255) | 0;
+
+    pix[j++] = u; // R
+    pix[j++] = u; // G
+    pix[j++] = u; // B
+    pix[j++] = 255;
   }
 
-  // tiny compensating brighten so it doesn't collapse to flat black
-  ctx.fillStyle = "rgba(255,255,255,0.004)";
-  for (let i = 0; i < (n * 0.25); i++){
-    const x = (Math.random() * canvas.width) | 0;
-    const y = (Math.random() * canvas.height) | 0;
-    ctx.fillRect(x, y, 1, 1);
-  }
+  ox.putImageData(img, 0, 0);
+
+  // draw scaled to full screen
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
 }
 
-function draw(){
-  // hard fill prevents iOS white flash
-  fillBase();
-  sprinkle();
+/* =========================================================
+   LOOP
+========================================================= */
 
-  smoothGain();
-
-  requestAnimationFrame(draw);
+let running = false;
+function loop() {
+  if (!running) return;
+  stepField();
+  renderField();
+  requestAnimationFrame(loop);
 }
 
-/* =========================
-   INPUT — INVERTED
-   ACTION = RELEASE
-========================= */
+/* =========================================================
+   START (tap to begin)
+   - Nothing changes / shows until you start
+   - Start visual first, then audio (iOS friendly)
+========================================================= */
 
 const overlay = document.getElementById("overlay");
 let started = false;
-let holding = false;
 
-// Start visual + audio on the most iOS-safe gesture: UP / END
-async function beginFromUp(e){
+function begin(e) {
   if (started) return;
   started = true;
 
   e.preventDefault();
   e.stopPropagation();
 
-  requestAnimationFrame(draw);
-
-  await startAudioFromGesture();
+  running = true;
+  requestAnimationFrame(loop);
+  startAudio();
 
   overlay.classList.add("hidden");
-  document.body.offsetHeight;
+  document.body.offsetHeight; // Safari repaint nudge
 }
 
-// HOLD: mute
-function onDown(e){
-  holding = true;
-  setGainTarget(MUTE_GAIN);
-}
-
-// RELEASE: action + restore
-function onUp(e){
-  if (!started) {
-    // First ever release starts everything (iOS-safe)
-    beginFromUp(e);
-  } else {
-    e.preventDefault();
-    e.stopPropagation();
-  }
-  holding = false;
-  setGainTarget(RESTORE_GAIN);
-
-  // ACTION hook point (release = commit)
-  // const t = performance.now();
-}
-
-// Bind (use both pointer + touch for iOS reliability)
-window.addEventListener("pointerdown", onDown, { passive:false });
-window.addEventListener("pointerup", onUp, { passive:false });
-window.addEventListener("touchstart", onDown, { passive:false });
-window.addEventListener("touchend", onUp, { passive:false });
+overlay.addEventListener("touchend", begin, { passive: false });
+overlay.addEventListener("click", begin);
 </script>
 </body>
 </html>
