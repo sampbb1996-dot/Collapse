@@ -11,14 +11,9 @@ html, body, canvas {
   padding: 0;
   background: #000;
   overflow: hidden;
-
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-touch-callout: none;
-  -webkit-tap-highlight-color: rgba(0,0,0,0);
   touch-action: none;
 }
-canvas { display: block; }
+canvas { display:block; }
 
 #hint {
   position: fixed;
@@ -29,7 +24,6 @@ canvas { display: block; }
   color: rgba(255,255,255,0.28);
   font-family: system-ui, sans-serif;
   font-size: 18px;
-  pointer-events: none;
 }
 </style>
 </head>
@@ -48,8 +42,6 @@ const hint = document.getElementById("hint");
 
 let w, h;
 let engaged = false;
-let pageVisible = true;
-
 let latent = null;
 let instability = 0;
 
@@ -57,112 +49,73 @@ let instability = 0;
    RESIZE
 ========================= */
 function resize() {
-  w = canvas.width = window.innerWidth;
-  h = canvas.height = window.innerHeight;
+  w = canvas.width = innerWidth;
+  h = canvas.height = innerHeight;
 }
-window.addEventListener("resize", resize);
+addEventListener("resize", resize);
 resize();
 
 /* =========================
-   AUDIO (iOS HARD SAFE)
+   AUDIO (BULLETPROOF)
 ========================= */
-let audioCtx = null;
-let noise = null;
-let gain = null;
+let audioCtx, osc, filter, gain;
 
-function initAudio() {
+function initAudioHard() {
   if (audioCtx) return;
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
-  const d = buffer.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  osc = audioCtx.createOscillator();
+  osc.type = "sine";
+  osc.frequency.value = 220; // audible mid tone
 
-  noise = audioCtx.createBufferSource();
-  noise.buffer = buffer;
-  noise.loop = true;
+  filter = audioCtx.createBiquadFilter();
+  filter.type = "bandpass";
+  filter.frequency.value = 1200;
+  filter.Q.value = 0.7;
 
   gain = audioCtx.createGain();
   gain.gain.value = 0;
 
-  noise.connect(gain).connect(audioCtx.destination);
-  noise.start();
+  osc.connect(filter).connect(gain).connect(audioCtx.destination);
+  osc.start();
 }
 
-function armAudioImmediately() {
-  if (!audioCtx || !gain) return;
-
-  if (audioCtx.state !== "running") {
-    audioCtx.resume();
-  }
-
-  // CRITICAL: open gain slightly inside the gesture
-  gain.gain.setValueAtTime(0.02, audioCtx.currentTime);
+function armAudio(e) {
+  initAudioHard();
+  audioCtx.resume();
+  gain.gain.setValueAtTime(0.02, audioCtx.currentTime); // MUST be >0 inside gesture
 }
-
-/* =========================
-   HARD IDLE
-========================= */
-function forceIdle() {
-  engaged = false;
-  latent = null;
-  instability = 0;
-
-  if (gain && audioCtx) {
-    gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
-  }
-
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, w, h);
-
-  hint.style.display = "flex";
-}
-
-/* =========================
-   PAGE LIFECYCLE
-========================= */
-document.addEventListener("visibilitychange", () => {
-  pageVisible = !document.hidden;
-  if (!pageVisible) forceIdle();
-});
-window.addEventListener("pagehide", forceIdle);
-window.addEventListener("pageshow", e => { if (e.persisted) forceIdle(); });
 
 /* =========================
    INPUT (BODY-PART INVARIANT)
 ========================= */
-let lastTouchTime = null;
+let lastTime = null;
 
 function startTouch(e) {
   e.preventDefault();
-  if (!pageVisible) return;
-
   engaged = true;
-  lastTouchTime = performance.now();
-
-  initAudio();
-  armAudioImmediately();   // <-- THIS is the fix
-
+  lastTime = performance.now();
+  armAudio(e);
   hint.style.display = "none";
 }
 
-function moveTouch(e) {
+function moveTouch() {
   if (!engaged) return;
-
   const now = performance.now();
-  if (lastTouchTime !== null) {
-    const dt = now - lastTouchTime;
-    const jitter = Math.abs(dt - 16);
-    instability += Math.min(0.05, jitter * 0.002);
-    instability = Math.min(1, instability);
-  }
-  lastTouchTime = now;
+  const dt = now - lastTime;
+  const jitter = Math.abs(dt - 16);
+  instability = Math.min(1, instability + jitter * 0.002);
+  lastTime = now;
 }
 
 function endTouch(e) {
   e.preventDefault();
-  forceIdle();
+  engaged = false;
+  latent = null;
+  instability = 0;
+  if (gain) gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
+  hint.style.display = "flex";
 }
 
 canvas.addEventListener("touchstart", startTouch, { passive:false });
@@ -178,7 +131,6 @@ function phi() {
     latent = 1;
     return latent;
   }
-
   instability *= 0.96;
   latent = Math.max(0, latent - instability * 0.02);
   return latent;
@@ -189,22 +141,18 @@ function phi() {
 ========================= */
 function step() {
   requestAnimationFrame(step);
-  if (!engaged || !pageVisible) return;
+  if (!engaged) return;
 
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
 
   const u = phi();
-
-  if (gain && audioCtx) {
-    gain.gain.setTargetAtTime(
-      0.01 + 0.04 * u,
-      audioCtx.currentTime,
-      0.04
-    );
-  }
+  gain.gain.setTargetAtTime(
+    0.01 + 0.04 * u,
+    audioCtx.currentTime,
+    0.04
+  );
 }
-
 step();
 </script>
 </body>
