@@ -10,10 +10,10 @@ html, body {
   margin: 0;
   padding: 0;
   background: #000;
+  height: 100%;
   overflow: hidden;
-  touch-action: none;
+  touch-action: manipulation;
 }
-canvas { display: block; }
 
 #hint {
   position: fixed;
@@ -21,7 +21,7 @@ canvas { display: block; }
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255,255,255,0.25);
+  color: rgba(255,255,255,0.22);
   font-family: system-ui, sans-serif;
   font-size: 18px;
   pointer-events: none;
@@ -30,37 +30,26 @@ canvas { display: block; }
 </head>
 
 <body>
-<canvas id="c"></canvas>
-<div id="hint">touch and hold</div>
+<div id="hint">tap</div>
 
 <script>
 /* =========================
-   CANVAS
+   AUDIO-ONLY STABILIZER
+   - tap toggles on/off
+   - broadband noise
+   - fixed normalized amplitude
+   - no dynamics, no feedback
 ========================= */
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+
 const hint = document.getElementById("hint");
-
-function resize() {
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
-}
-addEventListener("resize", resize);
-resize();
-
-/* =========================
-   STATE
-========================= */
 let engaged = false;
 
-/* =========================
-   AUDIO — ONE-TAP GUARANTEED
-========================= */
 let audioCtx = null;
 let noise = null;
 let gain = null;
 
-function createNoiseBuffer(ctx) {
+/* ---------- noise buffer ---------- */
+function createNoise(ctx) {
   const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < data.length; i++) {
@@ -69,84 +58,73 @@ function createNoiseBuffer(ctx) {
   return buffer;
 }
 
-function startAudioImmediate() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+/* ---------- audio init ---------- */
+function ensureAudio() {
+  if (audioCtx) return;
 
-    noise = audioCtx.createBufferSource();
-    noise.buffer = createNoiseBuffer(audioCtx);
-    noise.loop = true;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-    gain = audioCtx.createGain();
-    gain.gain.value = 0;
+  noise = audioCtx.createBufferSource();
+  noise.buffer = createNoise(audioCtx);
+  noise.loop = true;
 
-    noise.connect(gain).connect(audioCtx.destination);
-    noise.start();
-  }
+  gain = audioCtx.createGain();
 
-  // 🔒 CRITICAL iOS FIX
-  audioCtx.resume();
+  // FIXED, NON-INTERPRETABLE LEVEL
+  // Loud enough to exist, quiet enough to ignore
+  gain.gain.value = 0;
 
-  // Force audible change INSIDE the gesture
-  gain.gain.cancelScheduledValues(audioCtx.currentTime);
-  gain.gain.setValueAtTime(0.035, audioCtx.currentTime);
+  noise.connect(gain).connect(audioCtx.destination);
+  noise.start();
 }
 
-function stopAudio() {
+/* ---------- engage / disengage ---------- */
+function audioOn() {
+  ensureAudio();
+  audioCtx.resume();
+
+  // Immediate, non-dynamic amplitude
+  gain.gain.cancelScheduledValues(audioCtx.currentTime);
+  gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
+}
+
+function audioOff() {
   if (!gain || !audioCtx) return;
   gain.gain.cancelScheduledValues(audioCtx.currentTime);
   gain.gain.setValueAtTime(0, audioCtx.currentTime);
 }
 
-/* =========================
-   DISENGAGE
-========================= */
-function disengage() {
-  if (!engaged) return;
-
-  engaged = false;
-  stopAudio();
-
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  hint.style.display = "flex";
-}
-
-/* =========================
-   INPUT — DOCUMENT LEVEL
-========================= */
-function engage(e) {
+/* ---------- toggle ---------- */
+function toggle(e) {
   e.preventDefault();
-  if (engaged) return;
+  engaged = !engaged;
 
-  engaged = true;
-  startAudioImmediate();
-  hint.style.display = "none";
+  if (engaged) {
+    hint.style.display = "none";
+    audioOn();
+  } else {
+    hint.style.display = "flex";
+    audioOff();
+  }
 }
 
-document.addEventListener("touchstart", engage, { passive:false });
-document.addEventListener("touchend", disengage, { passive:false });
-document.addEventListener("touchcancel", disengage, { passive:false });
+document.addEventListener("touchstart", toggle, { passive:false });
 
-/* =========================
-   SAFETY
-========================= */
+/* ---------- safety ---------- */
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) disengage();
+  if (document.hidden && engaged) {
+    engaged = false;
+    audioOff();
+    hint.style.display = "flex";
+  }
 });
-addEventListener("pagehide", disengage);
-
-/* =========================
-   LOOP — BLACK BY DESIGN
-========================= */
-function loop() {
-  requestAnimationFrame(loop);
-  if (!engaged) return;
-
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-}
-loop();
+addEventListener("pagehide", () => {
+  if (engaged) {
+    engaged = false;
+    audioOff();
+    hint.style.display = "flex";
+  }
+});
 </script>
 </body>
 </html>
