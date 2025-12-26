@@ -1,266 +1,69 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-<title>Field</title>
-
-<style>
-html, body, canvas {
-  margin: 0;
-  padding: 0;
-  background: #000;
-  overflow: hidden;
-
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-touch-callout: none;
-  -webkit-tap-highlight-color: rgba(0,0,0,0);
-  touch-action: none;
-}
-canvas { display: block; }
-
-#hint {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(255,255,255,0.28);
-  font-family: system-ui, sans-serif;
-  font-size: 18px;
-  pointer-events: none;
-}
-</style>
-</head>
-
-<body>
-<canvas id="c"></canvas>
-<div id="hint">touch and hold</div>
-
 <script>
 /* =========================
-   HARD BLOCK SAFARI UI
+   EXOGENOUS NOISE SOURCES
 ========================= */
-document.addEventListener("contextmenu", e => e.preventDefault(), { passive: false });
-document.addEventListener("selectstart", e => e.preventDefault(), { passive: false });
 
-/* =========================
-   INVERSION STACK
-========================= */
-const invert = true;
-const metaInvert = true;
-const effectiveInvert = () => invert !== metaInvert; // XOR
+// ---- DEVICE MOTION (jerk magnitude only) ----
+let motionEnergy = 0;
+let lastAccel = null;
 
-/* =========================
-   STATE
-========================= */
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+if (window.DeviceMotionEvent) {
+  window.addEventListener("devicemotion", e => {
+    const a = e.accelerationIncludingGravity;
+    if (!a) return;
 
-let w = 0, h = 0;
-let running = false;
-let pressure = 0.5;
-
-// Φ latent state
-let latent = null;
-let handed = 0;
-
-/* =========================
-   RESIZE
-========================= */
-function resize() {
-  w = canvas.width = window.innerWidth;
-  h = canvas.height = window.innerHeight;
-}
-window.addEventListener("resize", resize);
-resize();
-
-/* =========================
-   AUDIO (iOS SAFE)
-========================= */
-let audioCtx = null;
-let noise = null;
-let gain = null;
-let panner = null;
-let lowShelf = null;
-let highShelf = null;
-let presence = null;
-let bandpass = null;
-let compressor = null;
-
-function initAudio() {
-  if (audioCtx) return;
-
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
-  const ch = buffer.getChannelData(0);
-  for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
-
-  noise = audioCtx.createBufferSource();
-  noise.buffer = buffer;
-  noise.loop = true;
-
-  gain = audioCtx.createGain();
-  gain.gain.value = 0;
-
-  panner = audioCtx.createStereoPanner();
-
-  lowShelf = audioCtx.createBiquadFilter();
-  lowShelf.type = "lowshelf";
-  lowShelf.frequency.value = 180;
-
-  highShelf = audioCtx.createBiquadFilter();
-  highShelf.type = "highshelf";
-  highShelf.frequency.value = 3500;
-
-  presence = audioCtx.createBiquadFilter();
-  presence.type = "peaking";
-  presence.frequency.value = 1200;
-  presence.Q.value = 1;
-
-  bandpass = audioCtx.createBiquadFilter();
-  bandpass.type = "bandpass";
-  bandpass.frequency.value = 900;
-  bandpass.Q.value = 0.7;
-
-  compressor = audioCtx.createDynamicsCompressor();
-
-  noise
-    .connect(lowShelf)
-    .connect(highShelf)
-    .connect(presence)
-    .connect(bandpass)
-    .connect(compressor)
-    .connect(gain)
-    .connect(panner)
-    .connect(audioCtx.destination);
-
-  noise.start();
+    const curr = Math.sqrt(a.x*a.x + a.y*a.y + a.z*a.z);
+    if (lastAccel !== null) {
+      const jerk = Math.abs(curr - lastAccel);
+      // accumulate but decay quickly
+      motionEnergy = Math.min(1, motionEnergy + jerk * 0.02);
+    }
+    lastAccel = curr;
+  });
 }
 
-function resumeAudio() {
-  if (audioCtx && audioCtx.state !== "running") audioCtx.resume();
+// decay motion noise over time
+function decayMotion() {
+  motionEnergy *= 0.92;
+}
+setInterval(decayMotion, 50);
+
+// ---- TIME OF DAY (ultra-slow bias) ----
+function timeBias() {
+  const hours = new Date().getHours() + new Date().getMinutes()/60;
+  // map 24h → [0.95, 1.05]
+  return 0.95 + 0.1 * Math.sin((hours / 24) * Math.PI * 2);
+}
+
+// ---- BATTERY LEVEL (global damping) ----
+let batteryFactor = 1.0;
+if (navigator.getBattery) {
+  navigator.getBattery().then(b => {
+    function updateBattery() {
+      // lower battery → more collapse
+      batteryFactor = 0.9 + 0.1 * b.level;
+    }
+    updateBattery();
+    b.addEventListener("levelchange", updateBattery);
+  });
 }
 
 /* =========================
-   INPUT
+   INTEGRATION INTO AUDIO
 ========================= */
-function readPressure(e) {
-  let p = 0.5;
-  if (typeof e.pressure === "number" && e.pressure > 0) p = e.pressure;
-  pressure = Math.max(0, Math.min(1, p));
-}
 
-function startHold(e) {
-  e.preventDefault();
-  running = true;
+// call inside your main loop, after ub = biomechU(...)
+function applyEnvironmentalCollapse(ub) {
+  // motion punishes instability
+  const motionPenalty = Math.max(0, 1 - motionEnergy * 0.6);
 
-  initAudio();
-  resumeAudio();
+  // time bias is neutral drift
+  const tBias = timeBias();
 
-  document.getElementById("hint").style.display = "none";
-  readPressure(e);
-}
-
-function moveHold(e) {
-  if (!running) return;
-  readPressure(e);
-}
-
-function endHold(e) {
-  e.preventDefault();
-  running = false;
-
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, w, h);
-
-  if (gain) gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
-  if (panner) panner.pan.setTargetAtTime(0, audioCtx.currentTime, 0.02);
-
-  latent = null;
-  handed = 0;
-
-  document.getElementById("hint").style.display = "flex";
-}
-
-/* IMPORTANT:
-   pointercancel is ignored — iOS noise must NOT stop the game
-*/
-canvas.addEventListener("pointerdown", startHold, { passive: false });
-canvas.addEventListener("pointermove", moveHold, { passive: false });
-canvas.addEventListener("pointerup", endHold, { passive: false });
-canvas.addEventListener("pointercancel", e => {
-  // intentionally ignored
-});
-
-/* =========================
-   CONTROL
-========================= */
-function controlU() {
-  const u = effectiveInvert() ? (1 - pressure) : pressure;
-  return Math.max(0, Math.min(1, u));
-}
-
-function collapse(u, floor, range) {
-  return floor + range * (1 - u);
-}
-
-/* =========================
-   Φ BIOMECH COLLAPSE
-========================= */
-function biomechU(u) {
-  if (latent === null) {
-    latent = u;
-    handed = 0;
-    return latent;
-  }
-
-  const delta = u - latent;
-  const mag = Math.abs(delta);
-  const pivot = 0.06;
-
-  if (mag > pivot) handed = Math.sign(delta);
-
-  const bias = 0.92 + (0.06 * (1 - Math.min(1, mag / 0.25)));
-  const jitter = (mag > pivot)
-    ? (Math.random() - 0.5) * (0.02 * Math.min(1, mag / 0.25))
-    : 0;
-  const dir = (handed !== 0 && mag > pivot)
-    ? handed * (Math.random() * (0.01 * Math.min(1, mag / 0.25)))
-    : 0;
-
-  latent = bias * latent + (1 - bias) * u + jitter + dir;
-  return Math.max(0, Math.min(1, latent));
-}
-
-/* =========================
-   LOOP
-========================= */
-function step() {
-  requestAnimationFrame(step);
-  if (!running) return;
-
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, w, h);
-
-  const ub = biomechU(controlU());
-
-  gain.gain.setTargetAtTime(
-    collapse(ub, 0.01, 0.045),
-    audioCtx.currentTime,
-    0.03
-  );
-
-  panner.pan.setTargetAtTime(
-    handed * collapse(ub, 0, 0.35),
-    audioCtx.currentTime,
-    0.05
+  // battery is global damping
+  return Math.max(
+    0,
+    Math.min(1, ub * motionPenalty * tBias * batteryFactor)
   );
 }
-
-step();
 </script>
-</body>
-</html>
