@@ -77,12 +77,10 @@ window.addEventListener("resize", resize);
 resize();
 
 /* =========================
-   AUDIO GRAPH (iOS SAFE)
+   AUDIO (iOS SAFE)
 ========================= */
 let audioCtx = null;
 let noise = null;
-
-// nodes
 let gain = null;
 let panner = null;
 let lowShelf = null;
@@ -96,7 +94,6 @@ function initAudio() {
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-  // noise source
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
   const ch = buffer.getChannelData(0);
   for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
@@ -105,28 +102,23 @@ function initAudio() {
   noise.buffer = buffer;
   noise.loop = true;
 
-  // nodes
   gain = audioCtx.createGain();
   gain.gain.value = 0;
 
   panner = audioCtx.createStereoPanner();
-  panner.pan.value = 0;
 
   lowShelf = audioCtx.createBiquadFilter();
   lowShelf.type = "lowshelf";
-  lowShelf.frequency.value = 180; // bass region
-  lowShelf.gain.value = 0;
+  lowShelf.frequency.value = 180;
 
   highShelf = audioCtx.createBiquadFilter();
   highShelf.type = "highshelf";
-  highShelf.frequency.value = 3500; // treble region
-  highShelf.gain.value = 0;
+  highShelf.frequency.value = 3500;
 
   presence = audioCtx.createBiquadFilter();
   presence.type = "peaking";
   presence.frequency.value = 1200;
-  presence.Q.value = 1.0;
-  presence.gain.value = 0;
+  presence.Q.value = 1;
 
   bandpass = audioCtx.createBiquadFilter();
   bandpass.type = "bandpass";
@@ -134,13 +126,7 @@ function initAudio() {
   bandpass.Q.value = 0.7;
 
   compressor = audioCtx.createDynamicsCompressor();
-  compressor.threshold.value = -24;
-  compressor.knee.value = 12;
-  compressor.ratio.value = 1.2;
-  compressor.attack.value = 0.01;
-  compressor.release.value = 0.15;
 
-  // connect graph
   noise
     .connect(lowShelf)
     .connect(highShelf)
@@ -163,7 +149,7 @@ function resumeAudio() {
 ========================= */
 function readPressure(e) {
   let p = 0.5;
-  if (e.pressure && e.pressure > 0) p = e.pressure;
+  if (typeof e.pressure === "number" && e.pressure > 0) p = e.pressure;
   pressure = Math.max(0, Math.min(1, p));
 }
 
@@ -179,8 +165,8 @@ function startHold(e) {
 }
 
 function moveHold(e) {
-  e.preventDefault();
-  if (running) readPressure(e);
+  if (!running) return;
+  readPressure(e);
 }
 
 function endHold(e) {
@@ -190,7 +176,6 @@ function endHold(e) {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
 
-  // silence + reset
   if (gain) gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
   if (panner) panner.pan.setTargetAtTime(0, audioCtx.currentTime, 0.02);
 
@@ -200,17 +185,21 @@ function endHold(e) {
   document.getElementById("hint").style.display = "flex";
 }
 
+/* IMPORTANT:
+   pointercancel is ignored — iOS noise must NOT stop the game
+*/
 canvas.addEventListener("pointerdown", startHold, { passive: false });
 canvas.addEventListener("pointermove", moveHold, { passive: false });
 canvas.addEventListener("pointerup", endHold, { passive: false });
-canvas.addEventListener("pointercancel", endHold, { passive: false });
+canvas.addEventListener("pointercancel", e => {
+  // intentionally ignored
+});
 
 /* =========================
-   CONTROL (SUBTRACTIVE)
+   CONTROL
 ========================= */
 function controlU() {
-  const inv = effectiveInvert();
-  const u = inv ? (1 - pressure) : pressure;
+  const u = effectiveInvert() ? (1 - pressure) : pressure;
   return Math.max(0, Math.min(1, u));
 }
 
@@ -219,7 +208,7 @@ function collapse(u, floor, range) {
 }
 
 /* =========================
-   Φ-STYLE BIOMECH COLLAPSE
+   Φ BIOMECH COLLAPSE
 ========================= */
 function biomechU(u) {
   if (latent === null) {
@@ -235,14 +224,15 @@ function biomechU(u) {
   if (mag > pivot) handed = Math.sign(delta);
 
   const bias = 0.92 + (0.06 * (1 - Math.min(1, mag / 0.25)));
-  const jitter = (mag > pivot) ? (Math.random() - 0.5) * (0.02 * Math.min(1, mag / 0.25)) : 0;
+  const jitter = (mag > pivot)
+    ? (Math.random() - 0.5) * (0.02 * Math.min(1, mag / 0.25))
+    : 0;
   const dir = (handed !== 0 && mag > pivot)
     ? handed * (Math.random() * (0.01 * Math.min(1, mag / 0.25)))
     : 0;
 
   latent = bias * latent + (1 - bias) * u + jitter + dir;
-  latent = Math.max(0, Math.min(1, latent));
-  return latent;
+  return Math.max(0, Math.min(1, latent));
 }
 
 /* =========================
@@ -252,60 +242,21 @@ function step() {
   requestAnimationFrame(step);
   if (!running) return;
 
-  // visual invariant black
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
 
-  const u = controlU();
-  const ub = biomechU(u);
+  const ub = biomechU(controlU());
 
-  // --- AUDIO MAPPING (ALL SUBTRACTIVE) ---
-
-  // amplitude
   gain.gain.setTargetAtTime(
     collapse(ub, 0.01, 0.045),
     audioCtx.currentTime,
     0.03
   );
 
-  // panning (subtle, noisy, non-confirmable)
   panner.pan.setTargetAtTime(
-    handed * collapse(ub, 0.0, 0.35),
+    handed * collapse(ub, 0, 0.35),
     audioCtx.currentTime,
     0.05
-  );
-
-  // bass / treble tilt (attenuation only)
-  lowShelf.gain.setTargetAtTime(
-    -collapse(ub, 0, 8), // up to -8 dB under force
-    audioCtx.currentTime,
-    0.08
-  );
-  highShelf.gain.setTargetAtTime(
-    -collapse(ub, 0, 6), // up to -6 dB under force
-    audioCtx.currentTime,
-    0.08
-  );
-
-  // presence attenuation
-  presence.gain.setTargetAtTime(
-    -collapse(ub, 0, 5),
-    audioCtx.currentTime,
-    0.08
-  );
-
-  // bandwidth tightening
-  bandpass.Q.setTargetAtTime(
-    collapse(ub, 0.7, 4.0), // higher Q = narrower band
-    audioCtx.currentTime,
-    0.08
-  );
-
-  // dynamics punishment
-  compressor.ratio.setTargetAtTime(
-    collapse(ub, 1.2, 4.0), // more compression under force
-    audioCtx.currentTime,
-    0.1
   );
 }
 
