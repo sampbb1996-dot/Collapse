@@ -40,7 +40,7 @@ canvas { display: block; }
 
 <script>
 /* =========================
-   SAFETY BLOCKS
+   SAFETY
 ========================= */
 document.addEventListener("contextmenu", e => e.preventDefault(), { passive:false });
 document.addEventListener("selectstart", e => e.preventDefault(), { passive:false });
@@ -50,15 +50,15 @@ document.addEventListener("selectstart", e => e.preventDefault(), { passive:fals
 ========================= */
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
+const hint = document.getElementById("hint");
 
 let w, h;
 
-let running = false;      // active session
-let armed = false;        // real pointerdown occurred
-let pageVisible = true;   // page lifecycle gate
+let engaged = false;        // touch present
+let pageVisible = true;
 
-let pressure = 0.5;       // neutral default
-let latent = null;
+let latent = null;          // Φ state
+let instability = 0;        // accumulated perturbation (subtractive)
 
 /* =========================
    RESIZE
@@ -71,7 +71,7 @@ window.addEventListener("resize", resize);
 resize();
 
 /* =========================
-   AUDIO (iOS SAFE)
+   AUDIO
 ========================= */
 let audioCtx = null;
 let noise = null;
@@ -102,12 +102,28 @@ function resumeAudio() {
 }
 
 /* =========================
-   HARD IDLE RESET
+   WAKE LOCK (prevents dimming)
+========================= */
+let wakeLock = null;
+async function acquireWakeLock() {
+  try {
+    if ("wakeLock" in navigator) {
+      wakeLock = await navigator.wakeLock.request("screen");
+    }
+  } catch (_) {}
+}
+async function releaseWakeLock() {
+  try { if (wakeLock) await wakeLock.release(); } catch (_) {}
+  wakeLock = null;
+}
+
+/* =========================
+   HARD IDLE
 ========================= */
 function forceIdle() {
-  running = false;
-  armed = false;
+  engaged = false;
   latent = null;
+  instability = 0;
 
   if (gain && audioCtx) {
     gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
@@ -116,73 +132,78 @@ function forceIdle() {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
 
-  document.getElementById("hint").style.display = "flex";
+  hint.style.display = "flex";
+  releaseWakeLock();
 }
 
 /* =========================
-   PAGE LIFECYCLE (CRITICAL)
+   PAGE LIFECYCLE
 ========================= */
 document.addEventListener("visibilitychange", () => {
   pageVisible = !document.hidden;
   if (!pageVisible) forceIdle();
 });
-
 window.addEventListener("pagehide", forceIdle);
-window.addEventListener("pageshow", e => {
-  if (e.persisted) forceIdle();
-});
+window.addEventListener("pageshow", e => { if (e.persisted) forceIdle(); });
 
 /* =========================
-   INPUT
+   INPUT (BODY-PART INVARIANT)
 ========================= */
-function updatePressure(e) {
-  if (typeof e.pressure === "number" && e.pressure > 0) {
-    pressure = Math.max(0, Math.min(1, e.pressure));
-  }
-}
+let lastTouchTime = null;
 
-function startHold(e) {
+function startTouch(e) {
   e.preventDefault();
+  if (!pageVisible) return;
 
-  // explicit, real engagement only
-  armed = true;
-  running = true;
+  engaged = true;
+  lastTouchTime = performance.now();
 
   initAudio();
   resumeAudio();
+  acquireWakeLock();
 
-  updatePressure(e);
-  document.getElementById("hint").style.display = "none";
+  hint.style.display = "none";
 }
 
-function moveHold(e) {
-  if (!running || !armed) return;
-  updatePressure(e);
+function moveTouch(e) {
+  if (!engaged) return;
+
+  const now = performance.now();
+  if (lastTouchTime !== null) {
+    const dt = now - lastTouchTime;
+
+    // irregular timing = instability
+    const jitter = Math.abs(dt - 16); // deviation from ~frame cadence
+    instability += Math.min(0.05, jitter * 0.002);
+    instability = Math.min(1, instability);
+  }
+  lastTouchTime = now;
 }
 
-function endHold(e) {
+function endTouch(e) {
   e.preventDefault();
   forceIdle();
 }
 
-canvas.addEventListener("pointerdown", startHold, { passive:false });
-canvas.addEventListener("pointermove", moveHold, { passive:false });
-canvas.addEventListener("pointerup", endHold, { passive:false });
-canvas.addEventListener("pointercancel", () => {});
+canvas.addEventListener("touchstart", startTouch, { passive:false });
+canvas.addEventListener("touchmove", moveTouch, { passive:false });
+canvas.addEventListener("touchend", endTouch, { passive:false });
+canvas.addEventListener("touchcancel", endTouch, { passive:false });
 
 /* =========================
-   Φ COLLAPSE
+   Φ COLLAPSE (NO CONTROL AXIS)
 ========================= */
-function biomech(u) {
+function phi() {
   if (latent === null) {
-    latent = u;
+    latent = 1;
     return latent;
   }
 
-  const d = Math.abs(u - latent);
-  const bias = 0.96 - Math.min(0.05, d * 0.25);
-  latent = bias * latent + (1 - bias) * u;
+  // calm engagement decays instability
+  instability *= 0.96;
 
+  // instability only subtracts
+  latent = Math.max(0, latent - instability * 0.02);
   return latent;
 }
 
@@ -191,19 +212,18 @@ function biomech(u) {
 ========================= */
 function step() {
   requestAnimationFrame(step);
-
-  if (!pageVisible || !running || !armed) return;
+  if (!engaged || !pageVisible) return;
 
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
 
-  const u = biomech(pressure);
+  const u = phi();
 
   if (gain && audioCtx) {
     gain.gain.setTargetAtTime(
       0.01 + 0.04 * u,
       audioCtx.currentTime,
-      0.03
+      0.04
     );
   }
 }
