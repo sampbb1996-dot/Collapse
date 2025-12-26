@@ -29,22 +29,20 @@ html, body {
 </head>
 
 <body>
-<div id="hint">tap</div>
+<div id="hint">touch and hold</div>
 
 <script>
 /* =========================
-   HARD AUDIO STABILIZER
+   iOS-SAFE AUDIO CORE
 ========================= */
-
-const hint = document.getElementById("hint");
 
 let audioCtx = null;
 let noise = null;
 let gain = null;
-let engaged = false;
+const hint = document.getElementById("hint");
 
-/* ---------- noise ---------- */
-function createNoise(ctx) {
+/* ---------- create noise ---------- */
+function makeNoise(ctx) {
   const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < data.length; i++) {
@@ -60,7 +58,7 @@ function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
   noise = audioCtx.createBufferSource();
-  noise.buffer = createNoise(audioCtx);
+  noise.buffer = makeNoise(audioCtx);
   noise.loop = true;
 
   gain = audioCtx.createGain();
@@ -70,59 +68,53 @@ function initAudio() {
   noise.start();
 }
 
-/* ---------- ON ---------- */
-function audioOn() {
+/* ---------- START (gesture-locked) ---------- */
+function start(e) {
+  e.preventDefault();
+
   initAudio();
 
-  // FORCE resume inside gesture
-  if (audioCtx.state !== "running") {
-    audioCtx.resume();
-  }
+  // FORCE unlock
+  audioCtx.resume();
 
-  // FORCE immediate audible change
+  // FORCE immediate audible output
   gain.gain.cancelScheduledValues(audioCtx.currentTime);
   gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
 
-  engaged = true;
   hint.style.display = "none";
 }
 
-/* ---------- OFF ---------- */
-function audioOff() {
-  if (!audioCtx || !gain) return;
+/* ---------- STOP ---------- */
+function stop(e) {
+  e.preventDefault();
+
+  if (!gain || !audioCtx) return;
 
   gain.gain.cancelScheduledValues(audioCtx.currentTime);
   gain.gain.setValueAtTime(0, audioCtx.currentTime);
 
-  engaged = false;
   hint.style.display = "flex";
 }
 
-/* ---------- TOGGLE ---------- */
-function toggle(e) {
-  e.preventDefault();
+/* ---------- GESTURES ----------
+   Press = sound
+   Release = silence
+-------------------------------- */
+document.addEventListener("touchstart", start, { passive:false });
+document.addEventListener("touchend", stop, { passive:false });
+document.addEventListener("touchcancel", stop, { passive:false });
 
-  if (!engaged) {
-    audioOn();
-  } else {
-    audioOff();
-  }
-}
+document.addEventListener("pointerdown", start, { passive:false });
+document.addEventListener("pointerup", stop, { passive:false });
 
-/* ---------- GESTURE CAPTURE ----------
-   We accept EVERYTHING Safari might allow
--------------------------------------- */
-document.addEventListener("touchstart", toggle, { passive:false });
-document.addEventListener("pointerdown", toggle, { passive:false });
-document.addEventListener("mousedown", toggle, { passive:false });
+document.addEventListener("mousedown", start, { passive:false });
+document.addEventListener("mouseup", stop, { passive:false });
 
 /* ---------- SAFETY ---------- */
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden && engaged) audioOff();
+  if (document.hidden) stop(new Event("stop"));
 });
-window.addEventListener("pagehide", () => {
-  if (engaged) audioOff();
-});
+window.addEventListener("pagehide", () => stop(new Event("stop")));
 </script>
 </body>
 </html>
