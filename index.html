@@ -40,7 +40,7 @@ canvas { display: block; }
 
 <script>
 /* =========================
-   SAFETY BLOCKS
+   HARD SAFETY BLOCKS
 ========================= */
 document.addEventListener("contextmenu", e => e.preventDefault(), { passive:false });
 document.addEventListener("selectstart", e => e.preventDefault(), { passive:false });
@@ -52,11 +52,12 @@ const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 let w, h;
-let running = false;
+let running = false;     // animation allowed
+let armed = false;       // true ONLY after real contact
 let pressure = 0.5;
 
+// Φ state
 let latent = null;
-let handed = 0;
 
 /* =========================
    RESIZE
@@ -69,10 +70,11 @@ window.addEventListener("resize", resize);
 resize();
 
 /* =========================
-   AUDIO
+   AUDIO (iOS SAFE)
 ========================= */
 let audioCtx = null;
-let noise, gain;
+let noise = null;
+let gain = null;
 
 function initAudio() {
   if (audioCtx) return;
@@ -80,8 +82,8 @@ function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
   const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
-  const d = buffer.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
 
   noise = audioCtx.createBufferSource();
   noise.buffer = buffer;
@@ -99,105 +101,72 @@ function resumeAudio() {
 }
 
 /* =========================
-   EXOGENOUS NOISE (SAFE)
-========================= */
-let motionEnergy = 0;
-let lastAccel = null;
-let motionEnabled = false;
-
-async function enableMotion() {
-  if (motionEnabled) return;
-
-  try {
-    if (
-      typeof DeviceMotionEvent !== "undefined" &&
-      typeof DeviceMotionEvent.requestPermission === "function"
-    ) {
-      const res = await DeviceMotionEvent.requestPermission();
-      if (res !== "granted") return;
-    }
-
-    window.addEventListener("devicemotion", e => {
-      const a = e.accelerationIncludingGravity;
-      if (!a) return;
-
-      const mag = Math.sqrt(a.x*a.x + a.y*a.y + a.z*a.z);
-      if (lastAccel !== null) {
-        const jerk = Math.abs(mag - lastAccel);
-        motionEnergy = Math.min(1, motionEnergy + jerk * 0.015);
-      }
-      lastAccel = mag;
-    });
-
-    motionEnabled = true;
-  } catch (_) {
-    // silently ignore motion if unavailable
-  }
-}
-
-// decay motion penalty
-setInterval(() => {
-  motionEnergy *= 0.9;
-}, 50);
-
-/* =========================
    INPUT
 ========================= */
 function readPressure(e) {
-  let p = 0.5;
-  if (typeof e.pressure === "number" && e.pressure > 0) p = e.pressure;
-  pressure = Math.max(0, Math.min(1, p));
+  if (typeof e.pressure !== "number" || e.pressure <= 0) return false;
+  pressure = Math.max(0, Math.min(1, e.pressure));
+  return true;
 }
 
 function startHold(e) {
   e.preventDefault();
+
+  // HARD REQUIREMENT: real finger pressure
+  if (!readPressure(e)) return;
+
+  armed = true;
   running = true;
 
   initAudio();
   resumeAudio();
-  enableMotion();
 
   document.getElementById("hint").style.display = "none";
-  readPressure(e);
 }
 
 function moveHold(e) {
-  if (!running) return;
+  if (!running || !armed) return;
   readPressure(e);
 }
 
 function endHold(e) {
   e.preventDefault();
-  running = false;
 
+  running = false;
+  armed = false;
+
+  // hard reset
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
 
-  if (gain && audioCtx) gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
+  if (gain && audioCtx) {
+    gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
+  }
 
   latent = null;
-  handed = 0;
-
   document.getElementById("hint").style.display = "flex";
 }
 
 canvas.addEventListener("pointerdown", startHold, { passive:false });
 canvas.addEventListener("pointermove", moveHold, { passive:false });
 canvas.addEventListener("pointerup", endHold, { passive:false });
+
+// CRITICAL: ignore iOS pointercancel noise
 canvas.addEventListener("pointercancel", () => {});
 
 /* =========================
-   CONTROL
+   Φ COLLAPSE
 ========================= */
 function biomech(u) {
   if (latent === null) {
     latent = u;
     return latent;
   }
-  const d = u - latent;
-  const mag = Math.abs(d);
-  const bias = 0.95 - Math.min(0.05, mag * 0.2);
+
+  const d = Math.abs(u - latent);
+  const bias = 0.96 - Math.min(0.05, d * 0.25);
   latent = bias * latent + (1 - bias) * u;
+
   return latent;
 }
 
@@ -206,13 +175,14 @@ function biomech(u) {
 ========================= */
 function step() {
   requestAnimationFrame(step);
-  if (!running) return;
+
+  // ABSOLUTE GATE
+  if (!running || !armed) return;
 
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
 
-  let u = biomech(pressure);
-  u *= Math.max(0.4, 1 - motionEnergy * 0.6);
+  const u = biomech(pressure);
 
   if (gain && audioCtx) {
     gain.gain.setTargetAtTime(
