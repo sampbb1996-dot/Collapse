@@ -13,10 +13,7 @@ html, body {
   overflow: hidden;
   touch-action: none;
 }
-
-canvas {
-  display: block;
-}
+canvas { display: block; }
 
 #hint {
   position: fixed;
@@ -57,7 +54,7 @@ resize();
 let engaged = false;
 
 /* =========================
-   AUDIO — NOISE (iOS SAFE)
+   AUDIO — ONE-TAP GUARANTEED
 ========================= */
 let audioCtx = null;
 let noise = null;
@@ -72,7 +69,7 @@ function createNoiseBuffer(ctx) {
   return buffer;
 }
 
-function startAudio() {
+function startAudioImmediate() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
@@ -87,15 +84,18 @@ function startAudio() {
     noise.start();
   }
 
+  // 🔒 CRITICAL iOS FIX
   audioCtx.resume();
 
-  // CRITICAL: open gain immediately inside gesture
-  gain.gain.setTargetAtTime(0.03, audioCtx.currentTime, 0.02);
+  // Force audible change INSIDE the gesture
+  gain.gain.cancelScheduledValues(audioCtx.currentTime);
+  gain.gain.setValueAtTime(0.035, audioCtx.currentTime);
 }
 
 function stopAudio() {
   if (!gain || !audioCtx) return;
-  gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.03);
+  gain.gain.cancelScheduledValues(audioCtx.currentTime);
+  gain.gain.setValueAtTime(0, audioCtx.currentTime);
 }
 
 /* =========================
@@ -109,7 +109,6 @@ function disengage() {
 
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-
   hint.style.display = "flex";
 }
 
@@ -121,7 +120,7 @@ function engage(e) {
   if (engaged) return;
 
   engaged = true;
-  startAudio();
+  startAudioImmediate();
   hint.style.display = "none";
 }
 
@@ -130,7 +129,7 @@ document.addEventListener("touchend", disengage, { passive:false });
 document.addEventListener("touchcancel", disengage, { passive:false });
 
 /* =========================
-   SAFETY — PAGE EVENTS
+   SAFETY
 ========================= */
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) disengage();
@@ -138,7 +137,7 @@ document.addEventListener("visibilitychange", () => {
 addEventListener("pagehide", disengage);
 
 /* =========================
-   LOOP — INTENTIONALLY BLACK
+   LOOP — BLACK BY DESIGN
 ========================= */
 function loop() {
   requestAnimationFrame(loop);
