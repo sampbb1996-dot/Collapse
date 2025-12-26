@@ -12,7 +12,6 @@ html, body {
   background: #000;
   height: 100%;
   overflow: hidden;
-  touch-action: manipulation;
 }
 
 #hint {
@@ -21,7 +20,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255,255,255,0.22);
+  color: rgba(255,255,255,0.25);
   font-family: system-ui, sans-serif;
   font-size: 18px;
   pointer-events: none;
@@ -34,21 +33,17 @@ html, body {
 
 <script>
 /* =========================
-   AUDIO-ONLY STABILIZER
-   - tap toggles on/off
-   - broadband noise
-   - fixed normalized amplitude
-   - no dynamics, no feedback
+   HARD AUDIO STABILIZER
 ========================= */
 
 const hint = document.getElementById("hint");
-let engaged = false;
 
 let audioCtx = null;
 let noise = null;
 let gain = null;
+let engaged = false;
 
-/* ---------- noise buffer ---------- */
+/* ---------- noise ---------- */
 function createNoise(ctx) {
   const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
   const data = buffer.getChannelData(0);
@@ -58,8 +53,8 @@ function createNoise(ctx) {
   return buffer;
 }
 
-/* ---------- audio init ---------- */
-function ensureAudio() {
+/* ---------- init audio ---------- */
+function initAudio() {
   if (audioCtx) return;
 
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -69,61 +64,64 @@ function ensureAudio() {
   noise.loop = true;
 
   gain = audioCtx.createGain();
-
-  // FIXED, NON-INTERPRETABLE LEVEL
-  // Loud enough to exist, quiet enough to ignore
   gain.gain.value = 0;
 
   noise.connect(gain).connect(audioCtx.destination);
   noise.start();
 }
 
-/* ---------- engage / disengage ---------- */
+/* ---------- ON ---------- */
 function audioOn() {
-  ensureAudio();
-  audioCtx.resume();
+  initAudio();
 
-  // Immediate, non-dynamic amplitude
+  // FORCE resume inside gesture
+  if (audioCtx.state !== "running") {
+    audioCtx.resume();
+  }
+
+  // FORCE immediate audible change
   gain.gain.cancelScheduledValues(audioCtx.currentTime);
   gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
+
+  engaged = true;
+  hint.style.display = "none";
 }
 
+/* ---------- OFF ---------- */
 function audioOff() {
-  if (!gain || !audioCtx) return;
+  if (!audioCtx || !gain) return;
+
   gain.gain.cancelScheduledValues(audioCtx.currentTime);
   gain.gain.setValueAtTime(0, audioCtx.currentTime);
+
+  engaged = false;
+  hint.style.display = "flex";
 }
 
-/* ---------- toggle ---------- */
+/* ---------- TOGGLE ---------- */
 function toggle(e) {
   e.preventDefault();
-  engaged = !engaged;
 
-  if (engaged) {
-    hint.style.display = "none";
+  if (!engaged) {
     audioOn();
   } else {
-    hint.style.display = "flex";
     audioOff();
   }
 }
 
+/* ---------- GESTURE CAPTURE ----------
+   We accept EVERYTHING Safari might allow
+-------------------------------------- */
 document.addEventListener("touchstart", toggle, { passive:false });
+document.addEventListener("pointerdown", toggle, { passive:false });
+document.addEventListener("mousedown", toggle, { passive:false });
 
-/* ---------- safety ---------- */
+/* ---------- SAFETY ---------- */
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden && engaged) {
-    engaged = false;
-    audioOff();
-    hint.style.display = "flex";
-  }
+  if (document.hidden && engaged) audioOff();
 });
-addEventListener("pagehide", () => {
-  if (engaged) {
-    engaged = false;
-    audioOff();
-    hint.style.display = "flex";
-  }
+window.addEventListener("pagehide", () => {
+  if (engaged) audioOff();
 });
 </script>
 </body>
