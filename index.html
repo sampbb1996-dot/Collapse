@@ -57,40 +57,53 @@ resize();
 let engaged = false;
 
 /* =========================
-   AUDIO — SIMPLE + RELIABLE
+   AUDIO — NOISE (iOS SAFE)
 ========================= */
 let audioCtx = null;
-let osc = null;
+let noise = null;
 let gain = null;
+
+function createNoiseBuffer(ctx) {
+  const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
+  return buffer;
+}
 
 function startAudio() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-    osc = audioCtx.createOscillator();
-    osc.type = "sine";
-    osc.frequency.value = 180;
+    noise = audioCtx.createBufferSource();
+    noise.buffer = createNoiseBuffer(audioCtx);
+    noise.loop = true;
 
     gain = audioCtx.createGain();
     gain.gain.value = 0;
 
-    osc.connect(gain).connect(audioCtx.destination);
-    osc.start();
+    noise.connect(gain).connect(audioCtx.destination);
+    noise.start();
   }
 
   audioCtx.resume();
+
+  // CRITICAL: open gain immediately inside gesture
   gain.gain.setTargetAtTime(0.03, audioCtx.currentTime, 0.02);
 }
 
 function stopAudio() {
   if (!gain || !audioCtx) return;
-  gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
+  gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.03);
 }
 
 /* =========================
-   HARD RESET
+   DISENGAGE
 ========================= */
 function disengage() {
+  if (!engaged) return;
+
   engaged = false;
   stopAudio();
 
@@ -102,7 +115,6 @@ function disengage() {
 
 /* =========================
    INPUT — DOCUMENT LEVEL
-   (THIS IS THE FIX)
 ========================= */
 function engage(e) {
   e.preventDefault();
@@ -126,13 +138,12 @@ document.addEventListener("visibilitychange", () => {
 addEventListener("pagehide", disengage);
 
 /* =========================
-   LOOP — BLACK ONLY
+   LOOP — INTENTIONALLY BLACK
 ========================= */
 function loop() {
   requestAnimationFrame(loop);
   if (!engaged) return;
 
-  // intentionally invariant visual
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
