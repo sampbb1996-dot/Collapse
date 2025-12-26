@@ -40,12 +40,6 @@ canvas { display: block; }
 
 <script>
 /* =========================
-   SAFETY
-========================= */
-document.addEventListener("contextmenu", e => e.preventDefault(), { passive:false });
-document.addEventListener("selectstart", e => e.preventDefault(), { passive:false });
-
-/* =========================
    STATE
 ========================= */
 const canvas = document.getElementById("c");
@@ -53,12 +47,11 @@ const ctx = canvas.getContext("2d");
 const hint = document.getElementById("hint");
 
 let w, h;
-
-let engaged = false;        // touch present
+let engaged = false;
 let pageVisible = true;
 
-let latent = null;          // Φ state
-let instability = 0;        // accumulated perturbation (subtractive)
+let latent = null;
+let instability = 0;
 
 /* =========================
    RESIZE
@@ -71,7 +64,7 @@ window.addEventListener("resize", resize);
 resize();
 
 /* =========================
-   AUDIO
+   AUDIO (iOS HARD SAFE)
 ========================= */
 let audioCtx = null;
 let noise = null;
@@ -97,24 +90,15 @@ function initAudio() {
   noise.start();
 }
 
-function resumeAudio() {
-  if (audioCtx && audioCtx.state !== "running") audioCtx.resume();
-}
+function armAudioImmediately() {
+  if (!audioCtx || !gain) return;
 
-/* =========================
-   WAKE LOCK (prevents dimming)
-========================= */
-let wakeLock = null;
-async function acquireWakeLock() {
-  try {
-    if ("wakeLock" in navigator) {
-      wakeLock = await navigator.wakeLock.request("screen");
-    }
-  } catch (_) {}
-}
-async function releaseWakeLock() {
-  try { if (wakeLock) await wakeLock.release(); } catch (_) {}
-  wakeLock = null;
+  if (audioCtx.state !== "running") {
+    audioCtx.resume();
+  }
+
+  // CRITICAL: open gain slightly inside the gesture
+  gain.gain.setValueAtTime(0.02, audioCtx.currentTime);
 }
 
 /* =========================
@@ -133,7 +117,6 @@ function forceIdle() {
   ctx.fillRect(0, 0, w, h);
 
   hint.style.display = "flex";
-  releaseWakeLock();
 }
 
 /* =========================
@@ -159,8 +142,7 @@ function startTouch(e) {
   lastTouchTime = performance.now();
 
   initAudio();
-  resumeAudio();
-  acquireWakeLock();
+  armAudioImmediately();   // <-- THIS is the fix
 
   hint.style.display = "none";
 }
@@ -171,9 +153,7 @@ function moveTouch(e) {
   const now = performance.now();
   if (lastTouchTime !== null) {
     const dt = now - lastTouchTime;
-
-    // irregular timing = instability
-    const jitter = Math.abs(dt - 16); // deviation from ~frame cadence
+    const jitter = Math.abs(dt - 16);
     instability += Math.min(0.05, jitter * 0.002);
     instability = Math.min(1, instability);
   }
@@ -191,7 +171,7 @@ canvas.addEventListener("touchend", endTouch, { passive:false });
 canvas.addEventListener("touchcancel", endTouch, { passive:false });
 
 /* =========================
-   Φ COLLAPSE (NO CONTROL AXIS)
+   Φ COLLAPSE
 ========================= */
 function phi() {
   if (latent === null) {
@@ -199,10 +179,7 @@ function phi() {
     return latent;
   }
 
-  // calm engagement decays instability
   instability *= 0.96;
-
-  // instability only subtracts
   latent = Math.max(0, latent - instability * 0.02);
   return latent;
 }
