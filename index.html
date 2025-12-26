@@ -1,69 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>Field</title>
+
+<style>
+html, body, canvas {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  overflow: hidden;
+
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: rgba(0,0,0,0);
+  touch-action: none;
+}
+canvas { display: block; }
+
+#hint {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255,255,255,0.28);
+  font-family: system-ui, sans-serif;
+  font-size: 18px;
+  pointer-events: none;
+}
+</style>
+</head>
+
+<body>
+<canvas id="c"></canvas>
+<div id="hint">touch and hold</div>
+
 <script>
 /* =========================
-   EXOGENOUS NOISE SOURCES
+   SAFETY BLOCKS
 ========================= */
+document.addEventListener("contextmenu", e => e.preventDefault(), { passive:false });
+document.addEventListener("selectstart", e => e.preventDefault(), { passive:false });
 
-// ---- DEVICE MOTION (jerk magnitude only) ----
-let motionEnergy = 0;
-let lastAccel = null;
+/* =========================
+   STATE
+========================= */
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
 
-if (window.DeviceMotionEvent) {
-  window.addEventListener("devicemotion", e => {
-    const a = e.accelerationIncludingGravity;
-    if (!a) return;
+let w, h;
+let running = false;
+let pressure = 0.5;
 
-    const curr = Math.sqrt(a.x*a.x + a.y*a.y + a.z*a.z);
-    if (lastAccel !== null) {
-      const jerk = Math.abs(curr - lastAccel);
-      // accumulate but decay quickly
-      motionEnergy = Math.min(1, motionEnergy + jerk * 0.02);
-    }
-    lastAccel = curr;
-  });
+let latent = null;
+let handed = 0;
+
+/* =========================
+   RESIZE
+========================= */
+function resize() {
+  w = canvas.width = window.innerWidth;
+  h = canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* =========================
+   AUDIO
+========================= */
+let audioCtx = null;
+let noise, gain;
+
+function initAudio() {
+  if (audioCtx) return;
+
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
+  const d = buffer.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+
+  noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  noise.loop = true;
+
+  gain = audioCtx.createGain();
+  gain.gain.value = 0;
+
+  noise.connect(gain).connect(audioCtx.destination);
+  noise.start();
 }
 
-// decay motion noise over time
-function decayMotion() {
-  motionEnergy *= 0.92;
-}
-setInterval(decayMotion, 50);
-
-// ---- TIME OF DAY (ultra-slow bias) ----
-function timeBias() {
-  const hours = new Date().getHours() + new Date().getMinutes()/60;
-  // map 24h → [0.95, 1.05]
-  return 0.95 + 0.1 * Math.sin((hours / 24) * Math.PI * 2);
-}
-
-// ---- BATTERY LEVEL (global damping) ----
-let batteryFactor = 1.0;
-if (navigator.getBattery) {
-  navigator.getBattery().then(b => {
-    function updateBattery() {
-      // lower battery → more collapse
-      batteryFactor = 0.9 + 0.1 * b.level;
-    }
-    updateBattery();
-    b.addEventListener("levelchange", updateBattery);
-  });
+function resumeAudio() {
+  if (audioCtx && audioCtx.state !== "running") audioCtx.resume();
 }
 
 /* =========================
-   INTEGRATION INTO AUDIO
+   EXOGENOUS NOISE (SAFE)
 ========================= */
+let motionEnergy = 0;
+let lastAccel = null;
+let motionEnabled = false;
 
-// call inside your main loop, after ub = biomechU(...)
-function applyEnvironmentalCollapse(ub) {
-  // motion punishes instability
-  const motionPenalty = Math.max(0, 1 - motionEnergy * 0.6);
+async function enableMotion() {
+  if (motionEnabled) return;
 
-  // time bias is neutral drift
-  const tBias = timeBias();
+  try {
+    if (
+      typeof DeviceMotionEvent !== "undefined" &&
+      typeof DeviceMotionEvent.requestPermission === "function"
+    ) {
+      const res = await DeviceMotionEvent.requestPermission();
+      if (res !== "granted") return;
+    }
 
-  // battery is global damping
-  return Math.max(
-    0,
-    Math.min(1, ub * motionPenalty * tBias * batteryFactor)
-  );
+    window.addEventListener("devicemotion", e => {
+      const a = e.accelerationIncludingGravity;
+      if (!a) return;
+
+      const mag = Math.sqrt(a.x*a.x + a.y*a.y + a.z*a.z);
+      if (lastAccel !== null) {
+        const jerk = Math.abs(mag - lastAccel);
+        motionEnergy = Math.min(1, motionEnergy + jerk * 0.015);
+      }
+      lastAccel = mag;
+    });
+
+    motionEnabled = true;
+  } catch (_) {
+    // silently ignore motion if unavailable
+  }
 }
+
+// decay motion penalty
+setInterval(() => {
+  motionEnergy *= 0.9;
+}, 50);
+
+/* =========================
+   INPUT
+========================= */
+function readPressure(e) {
+  let p = 0.5;
+  if (typeof e.pressure === "number" && e.pressure > 0) p = e.pressure;
+  pressure = Math.max(0, Math.min(1, p));
+}
+
+function startHold(e) {
+  e.preventDefault();
+  running = true;
+
+  initAudio();
+  resumeAudio();
+  enableMotion();
+
+  document.getElementById("hint").style.display = "none";
+  readPressure(e);
+}
+
+function moveHold(e) {
+  if (!running) return;
+  readPressure(e);
+}
+
+function endHold(e) {
+  e.preventDefault();
+  running = false;
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, w, h);
+
+  if (gain && audioCtx) gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
+
+  latent = null;
+  handed = 0;
+
+  document.getElementById("hint").style.display = "flex";
+}
+
+canvas.addEventListener("pointerdown", startHold, { passive:false });
+canvas.addEventListener("pointermove", moveHold, { passive:false });
+canvas.addEventListener("pointerup", endHold, { passive:false });
+canvas.addEventListener("pointercancel", () => {});
+
+/* =========================
+   CONTROL
+========================= */
+function biomech(u) {
+  if (latent === null) {
+    latent = u;
+    return latent;
+  }
+  const d = u - latent;
+  const mag = Math.abs(d);
+  const bias = 0.95 - Math.min(0.05, mag * 0.2);
+  latent = bias * latent + (1 - bias) * u;
+  return latent;
+}
+
+/* =========================
+   LOOP
+========================= */
+function step() {
+  requestAnimationFrame(step);
+  if (!running) return;
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, w, h);
+
+  let u = biomech(pressure);
+  u *= Math.max(0.4, 1 - motionEnergy * 0.6);
+
+  if (gain && audioCtx) {
+    gain.gain.setTargetAtTime(
+      0.01 + 0.04 * u,
+      audioCtx.currentTime,
+      0.03
+    );
+  }
+}
+
+step();
 </script>
+</body>
+</html>
