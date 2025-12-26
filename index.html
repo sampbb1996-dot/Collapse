@@ -40,7 +40,7 @@ canvas { display: block; }
 
 <script>
 /* =========================
-   SAFETY
+   SAFETY BLOCKS
 ========================= */
 document.addEventListener("contextmenu", e => e.preventDefault(), { passive:false });
 document.addEventListener("selectstart", e => e.preventDefault(), { passive:false });
@@ -52,10 +52,12 @@ const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 
 let w, h;
-let running = false;
-let armed = false;
 
-let pressure = 0.5;   // default neutral
+let running = false;      // active session
+let armed = false;        // real pointerdown occurred
+let pageVisible = true;   // page lifecycle gate
+
+let pressure = 0.5;       // neutral default
 let latent = null;
 
 /* =========================
@@ -69,7 +71,7 @@ window.addEventListener("resize", resize);
 resize();
 
 /* =========================
-   AUDIO
+   AUDIO (iOS SAFE)
 ========================= */
 let audioCtx = null;
 let noise = null;
@@ -100,10 +102,40 @@ function resumeAudio() {
 }
 
 /* =========================
+   HARD IDLE RESET
+========================= */
+function forceIdle() {
+  running = false;
+  armed = false;
+  latent = null;
+
+  if (gain && audioCtx) {
+    gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
+  }
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, w, h);
+
+  document.getElementById("hint").style.display = "flex";
+}
+
+/* =========================
+   PAGE LIFECYCLE (CRITICAL)
+========================= */
+document.addEventListener("visibilitychange", () => {
+  pageVisible = !document.hidden;
+  if (!pageVisible) forceIdle();
+});
+
+window.addEventListener("pagehide", forceIdle);
+window.addEventListener("pageshow", e => {
+  if (e.persisted) forceIdle();
+});
+
+/* =========================
    INPUT
 ========================= */
 function updatePressure(e) {
-  // iOS-safe: pressure may be 0 or undefined
   if (typeof e.pressure === "number" && e.pressure > 0) {
     pressure = Math.max(0, Math.min(1, e.pressure));
   }
@@ -112,7 +144,7 @@ function updatePressure(e) {
 function startHold(e) {
   e.preventDefault();
 
-  // HARD REQUIREMENT: real pointerdown only
+  // explicit, real engagement only
   armed = true;
   running = true;
 
@@ -130,19 +162,7 @@ function moveHold(e) {
 
 function endHold(e) {
   e.preventDefault();
-
-  running = false;
-  armed = false;
-
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, w, h);
-
-  if (gain && audioCtx) {
-    gain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.02);
-  }
-
-  latent = null;
-  document.getElementById("hint").style.display = "flex";
+  forceIdle();
 }
 
 canvas.addEventListener("pointerdown", startHold, { passive:false });
@@ -171,7 +191,8 @@ function biomech(u) {
 ========================= */
 function step() {
   requestAnimationFrame(step);
-  if (!running || !armed) return;
+
+  if (!pageVisible || !running || !armed) return;
 
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
