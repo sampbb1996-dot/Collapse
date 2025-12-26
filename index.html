@@ -1,3 +1,8 @@
+document.addEventListener("touchstart", e => {
+  // forward first gesture into the app
+  const evt = new Event("touchstart", { bubbles: true, cancelable: true });
+  canvas.dispatchEvent(evt);
+}, { passive: false });
 <!DOCTYPE html>
 <html lang="en">
 <head>
