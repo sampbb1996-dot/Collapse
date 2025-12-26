@@ -29,19 +29,21 @@ html, body {
 </head>
 
 <body>
-<div id="hint">touch and hold</div>
+<div id="hint">tap once</div>
 
 <script>
 /* =========================
-   iOS-SAFE AUDIO CORE
+   iOS-SAFE ONE-TAP AUDIO
 ========================= */
 
 let audioCtx = null;
 let noise = null;
 let gain = null;
+let started = false;
+
 const hint = document.getElementById("hint");
 
-/* ---------- create noise ---------- */
+/* ---------- noise buffer ---------- */
 function makeNoise(ctx) {
   const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
   const data = buffer.getChannelData(0);
@@ -51,10 +53,8 @@ function makeNoise(ctx) {
   return buffer;
 }
 
-/* ---------- init audio ---------- */
+/* ---------- init ---------- */
 function initAudio() {
-  if (audioCtx) return;
-
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
   noise = audioCtx.createBufferSource();
@@ -68,53 +68,46 @@ function initAudio() {
   noise.start();
 }
 
-/* ---------- START (gesture-locked) ---------- */
-function start(e) {
+/* ---------- START (only once) ---------- */
+function startAudio(e) {
+  if (started) return;
+
   e.preventDefault();
+
+  started = true;
+  hint.style.display = "none";
 
   initAudio();
 
-  // FORCE unlock
+  // MUST happen inside gesture
   audioCtx.resume();
 
-  // FORCE immediate audible output
+  // Immediate audible output
   gain.gain.cancelScheduledValues(audioCtx.currentTime);
   gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
 
-  hint.style.display = "none";
+  // Remove all listeners after start
+  document.removeEventListener("touchstart", startAudio);
+  document.removeEventListener("pointerdown", startAudio);
+  document.removeEventListener("mousedown", startAudio);
 }
 
-/* ---------- STOP ---------- */
-function stop(e) {
-  e.preventDefault();
+/* ---------- gesture capture ----------
+   ANY one of these will unlock audio
+------------------------------------ */
+document.addEventListener("touchstart", startAudio, { passive:false });
+document.addEventListener("pointerdown", startAudio, { passive:false });
+document.addEventListener("mousedown", startAudio, { passive:false });
 
-  if (!gain || !audioCtx) return;
-
-  gain.gain.cancelScheduledValues(audioCtx.currentTime);
-  gain.gain.setValueAtTime(0, audioCtx.currentTime);
-
-  hint.style.display = "flex";
-}
-
-/* ---------- GESTURES ----------
-   Press = sound
-   Release = silence
--------------------------------- */
-document.addEventListener("touchstart", start, { passive:false });
-document.addEventListener("touchend", stop, { passive:false });
-document.addEventListener("touchcancel", stop, { passive:false });
-
-document.addEventListener("pointerdown", start, { passive:false });
-document.addEventListener("pointerup", stop, { passive:false });
-
-document.addEventListener("mousedown", start, { passive:false });
-document.addEventListener("mouseup", stop, { passive:false });
-
-/* ---------- SAFETY ---------- */
+/* ---------- safety ----------
+   If browser suspends audio, we do NOT
+   try to restart automatically (no loops)
+-------------------------------------- */
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) stop(new Event("stop"));
+  if (audioCtx && audioCtx.state === "suspended") {
+    // stays silent until reload (expected iOS behavior)
+  }
 });
-window.addEventListener("pagehide", () => stop(new Event("stop")));
 </script>
 </body>
 </html>
