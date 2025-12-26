@@ -14,7 +14,8 @@ html, body {
   overflow: hidden;
 }
 
-#hint {
+button {
+  all: unset;
   position: fixed;
   inset: 0;
   display: flex;
@@ -23,91 +24,48 @@ html, body {
   color: rgba(255,255,255,0.25);
   font-family: system-ui, sans-serif;
   font-size: 18px;
-  pointer-events: none;
 }
 </style>
 </head>
 
 <body>
-<div id="hint">tap once</div>
+
+<button id="start">tap once</button>
 
 <script>
-/* =========================
-   iOS-SAFE ONE-TAP AUDIO
-========================= */
+let audioCtx;
+let noise;
+let gain;
 
-let audioCtx = null;
-let noise = null;
-let gain = null;
-let started = false;
+function startAudio() {
+  // Prevent double start
+  document.getElementById("start").disabled = true;
+  document.getElementById("start").style.display = "none";
 
-const hint = document.getElementById("hint");
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-/* ---------- noise buffer ---------- */
-function makeNoise(ctx) {
-  const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
   const data = buffer.getChannelData(0);
   for (let i = 0; i < data.length; i++) {
     data[i] = Math.random() * 2 - 1;
   }
-  return buffer;
-}
-
-/* ---------- init ---------- */
-function initAudio() {
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
   noise = audioCtx.createBufferSource();
-  noise.buffer = makeNoise(audioCtx);
+  noise.buffer = buffer;
   noise.loop = true;
 
   gain = audioCtx.createGain();
-  gain.gain.value = 0;
+  gain.gain.value = 0.04;
 
   noise.connect(gain).connect(audioCtx.destination);
   noise.start();
-}
 
-/* ---------- START (only once) ---------- */
-function startAudio(e) {
-  if (started) return;
-
-  e.preventDefault();
-
-  started = true;
-  hint.style.display = "none";
-
-  initAudio();
-
-  // MUST happen inside gesture
   audioCtx.resume();
-
-  // Immediate audible output
-  gain.gain.cancelScheduledValues(audioCtx.currentTime);
-  gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
-
-  // Remove all listeners after start
-  document.removeEventListener("touchstart", startAudio);
-  document.removeEventListener("pointerdown", startAudio);
-  document.removeEventListener("mousedown", startAudio);
 }
 
-/* ---------- gesture capture ----------
-   ANY one of these will unlock audio
------------------------------------- */
-document.addEventListener("touchstart", startAudio, { passive:false });
-document.addEventListener("pointerdown", startAudio, { passive:false });
-document.addEventListener("mousedown", startAudio, { passive:false });
-
-/* ---------- safety ----------
-   If browser suspends audio, we do NOT
-   try to restart automatically (no loops)
--------------------------------------- */
-document.addEventListener("visibilitychange", () => {
-  if (audioCtx && audioCtx.state === "suspended") {
-    // stays silent until reload (expected iOS behavior)
-  }
-});
+// SAFARI-REQUIRED DIRECT CLICK
+document.getElementById("start").addEventListener("click", startAudio);
 </script>
+
 </body>
 </html>
