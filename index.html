@@ -1,70 +1,88 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
+<meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-<title>Field</title>
+<title>Collapse</title>
 
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #000;
-  height: 100%;
-  overflow: hidden;
-}
-
-button {
-  all: unset;
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(255,255,255,0.25);
-  font-family: system-ui, sans-serif;
-  font-size: 18px;
-}
-</style>
-</head>
-
-<body>
-
-<button id="start">tap once</button>
-
-<script>
-let audioCtx;
-let noise;
-let gain;
-
-function startAudio() {
-  // Prevent double start
-  document.getElementById("start").disabled = true;
-  document.getElementById("start").style.display = "none";
-
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i++) {
-    data[i] = Math.random() * 2 - 1;
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #050505;
+    height: 100%;
+    overflow: hidden;
+    touch-action: manipulation;
   }
 
-  noise = audioCtx.createBufferSource();
-  noise.buffer = buffer;
-  noise.loop = true;
+  #field {
+    position: absolute;
+    inset: 0;
+    background: #050505;
+  }
 
-  gain = audioCtx.createGain();
-  gain.gain.value = 0.04;
+  /* stimulus */
+  #event {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 2px;
+    height: 2px;
+    background: #e6e6e6;
+    opacity: 0;
+    transform: translate(-50%, -50%);
+  }
+</style>
+</head>
+<body>
 
-  noise.connect(gain).connect(audioCtx.destination);
-  noise.start();
+<div id="field"></div>
+<div id="event"></div>
 
-  audioCtx.resume();
-}
+<script>
+(() => {
+  const eventEl = document.getElementById("event");
 
-// SAFARI-REQUIRED DIRECT CLICK
-document.getElementById("start").addEventListener("click", startAudio);
+  let fired = false;
+  let armed = false;
+
+  // Random delay window (unpredictable)
+  const delay = Math.random() * 100000 + 20000; // 20–120 seconds
+
+  // Arm after user interaction (Safari requirement)
+  document.body.addEventListener("touchstart", () => {
+    if (!armed) armed = true;
+  }, { once: true });
+
+  setTimeout(() => {
+    if (!armed) return;
+
+    fired = true;
+    eventEl.style.opacity = "1";
+
+    // stimulus exists briefly, then vanishes
+    setTimeout(() => {
+      eventEl.style.opacity = "0";
+      endSession();
+    }, 120); // ~1 frame + a bit
+  }, delay);
+
+  function endSession() {
+    // hard stop — nothing else happens
+    document.body.removeEventListener("touchstart", onAction);
+    document.body.removeEventListener("touchend", onAction);
+  }
+
+  function onAction() {
+    if (!fired) return;
+    endSession();
+  }
+
+  // irreversible micro-action = any tap
+  document.body.addEventListener("touchstart", onAction);
+  document.body.addEventListener("touchend", onAction);
+
+})();
 </script>
 
 </body>
