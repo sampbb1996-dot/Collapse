@@ -1,126 +1,312 @@
 #!/usr/bin/env python3
 """
-resell_collapse.py
-
-Terminal, constraint-first reselling detector.
+resell_executor.py — constraint-first deal executor + non-arbitrary phase-change notifier.
 
 Invariant:
-- Silence is default.
-- Output occurs ONLY when an external price forces action.
-- No suggestion, no optimisation, no escalation, no learning.
+- Default is silence (no email) unless:
+  (A) BUY signal (forced): price <= MAX_BUY_PRICE
+  (B) REVIEW REQUIRED (forced): objective phase change in feed dynamics
 
-If it prints, you act.
-If it does not print, nothing is known.
+No negotiation. No ranking. No "what to do" instructions.
 """
 
-import feedparser
-import sqlite3
-import hashlib
-import time
-import re
+from __future__ import annotations
+
+import os, re, time, json, sqlite3, hashlib, logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List, Dict, Tuple
 
-# ======================
-# USER HARD CONSTRAINTS
-# ======================
+import feedparser
 
-FEEDS = [
-    # Example:
-    # "https://www.gumtree.com.au/s-sydney/chairs/k0l3003435r10/rss"
-]
+# =========================
+# CONFIG (env first, then file)
+# =========================
 
-MAX_BUY_PRICE = 50      # absolute ceiling, not a heuristic
-DB_PATH = "seen.sqlite"
-POLL_SECONDS = 300
+CONFIG_PATH = os.getenv("CONFIG_PATH", "resell_config.json")
+DB_PATH = os.getenv("DB_PATH", "resell.sqlite")
+POLL_SECONDS = int(os.getenv("POLL_SECONDS", "300"))
 
-# ======================
-# INTERNALS
-# ======================
+MAX_BUY_PRICE = int(os.getenv("MAX_BUY_PRICE", "50"))  # hard cap (not a heuristic)
 
-PRICE_RE = re.compile(r"\$?\s*([0-9]{1,6})")
+# SMTP (optional) — leave unset to disable email
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASS = os.getenv("SMTP_PASS", "")
+EMAIL_TO = os.getenv("EMAIL_TO", "")
+EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
 
-def extract_price(text: str) -> Optional[int]:
-    if not text:
-        return None
-    m = PRICE_RE.search(text.replace(",", ""))
-    return int(m.group(1)) if m else None
+DEBUG = os.getenv("DEBUG", "0") == "1"
 
-def uid(link: str) -> str:
-    return hashlib.sha256(link.encode()).hexdigest()[:24]
+logging.basicConfig(
+    level=logging.DEBUG if DEBUG else logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+
+_PRICE_RE = re.compile(r"\$?\s*([0-9]{1,7})(?:\.[0-9]{1,2})?")
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-# ======================
-# STORAGE (MINIMAL STATE)
-# ======================
+def sha_id(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8", errors="ignore")).hexdigest()[:24]
 
-def init_db(conn):
+def parse_price(text: str) -> Optional[int]:
+    if not text:
+        return None
+    m = _PRICE_RE.search(text.replace(",", ""))
+    if not m:
+        return None
+    try:
+        return int(float(m.group(1)))
+    except Exception:
+        return None
+
+@dataclass
+class Listing:
+    feed_url: str
+    title: str
+    link: str
+    price: Optional[int]
+    published: Optional[str]
+
+def load_config() -> Dict:
+    if not os.path.exists(CONFIG_PATH):
+        return {"feeds": []}
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def save_config(cfg: Dict) -> None:
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+
+def send_email(subject: str, body: str) -> None:
+    if not (SMTP_HOST and SMTP_USER and SMTP_PASS and EMAIL_TO and EMAIL_FROM):
+        return
+    import smtplib
+    from email.mime.text import MIMEText
+
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = EMAIL_FROM
+    msg["To"] = EMAIL_TO
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as s:
+        s.starttls()
+        s.login(SMTP_USER, SMTP_PASS)
+        s.sendmail(EMAIL_FROM, [EMAIL_TO], msg.as_string())
+
+# =========================
+# DB
+# =========================
+
+def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS seen (
-            id TEXT PRIMARY KEY,
-            first_seen TEXT NOT NULL
-        )
-    """)
+    CREATE TABLE IF NOT EXISTS seen (
+        id TEXT PRIMARY KEY,
+        first_seen TEXT NOT NULL,
+        feed_url TEXT NOT NULL
+    )""")
+
+    # feed updates (objective activity)
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS feed_state (
+        feed_url TEXT PRIMARY KEY,
+        last_feed_item_seen TEXT,
+        last_qualifying_seen TEXT,
+        has_ever_qualified INTEGER NOT NULL DEFAULT 0,
+        max_qual_gap_seconds INTEGER NOT NULL DEFAULT 0,
+        last_review_sent TEXT
+    )""")
+
     conn.commit()
 
-def already_seen(conn, i):
-    return conn.execute(
-        "SELECT 1 FROM seen WHERE id = ?", (i,)
-    ).fetchone() is not None
+def get_feed_state(conn: sqlite3.Connection, feed_url: str) -> Dict:
+    cur = conn.execute("SELECT feed_url,last_feed_item_seen,last_qualifying_seen,has_ever_qualified,max_qual_gap_seconds,last_review_sent FROM feed_state WHERE feed_url=?",
+                       (feed_url,))
+    row = cur.fetchone()
+    if not row:
+        conn.execute("INSERT INTO feed_state(feed_url) VALUES (?)", (feed_url,))
+        conn.commit()
+        return get_feed_state(conn, feed_url)
+    return {
+        "feed_url": row[0],
+        "last_feed_item_seen": row[1],
+        "last_qualifying_seen": row[2],
+        "has_ever_qualified": int(row[3]),
+        "max_qual_gap_seconds": int(row[4]),
+        "last_review_sent": row[5],
+    }
 
-def mark_seen(conn, i):
-    conn.execute(
-        "INSERT OR IGNORE INTO seen VALUES (?, ?)",
-        (i, utc_now())
+def set_feed_state(conn: sqlite3.Connection, feed_url: str, **fields) -> None:
+    keys = list(fields.keys())
+    if not keys:
+        return
+    sql = "UPDATE feed_state SET " + ", ".join([f"{k}=?" for k in keys]) + " WHERE feed_url=?"
+    vals = [fields[k] for k in keys] + [feed_url]
+    conn.execute(sql, vals)
+    conn.commit()
+
+def seen(conn: sqlite3.Connection, item_id: str) -> bool:
+    return conn.execute("SELECT 1 FROM seen WHERE id=?", (item_id,)).fetchone() is not None
+
+def mark_seen(conn: sqlite3.Connection, item_id: str, feed_url: str) -> None:
+    conn.execute("INSERT OR IGNORE INTO seen(id,first_seen,feed_url) VALUES (?,?,?)",
+                 (item_id, utc_now(), feed_url))
+    conn.commit()
+
+def iso_to_ts(s: Optional[str]) -> Optional[float]:
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+def now_ts() -> float:
+    return datetime.now(timezone.utc).timestamp()
+
+# =========================
+# Core logic
+# =========================
+
+def extract_listing(feed_url: str, entry: Dict) -> Listing:
+    title = entry.get("title", "") or ""
+    link = entry.get("link", "") or ""
+    published = entry.get("published") or entry.get("updated")
+    summary = entry.get("summary", "") or entry.get("description", "") or ""
+
+    price = parse_price(title) or parse_price(summary)
+    return Listing(feed_url=feed_url, title=title, link=link, price=price, published=published)
+
+def is_buy_signal(listing: Listing) -> bool:
+    return listing.price is not None and listing.price <= MAX_BUY_PRICE
+
+def maybe_send_review(conn: sqlite3.Connection, feed_url: str, reason: str, details: str) -> None:
+    st = get_feed_state(conn, feed_url)
+    # prevent spam: only one review email per feed per day
+    last = iso_to_ts(st["last_review_sent"])
+    if last and (now_ts() - last) < 24 * 3600:
+        return
+
+    subject = "Constraint crossed: review required"
+    body = (
+        "Observed change:\n"
+        f"- {reason}\n\n"
+        "Objective details:\n"
+        f"{details}\n\n"
+        "No action has been taken.\n"
+        "No recommendation is made.\n"
+        "This message exists only to indicate that review is now justified.\n"
     )
-    conn.commit()
+    send_email(subject, body)
+    set_feed_state(conn, feed_url, last_review_sent=utc_now())
 
-# ======================
-# COLLAPSE CONDITION
-# ======================
+def update_phase_change_logic(conn: sqlite3.Connection, feed_url: str, feed_updated: bool) -> None:
+    """
+    Non-arbitrary triggers:
+    1) Quiet beyond own historical max qualifying inter-arrival gap, while feed still updates.
+    2) First-ever stable qualifying event (impossible -> possible).
+    """
+    st = get_feed_state(conn, feed_url)
 
-def forced_buy(price: Optional[int]) -> bool:
-    return price is not None and price <= MAX_BUY_PRICE
+    last_q_ts = iso_to_ts(st["last_qualifying_seen"])
+    last_feed_ts = iso_to_ts(st["last_feed_item_seen"])
+    max_gap = st["max_qual_gap_seconds"]
 
-# ======================
-# MAIN LOOP
-# ======================
+    # Trigger 1: structural quiet (derived from history, no calendar choice)
+    if st["has_ever_qualified"] == 1 and max_gap > 0 and last_q_ts is not None:
+        gap_now = now_ts() - last_q_ts
+        if feed_updated and gap_now > max_gap:
+            maybe_send_review(
+                conn,
+                feed_url,
+                "Qualifying-arrival pattern broke its own historical bound.",
+                f"- Current gap since last qualifying: {int(gap_now)}s\n"
+                f"- Historical max qualifying gap: {int(max_gap)}s\n"
+                f"- Feed is still updating: {feed_updated}"
+            )
 
-def main():
-    if not FEEDS:
-        raise RuntimeError("No feeds configured.")
+def main() -> None:
+    cfg = load_config()
+    feeds: List[str] = cfg.get("feeds", [])
+    if not feeds:
+        logging.error("No feeds configured. Add RSS URLs to resell_config.json as: {\"feeds\": [\"...\"]}")
+        return
 
     with sqlite3.connect(DB_PATH) as conn:
         init_db(conn)
 
+        logging.info("Started. Feeds=%d poll=%ds MAX_BUY_PRICE=%d", len(feeds), POLL_SECONDS, MAX_BUY_PRICE)
+
         while True:
-            for feed_url in FEEDS:
-                feed = feedparser.parse(feed_url)
+            for feed_url in feeds:
+                try:
+                    st = get_feed_state(conn, feed_url)
 
-                for entry in feed.entries:
-                    link = entry.get("link")
-                    if not link:
-                        continue
+                    d = feedparser.parse(feed_url)
+                    entries = d.entries[:60]
 
-                    i = uid(link)
-                    if already_seen(conn, i):
-                        continue
+                    feed_updated = False
 
-                    mark_seen(conn, i)
+                    for entry in entries:
+                        listing = extract_listing(feed_url, entry)
+                        if not listing.link:
+                            continue
 
-                    title = entry.get("title", "")
-                    summary = entry.get("summary", "")
+                        item_id = sha_id(listing.link)
+                        if seen(conn, item_id):
+                            continue
 
-                    price = extract_price(title) or extract_price(summary)
+                        mark_seen(conn, item_id, feed_url)
 
-                    if forced_buy(price):
-                        print("\n=== BUY ===")
-                        print(f"TITLE: {title}")
-                        print(f"PRICE: ${price}")
-                        print(f"LINK:  {link}")
-                        print("==========\n")
+                        # If we saw anything new at all, feed is "updating"
+                        feed_updated = True
+                        set_feed_state(conn, feed_url, last_feed_item_seen=utc_now())
+
+                        if is_buy_signal(listing):
+                            # BUY packet
+                            packet = (
+                                "\n=== BUY ===\n"
+                                f"TITLE: {listing.title}\n"
+                                f"PRICE: ${listing.price}\n"
+                                f"LINK:  {listing.link}\n"
+                                "==========\n"
+                            )
+                            print(packet)
+
+                            # Optional email for BUY signal (transport only)
+                            send_email(f"BUY: {listing.title[:70]}", packet)
+
+                            # Update qualifying arrival stats (objective)
+                            prev_q = iso_to_ts(st["last_qualifying_seen"])
+                            now_iso = utc_now()
+                            set_feed_state(conn, feed_url, has_ever_qualified=1, last_qualifying_seen=now_iso)
+
+                            if prev_q is not None:
+                                gap = int(now_ts() - prev_q)
+                                # update historical max gap (non-arbitrary)
+                                if gap > st["max_qual_gap_seconds"]:
+                                    set_feed_state(conn, feed_url, max_qual_gap_seconds=gap)
+
+                            # Trigger 2: first-ever qualify => phase change
+                            if st["has_ever_qualified"] == 0:
+                                maybe_send_review(
+                                    conn,
+                                    feed_url,
+                                    "Feed crossed from impossible→possible under current hard rule.",
+                                    "- First qualifying BUY signal observed.\n"
+                                    f"- Rule: price <= {MAX_BUY_PRICE}\n"
+                                    f"- Listing: {listing.title}\n"
+                                    f"- Link: {listing.link}"
+                                )
+
+                    # Evaluate phase change “quiet beyond historical bound”
+                    update_phase_change_logic(conn, feed_url, feed_updated=feed_updated)
+
+                except Exception as e:
+                    logging.exception("Feed error: %s | %s", feed_url, e)
 
             time.sleep(POLL_SECONDS)
 
