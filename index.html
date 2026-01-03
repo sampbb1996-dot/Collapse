@@ -1,89 +1,128 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-<title>Collapse</title>
+#!/usr/bin/env python3
+"""
+resell_collapse.py
 
-<style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: #050505;
-    height: 100%;
-    overflow: hidden;
-    touch-action: manipulation;
-  }
+Terminal, constraint-first reselling detector.
 
-  #field {
-    position: absolute;
-    inset: 0;
-    background: #050505;
-  }
+Invariant:
+- Silence is default.
+- Output occurs ONLY when an external price forces action.
+- No suggestion, no optimisation, no escalation, no learning.
 
-  /* stimulus */
-  #event {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 2px;
-    height: 2px;
-    background: #e6e6e6;
-    opacity: 0;
-    transform: translate(-50%, -50%);
-  }
-</style>
-</head>
-<body>
+If it prints, you act.
+If it does not print, nothing is known.
+"""
 
-<div id="field"></div>
-<div id="event"></div>
+import feedparser
+import sqlite3
+import hashlib
+import time
+import re
+from datetime import datetime, timezone
+from typing import Optional
 
-<script>
-(() => {
-  const eventEl = document.getElementById("event");
+# ======================
+# USER HARD CONSTRAINTS
+# ======================
 
-  let fired = false;
-  let armed = false;
+FEEDS = [
+    # Example:
+    # "https://www.gumtree.com.au/s-sydney/chairs/k0l3003435r10/rss"
+]
 
-  // Random delay window (unpredictable)
-  const delay = Math.random() * 100000 + 20000; // 20–120 seconds
+MAX_BUY_PRICE = 50      # absolute ceiling, not a heuristic
+DB_PATH = "seen.sqlite"
+POLL_SECONDS = 300
 
-  // Arm after user interaction (Safari requirement)
-  document.body.addEventListener("touchstart", () => {
-    if (!armed) armed = true;
-  }, { once: true });
+# ======================
+# INTERNALS
+# ======================
 
-  setTimeout(() => {
-    if (!armed) return;
+PRICE_RE = re.compile(r"\$?\s*([0-9]{1,6})")
 
-    fired = true;
-    eventEl.style.opacity = "1";
+def extract_price(text: str) -> Optional[int]:
+    if not text:
+        return None
+    m = PRICE_RE.search(text.replace(",", ""))
+    return int(m.group(1)) if m else None
 
-    // stimulus exists briefly, then vanishes
-    setTimeout(() => {
-      eventEl.style.opacity = "0";
-      endSession();
-    }, 120); // ~1 frame + a bit
-  }, delay);
+def uid(link: str) -> str:
+    return hashlib.sha256(link.encode()).hexdigest()[:24]
 
-  function endSession() {
-    // hard stop — nothing else happens
-    document.body.removeEventListener("touchstart", onAction);
-    document.body.removeEventListener("touchend", onAction);
-  }
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
-  function onAction() {
-    if (!fired) return;
-    endSession();
-  }
+# ======================
+# STORAGE (MINIMAL STATE)
+# ======================
 
-  // irreversible micro-action = any tap
-  document.body.addEventListener("touchstart", onAction);
-  document.body.addEventListener("touchend", onAction);
+def init_db(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS seen (
+            id TEXT PRIMARY KEY,
+            first_seen TEXT NOT NULL
+        )
+    """)
+    conn.commit()
 
-})();
-</script>
+def already_seen(conn, i):
+    return conn.execute(
+        "SELECT 1 FROM seen WHERE id = ?", (i,)
+    ).fetchone() is not None
 
-</body>
-</html>
+def mark_seen(conn, i):
+    conn.execute(
+        "INSERT OR IGNORE INTO seen VALUES (?, ?)",
+        (i, utc_now())
+    )
+    conn.commit()
+
+# ======================
+# COLLAPSE CONDITION
+# ======================
+
+def forced_buy(price: Optional[int]) -> bool:
+    return price is not None and price <= MAX_BUY_PRICE
+
+# ======================
+# MAIN LOOP
+# ======================
+
+def main():
+    if not FEEDS:
+        raise RuntimeError("No feeds configured.")
+
+    with sqlite3.connect(DB_PATH) as conn:
+        init_db(conn)
+
+        while True:
+            for feed_url in FEEDS:
+                feed = feedparser.parse(feed_url)
+
+                for entry in feed.entries:
+                    link = entry.get("link")
+                    if not link:
+                        continue
+
+                    i = uid(link)
+                    if already_seen(conn, i):
+                        continue
+
+                    mark_seen(conn, i)
+
+                    title = entry.get("title", "")
+                    summary = entry.get("summary", "")
+
+                    price = extract_price(title) or extract_price(summary)
+
+                    if forced_buy(price):
+                        print("\n=== BUY ===")
+                        print(f"TITLE: {title}")
+                        print(f"PRICE: ${price}")
+                        print(f"LINK:  {link}")
+                        print("==========\n")
+
+            time.sleep(POLL_SECONDS)
+
+if __name__ == "__main__":
+    main()
