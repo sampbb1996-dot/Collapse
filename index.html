@@ -1,314 +1,267 @@
-#!/usr/bin/env python3
-"""
-resell_executor.py — constraint-first deal executor + non-arbitrary phase-change notifier.
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Noise Probe</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #050505;
+      height: 100%;
+      overflow: hidden;
+      touch-action: none; /* prevent scroll/zoom gestures */
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
 
-Invariant:
-- Default is silence (no email) unless:
-  (A) BUY signal (forced): price <= MAX_BUY_PRICE
-  (B) REVIEW REQUIRED (forced): objective phase change in feed dynamics
+<script>
+(() => {
+  'use strict';
 
-No negotiation. No ranking. No "what to do" instructions.
-"""
+  // -----------------------------
+  // Canvas setup (hi-DPI)
+  // -----------------------------
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { alpha: false });
 
-from __future__ import annotations
+  function resize() {
+    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize, { passive: true });
+  resize();
 
-import os, re, time, json, sqlite3, hashlib, logging
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Optional, List, Dict, Tuple
+  // -----------------------------
+  // Noise field parameters (non-anchored)
+  // No privileged center, edges, shapes, events.
+  // -----------------------------
+  const W = () => window.innerWidth;
+  const H = () => window.innerHeight;
 
-import feedparser
+  // Offscreen buffer for efficient noise stamping
+  const tile = document.createElement('canvas');
+  const tctx = tile.getContext('2d', { alpha: true });
 
-# =========================
-# CONFIG (env first, then file)
-# =========================
+  // Tile size chosen to avoid obvious repetition while keeping performance ok on iPhone
+  let TILE = 192;
+  function resizeTile() {
+    tile.width = TILE;
+    tile.height = TILE;
+  }
+  resizeTile();
 
-CONFIG_PATH = os.getenv("CONFIG_PATH", "resell_config.json")
-DB_PATH = os.getenv("DB_PATH", "resell.sqlite")
-POLL_SECONDS = int(os.getenv("POLL_SECONDS", "300"))
+  // Simple PRNG (deterministic-ish per session, not meaningful)
+  let seed = (Date.now() ^ (Math.random() * 2**31)) >>> 0;
+  function rng() {
+    // xorshift32
+    seed ^= seed << 13; seed >>>= 0;
+    seed ^= seed >>> 17; seed >>>= 0;
+    seed ^= seed << 5;  seed >>>= 0;
+    return (seed >>> 0) / 4294967296;
+  }
 
-MAX_BUY_PRICE = int(os.getenv("MAX_BUY_PRICE", "50"))  # hard cap (not a heuristic)
+  function fillTileNoise() {
+    const img = tctx.createImageData(TILE, TILE);
+    const d = img.data;
 
-# SMTP (optional) — leave unset to disable email
-SMTP_HOST = os.getenv("SMTP_HOST", "")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASS = os.getenv("SMTP_PASS", "")
-EMAIL_TO = os.getenv("EMAIL_TO", "")
-EMAIL_FROM = os.getenv("EMAIL_FROM", SMTP_USER)
+    // Grain: mostly dark with subtle bright specks.
+    // No gradients, no center bias, no geometric anchors.
+    for (let i = 0; i < d.length; i += 4) {
+      // Dark baseline
+      const base = 6 + Math.floor(rng() * 10); // 6..15
+      // Rare brighter speckle
+      const speck = (rng() < 0.02) ? Math.floor(40 + rng() * 80) : 0; // occasional
+      const v = Math.min(255, base + speck);
 
-DEBUG = os.getenv("DEBUG", "0") == "1"
+      d[i] = v;     // R
+      d[i+1] = v;   // G
+      d[i+2] = v;   // B
+      d[i+3] = 255; // A
+    }
+    tctx.putImageData(img, 0, 0);
+  }
 
-logging.basicConfig(
-    level=logging.DEBUG if DEBUG else logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
+  // Refill tile occasionally to avoid static texture "handle"
+  let lastTileRefresh = 0;
+  const TILE_REFRESH_MS_MIN = 450;
+  const TILE_REFRESH_MS_JITTER = 900;
 
-_PRICE_RE = re.compile(r"\$?\s*([0-9]{1,7})(?:\.[0-9]{1,2})?")
+  // -----------------------------
+  // Single adaptive variable: "engagement window" (ms)
+  // Interpreted as: how tight the system considers your releases.
+  // No explicit events; adaptation is gated by calm stability.
+  // -----------------------------
+  let windowMs = 420;            // starts moderate
+  const WINDOW_MIN = 160;
+  const WINDOW_MAX = 900;
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+  // Calm gate: we only adapt when behavior is stable (low variance).
+  // We compute a rolling stability score from inter-release intervals.
+  const intervals = [];
+  const INTERVAL_BUF = 18;
 
-def sha_id(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8", errors="ignore")).hexdigest()[:24]
+  function pushInterval(ms) {
+    intervals.push(ms);
+    if (intervals.length > INTERVAL_BUF) intervals.shift();
+  }
 
-def parse_price(text: str) -> Optional[int]:
-    if not text:
-        return None
-    m = _PRICE_RE.search(text.replace(",", ""))
-    if not m:
-        return None
-    try:
-        return int(float(m.group(1)))
-    except Exception:
-        return None
+  function stabilityScore() {
+    // Return 0..1, higher = calmer/more consistent.
+    if (intervals.length < 6) return 0; // not enough evidence
+    const mean = intervals.reduce((a,b)=>a+b,0) / intervals.length;
+    let varSum = 0;
+    for (const x of intervals) {
+      const dx = x - mean;
+      varSum += dx * dx;
+    }
+    const variance = varSum / intervals.length;
 
-@dataclass
-class Listing:
-    feed_url: str
-    title: str
-    link: str
-    price: Optional[int]
-    published: Optional[str]
+    // Normalize: higher variance => lower score.
+    // Scale chosen to be conservative; we want stability to be earned.
+    const norm = Math.sqrt(variance) / Math.max(1, mean); // relative std dev
+    const score = 1 - Math.min(1, norm * 2.2); // 2.2 is a dampener
+    return Math.max(0, Math.min(1, score));
+  }
 
-def load_config() -> Dict:
-    if not os.path.exists(CONFIG_PATH):
-        return {"feeds": []}
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+  // Adaptation is silent; it only tightens/loosens windowMs.
+  function adapt(isGood) {
+    const s = stabilityScore();
+    if (s < 0.55) return; // freeze adaptation under instability
 
-def save_config(cfg: Dict) -> None:
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    // Small bounded steps only. No escalation.
+    const step = 10 + Math.floor(8 * s); // 10..18ms
+    if (isGood) windowMs = Math.max(WINDOW_MIN, windowMs - step);
+    else        windowMs = Math.min(WINDOW_MAX, windowMs + step);
+  }
 
-def send_email(subject: str, body: str) -> None:
-    if not (SMTP_HOST and SMTP_USER and SMTP_PASS and EMAIL_TO and EMAIL_FROM):
-        return
-    import smtplib
-    from email.mime.text import MIMEText
+  // -----------------------------
+  // Interaction: finger release only
+  // We do NOT show feedback; we only update internal windowMs.
+  // -----------------------------
+  let lastRelease = 0;
+  let pressed = false;
 
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = subject
-    msg["From"] = EMAIL_FROM
-    msg["To"] = EMAIL_TO
+  function onPressStart(e) {
+    pressed = true;
+    // Prevent accidental scrolling / back gesture interactions
+    e.preventDefault?.();
+  }
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as s:
-        s.starttls()
-        s.login(SMTP_USER, SMTP_PASS)
-        s.sendmail(EMAIL_FROM, [EMAIL_TO], msg.as_string())
+  function onRelease(e) {
+    if (!pressed) return;
+    pressed = false;
+    e.preventDefault?.();
 
-# =========================
-# DB
-# =========================
+    const now = performance.now();
+    if (lastRelease > 0) {
+      const dt = now - lastRelease;
+      pushInterval(dt);
 
-def init_db(conn: sqlite3.Connection) -> None:
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS seen (
-        id TEXT PRIMARY KEY,
-        first_seen TEXT NOT NULL,
-        feed_url TEXT NOT NULL
-    )""")
+      // "Good" means: release interval fell within current engagement window
+      // relative to your own recent mean—without creating a targetable rhythm.
+      // We compare dt to mean with tolerance windowMs.
+      const mean = intervals.length
+        ? intervals.reduce((a,b)=>a+b,0) / intervals.length
+        : dt;
 
-    # feed updates (objective activity)
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS feed_state (
-        feed_url TEXT PRIMARY KEY,
-        last_feed_item_seen TEXT,
-        last_qualifying_seen TEXT,
-        has_ever_qualified INTEGER NOT NULL DEFAULT 0,
-        max_qual_gap_seconds INTEGER NOT NULL DEFAULT 0,
-        last_review_sent TEXT
-    )""")
+      const good = Math.abs(dt - mean) <= windowMs;
+      adapt(good);
+    }
+    lastRelease = now;
+  }
 
-    conn.commit()
+  // Use pointer events when available; fallback to touch
+  const supportsPointer = 'PointerEvent' in window;
+  if (supportsPointer) {
+    window.addEventListener('pointerdown', onPressStart, { passive: false });
+    window.addEventListener('pointerup', onRelease, { passive: false });
+    window.addEventListener('pointercancel', onRelease, { passive: false });
+  } else {
+    window.addEventListener('touchstart', onPressStart, { passive: false });
+    window.addEventListener('touchend', onRelease, { passive: false });
+    window.addEventListener('touchcancel', onRelease, { passive: false });
+    // Mouse fallback (desktop)
+    window.addEventListener('mousedown', onPressStart, { passive: false });
+    window.addEventListener('mouseup', onRelease, { passive: false });
+  }
 
-def get_feed_state(conn: sqlite3.Connection, feed_url: str) -> Dict:
-    cur = conn.execute("SELECT feed_url,last_feed_item_seen,last_qualifying_seen,has_ever_qualified,max_qual_gap_seconds,last_review_sent FROM feed_state WHERE feed_url=?",
-                       (feed_url,))
-    row = cur.fetchone()
-    if not row:
-        conn.execute("INSERT INTO feed_state(feed_url) VALUES (?)", (feed_url,))
-        conn.commit()
-        return get_feed_state(conn, feed_url)
-    return {
-        "feed_url": row[0],
-        "last_feed_item_seen": row[1],
-        "last_qualifying_seen": row[2],
-        "has_ever_qualified": int(row[3]),
-        "max_qual_gap_seconds": int(row[4]),
-        "last_review_sent": row[5],
+  // -----------------------------
+  // Render loop: full-field noise, no reference frame.
+  // No explicit events. No symbols. No center bias.
+  // -----------------------------
+  let last = performance.now();
+
+  function draw() {
+    const now = performance.now();
+    const dt = now - last;
+    last = now;
+
+    // Background fill (near-black)
+    ctx.fillStyle = '#050505';
+    ctx.fillRect(0, 0, W(), H());
+
+    // Refresh tile with jitter to avoid stable “handle”
+    if (now - lastTileRefresh > (TILE_REFRESH_MS_MIN + rng() * TILE_REFRESH_MS_JITTER)) {
+      fillTileNoise();
+      lastTileRefresh = now;
     }
 
-def set_feed_state(conn: sqlite3.Connection, feed_url: str, **fields) -> None:
-    keys = list(fields.keys())
-    if not keys:
-        return
-    sql = "UPDATE feed_state SET " + ", ".join([f"{k}=?" for k in keys]) + " WHERE feed_url=?"
-    vals = [fields[k] for k in keys] + [feed_url]
-    conn.execute(sql, vals)
-    conn.commit()
+    // Stamp tile across the screen with slight random offset each frame.
+    // This prevents alignment/anchoring.
+    const ox = Math.floor(rng() * TILE);
+    const oy = Math.floor(rng() * TILE);
 
-def seen(conn: sqlite3.Connection, item_id: str) -> bool:
-    return conn.execute("SELECT 1 FROM seen WHERE id=?", (item_id,)).fetchone() is not None
+    // Subtle alpha to avoid hard texture; still visible.
+    ctx.globalAlpha = 0.45;
 
-def mark_seen(conn: sqlite3.Connection, item_id: str, feed_url: str) -> None:
-    conn.execute("INSERT OR IGNORE INTO seen(id,first_seen,feed_url) VALUES (?,?,?)",
-                 (item_id, utc_now(), feed_url))
-    conn.commit()
+    const width = W();
+    const height = H();
 
-def iso_to_ts(s: Optional[str]) -> Optional[float]:
-    if not s:
-        return None
-    try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
-    except Exception:
-        return None
+    for (let y = -TILE + oy; y < height + TILE; y += TILE) {
+      for (let x = -TILE + ox; x < width + TILE; x += TILE) {
+        ctx.drawImage(tile, x, y, TILE, TILE);
+      }
+    }
 
-def now_ts() -> float:
-    return datetime.now(timezone.utc).timestamp()
+    // Very mild temporal shimmer: a second pass of faint specks
+    // (still unstructured, no center, no motion cues)
+    ctx.globalAlpha = 0.12;
+    const specks = 140; // fixed, not adaptive
+    for (let i = 0; i < specks; i++) {
+      const x = rng() * width;
+      const y = rng() * height;
+      const r = 0.5 + rng() * 1.2;
+      const v = 160 + rng() * 70;
+      ctx.fillStyle = `rgb(${v|0},${v|0},${v|0})`;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
-# =========================
-# Core logic
-# =========================
+    ctx.globalAlpha = 1.0;
 
-def extract_listing(feed_url: str, entry: Dict) -> Listing:
-    title = entry.get("title", "") or ""
-    link = entry.get("link", "") or ""
-    published = entry.get("published") or entry.get("updated")
-    summary = entry.get("summary", "") or entry.get("description", "") or ""
+    requestAnimationFrame(draw);
+  }
 
-    price = parse_price(title) or parse_price(summary)
-    return Listing(feed_url=feed_url, title=title, link=link, price=price, published=published)
+  // Initial tile fill
+  fillTileNoise();
+  lastTileRefresh = performance.now();
+  requestAnimationFrame(draw);
 
-def is_buy_signal(listing: Listing) -> bool:
-    return listing.price is not None and listing.price <= MAX_BUY_PRICE
-
-def maybe_send_review(conn: sqlite3.Connection, feed_url: str, reason: str, details: str) -> None:
-    st = get_feed_state(conn, feed_url)
-    # prevent spam: only one review email per feed per day
-    last = iso_to_ts(st["last_review_sent"])
-    if last and (now_ts() - last) < 24 * 3600:
-        return
-
-    subject = "Constraint crossed: review required"
-    body = (
-        "Observed change:\n"
-        f"- {reason}\n\n"
-        "Objective details:\n"
-        f"{details}\n\n"
-        "No action has been taken.\n"
-        "No recommendation is made.\n"
-        "This message exists only to indicate that review is now justified.\n"
-    )
-    send_email(subject, body)
-    set_feed_state(conn, feed_url, last_review_sent=utc_now())
-
-def update_phase_change_logic(conn: sqlite3.Connection, feed_url: str, feed_updated: bool) -> None:
-    """
-    Non-arbitrary triggers:
-    1) Quiet beyond own historical max qualifying inter-arrival gap, while feed still updates.
-    2) First-ever stable qualifying event (impossible -> possible).
-    """
-    st = get_feed_state(conn, feed_url)
-
-    last_q_ts = iso_to_ts(st["last_qualifying_seen"])
-    last_feed_ts = iso_to_ts(st["last_feed_item_seen"])
-    max_gap = st["max_qual_gap_seconds"]
-
-    # Trigger 1: structural quiet (derived from history, no calendar choice)
-    if st["has_ever_qualified"] == 1 and max_gap > 0 and last_q_ts is not None:
-        gap_now = now_ts() - last_q_ts
-        if feed_updated and gap_now > max_gap:
-            maybe_send_review(
-                conn,
-                feed_url,
-                "Qualifying-arrival pattern broke its own historical bound.",
-                f"- Current gap since last qualifying: {int(gap_now)}s\n"
-                f"- Historical max qualifying gap: {int(max_gap)}s\n"
-                f"- Feed is still updating: {feed_updated}"
-            )
-
-def main() -> None:
-    cfg = load_config()
-    feeds: List[str] = cfg.get("feeds", [])
-    if not feeds:
-        logging.error("No feeds configured. Add RSS URLs to resell_config.json as: {\"feeds\": [\"...\"]}")
-        return
-
-    with sqlite3.connect(DB_PATH) as conn:
-        init_db(conn)
-
-        logging.info("Started. Feeds=%d poll=%ds MAX_BUY_PRICE=%d", len(feeds), POLL_SECONDS, MAX_BUY_PRICE)
-
-        while True:
-            for feed_url in feeds:
-                try:
-                    st = get_feed_state(conn, feed_url)
-
-                    d = feedparser.parse(feed_url)
-                    entries = d.entries[:60]
-
-                    feed_updated = False
-
-                    for entry in entries:
-                        listing = extract_listing(feed_url, entry)
-                        if not listing.link:
-                            continue
-
-                        item_id = sha_id(listing.link)
-                        if seen(conn, item_id):
-                            continue
-
-                        mark_seen(conn, item_id, feed_url)
-
-                        # If we saw anything new at all, feed is "updating"
-                        feed_updated = True
-                        set_feed_state(conn, feed_url, last_feed_item_seen=utc_now())
-
-                        if is_buy_signal(listing):
-                            # BUY packet
-                            packet = (
-                                "\n=== BUY ===\n"
-                                f"TITLE: {listing.title}\n"
-                                f"PRICE: ${listing.price}\n"
-                                f"LINK:  {listing.link}\n"
-                                "==========\n"
-                            )
-                            print(packet)
-
-                            # Optional email for BUY signal (transport only)
-                            send_email(f"BUY: {listing.title[:70]}", packet)
-
-                            # Update qualifying arrival stats (objective)
-                            prev_q = iso_to_ts(st["last_qualifying_seen"])
-                            now_iso = utc_now()
-                            set_feed_state(conn, feed_url, has_ever_qualified=1, last_qualifying_seen=now_iso)
-
-                            if prev_q is not None:
-                                gap = int(now_ts() - prev_q)
-                                # update historical max gap (non-arbitrary)
-                                if gap > st["max_qual_gap_seconds"]:
-                                    set_feed_state(conn, feed_url, max_qual_gap_seconds=gap)
-
-                            # Trigger 2: first-ever qualify => phase change
-                            if st["has_ever_qualified"] == 0:
-                                maybe_send_review(
-                                    conn,
-                                    feed_url,
-                                    "Feed crossed from impossible→possible under current hard rule.",
-                                    "- First qualifying BUY signal observed.\n"
-                                    f"- Rule: price <= {MAX_BUY_PRICE}\n"
-                                    f"- Listing: {listing.title}\n"
-                                    f"- Link: {listing.link}"
-                                )
-
-                    # Evaluate phase change “quiet beyond historical bound”
-                    update_phase_change_logic(conn, feed_url, feed_updated=feed_updated)
-
-                except Exception as e:
-                    logging.exception("Feed error: %s | %s", feed_url, e)
-
-            time.sleep(POLL_SECONDS)
-
-if __name__ == "__main__":
-    main()
+})();
+</script>
+</body>
+</html>
