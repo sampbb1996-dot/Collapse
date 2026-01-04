@@ -1,267 +1,148 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Noise Probe</title>
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      background: #050505;
-      height: 100%;
-      overflow: hidden;
-      touch-action: none; /* prevent scroll/zoom gestures */
-      -webkit-user-select: none;
-      user-select: none;
-    }
-    canvas {
-      display: block;
-      width: 100vw;
-      height: 100vh;
-    }
-  </style>
-</head>
-<body>
-<canvas id="c"></canvas>
+# scanner.py
+# Final form: AGNOSTICISM AS TERMINAL LAYER
+#
+# Meaningless observation.
+# Frame-relative comparison allowed internally.
+# No belief, no preference, no optimization, no narrative.
+# Action is accidental; stability governs existence.
 
-<script>
-(() => {
-  'use strict';
+from __future__ import annotations
+import time
+import statistics
+from dataclasses import dataclass, field
+from typing import Iterable, Optional, List
 
-  // -----------------------------
-  // Canvas setup (hi-DPI)
-  // -----------------------------
-  const canvas = document.getElementById('c');
-  const ctx = canvas.getContext('2d', { alpha: false });
 
-  function resize() {
-    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-    canvas.width = Math.floor(window.innerWidth * dpr);
-    canvas.height = Math.floor(window.innerHeight * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-  window.addEventListener('resize', resize, { passive: true });
-  resize();
+# =========================
+# INVARIANTS (NON-NEGOTIABLE)
+# =========================
 
-  // -----------------------------
-  // Noise field parameters (non-anchored)
-  // No privileged center, edges, shapes, events.
-  // -----------------------------
-  const W = () => window.innerWidth;
-  const H = () => window.innerHeight;
+SCAN_INTERVAL_S = 180
 
-  // Offscreen buffer for efficient noise stamping
-  const tile = document.createElement('canvas');
-  const tctx = tile.getContext('2d', { alpha: true });
+MISPRICE_RATIO = 0.60
 
-  // Tile size chosen to avoid obvious repetition while keeping performance ok on iPhone
-  let TILE = 192;
-  function resizeTile() {
-    tile.width = TILE;
-    tile.height = TILE;
-  }
-  resizeTile();
+STABILITY_BUF = 18
+STABILITY_MIN_N = 6
+STABILITY_RELSTD_MAX = 0.22
 
-  // Simple PRNG (deterministic-ish per session, not meaningful)
-  let seed = (Date.now() ^ (Math.random() * 2**31)) >>> 0;
-  function rng() {
-    // xorshift32
-    seed ^= seed << 13; seed >>>= 0;
-    seed ^= seed >>> 17; seed >>>= 0;
-    seed ^= seed << 5;  seed >>>= 0;
-    return (seed >>> 0) / 4294967296;
-  }
+FREEZE_S = 300
 
-  function fillTileNoise() {
-    const img = tctx.createImageData(TILE, TILE);
-    const d = img.data;
 
-    // Grain: mostly dark with subtle bright specks.
-    // No gradients, no center bias, no geometric anchors.
-    for (let i = 0; i < d.length; i += 4) {
-      // Dark baseline
-      const base = 6 + Math.floor(rng() * 10); // 6..15
-      // Rare brighter speckle
-      const speck = (rng() < 0.02) ? Math.floor(40 + rng() * 80) : 0; // occasional
-      const v = Math.min(255, base + speck);
+# =========================
+# DATA
+# =========================
 
-      d[i] = v;     // R
-      d[i+1] = v;   // G
-      d[i+2] = v;   // B
-      d[i+3] = 255; // A
-    }
-    tctx.putImageData(img, 0, 0);
-  }
+@dataclass(frozen=True)
+class Listing:
+    listing_id: str
+    price: float
 
-  // Refill tile occasionally to avoid static texture "handle"
-  let lastTileRefresh = 0;
-  const TILE_REFRESH_MS_MIN = 450;
-  const TILE_REFRESH_MS_JITTER = 900;
 
-  // -----------------------------
-  // Single adaptive variable: "engagement window" (ms)
-  // Interpreted as: how tight the system considers your releases.
-  // No explicit events; adaptation is gated by calm stability.
-  // -----------------------------
-  let windowMs = 420;            // starts moderate
-  const WINDOW_MIN = 160;
-  const WINDOW_MAX = 900;
+@dataclass
+class State:
+    ratios: List[float] = field(default_factory=list)
+    frozen_until: float = 0.0
+    acted: set = field(default_factory=set)
 
-  // Calm gate: we only adapt when behavior is stable (low variance).
-  // We compute a rolling stability score from inter-release intervals.
-  const intervals = [];
-  const INTERVAL_BUF = 18;
 
-  function pushInterval(ms) {
-    intervals.push(ms);
-    if (intervals.length > INTERVAL_BUF) intervals.shift();
-  }
+STATE = State()
 
-  function stabilityScore() {
-    // Return 0..1, higher = calmer/more consistent.
-    if (intervals.length < 6) return 0; // not enough evidence
-    const mean = intervals.reduce((a,b)=>a+b,0) / intervals.length;
-    let varSum = 0;
-    for (const x of intervals) {
-      const dx = x - mean;
-      varSum += dx * dx;
-    }
-    const variance = varSum / intervals.length;
 
-    // Normalize: higher variance => lower score.
-    // Scale chosen to be conservative; we want stability to be earned.
-    const norm = Math.sqrt(variance) / Math.max(1, mean); // relative std dev
-    const score = 1 - Math.min(1, norm * 2.2); // 2.2 is a dampener
-    return Math.max(0, Math.min(1, score));
-  }
+# =========================
+# OBSERVATION (REPLACE ONLY)
+# =========================
 
-  // Adaptation is silent; it only tightens/loosens windowMs.
-  function adapt(isGood) {
-    const s = stabilityScore();
-    if (s < 0.55) return; // freeze adaptation under instability
+def fetch_listings() -> Iterable[Listing]:
+    return [
+        Listing("x1", 40.0),
+    ]
 
-    // Small bounded steps only. No escalation.
-    const step = 10 + Math.floor(8 * s); // 10..18ms
-    if (isGood) windowMs = Math.max(WINDOW_MIN, windowMs - step);
-    else        windowMs = Math.min(WINDOW_MAX, windowMs + step);
-  }
 
-  // -----------------------------
-  // Interaction: finger release only
-  // We do NOT show feedback; we only update internal windowMs.
-  // -----------------------------
-  let lastRelease = 0;
-  let pressed = false;
+def sold_anchor(listing: Listing) -> Optional[float]:
+    return 120.0
 
-  function onPressStart(e) {
-    pressed = true;
-    // Prevent accidental scrolling / back gesture interactions
-    e.preventDefault?.();
-  }
 
-  function onRelease(e) {
-    if (!pressed) return;
-    pressed = false;
-    e.preventDefault?.();
+# =========================
+# AGNOSTIC CORE
+# =========================
 
-    const now = performance.now();
-    if (lastRelease > 0) {
-      const dt = now - lastRelease;
-      pushInterval(dt);
+def push_ratio(r: float):
+    STATE.ratios.append(r)
+    if len(STATE.ratios) > STABILITY_BUF:
+        STATE.ratios.pop(0)
 
-      // "Good" means: release interval fell within current engagement window
-      // relative to your own recent mean—without creating a targetable rhythm.
-      // We compare dt to mean with tolerance windowMs.
-      const mean = intervals.length
-        ? intervals.reduce((a,b)=>a+b,0) / intervals.length
-        : dt;
 
-      const good = Math.abs(dt - mean) <= windowMs;
-      adapt(good);
-    }
-    lastRelease = now;
-  }
+def stable() -> bool:
+    if len(STATE.ratios) < STABILITY_MIN_N:
+        return False
+    mean = statistics.fmean(STATE.ratios)
+    if mean <= 0:
+        return False
+    relstd = statistics.pstdev(STATE.ratios) / mean
+    return relstd <= STABILITY_RELSTD_MAX
 
-  // Use pointer events when available; fallback to touch
-  const supportsPointer = 'PointerEvent' in window;
-  if (supportsPointer) {
-    window.addEventListener('pointerdown', onPressStart, { passive: false });
-    window.addEventListener('pointerup', onRelease, { passive: false });
-    window.addEventListener('pointercancel', onRelease, { passive: false });
-  } else {
-    window.addEventListener('touchstart', onPressStart, { passive: false });
-    window.addEventListener('touchend', onRelease, { passive: false });
-    window.addEventListener('touchcancel', onRelease, { passive: false });
-    // Mouse fallback (desktop)
-    window.addEventListener('mousedown', onPressStart, { passive: false });
-    window.addEventListener('mouseup', onRelease, { passive: false });
-  }
 
-  // -----------------------------
-  // Render loop: full-field noise, no reference frame.
-  // No explicit events. No symbols. No center bias.
-  // -----------------------------
-  let last = performance.now();
+def freeze(now: float):
+    STATE.frozen_until = now + FREEZE_S
 
-  function draw() {
-    const now = performance.now();
-    const dt = now - last;
-    last = now;
 
-    // Background fill (near-black)
-    ctx.fillStyle = '#050505';
-    ctx.fillRect(0, 0, W(), H());
+def frozen(now: float) -> bool:
+    return now < STATE.frozen_until
 
-    // Refresh tile with jitter to avoid stable “handle”
-    if (now - lastTileRefresh > (TILE_REFRESH_MS_MIN + rng() * TILE_REFRESH_MS_JITTER)) {
-      fillTileNoise();
-      lastTileRefresh = now;
-    }
 
-    // Stamp tile across the screen with slight random offset each frame.
-    // This prevents alignment/anchoring.
-    const ox = Math.floor(rng() * TILE);
-    const oy = Math.floor(rng() * TILE);
+def mispriced(ask: float, anchor: float) -> bool:
+    return ask <= MISPRICE_RATIO * anchor
 
-    // Subtle alpha to avoid hard texture; still visible.
-    ctx.globalAlpha = 0.45;
 
-    const width = W();
-    const height = H();
+# =========================
+# ACTION (NON-SIGNIFYING)
+# =========================
 
-    for (let y = -TILE + oy; y < height + TILE; y += TILE) {
-      for (let x = -TILE + ox; x < width + TILE; x += TILE) {
-        ctx.drawImage(tile, x, y, TILE, TILE);
-      }
-    }
+def act(listing: Listing):
+    # No success, no failure, no continuation bias
+    print(f"ACT {listing.listing_id} @ {listing.price}")
+    STATE.acted.add(listing.listing_id)
 
-    // Very mild temporal shimmer: a second pass of faint specks
-    // (still unstructured, no center, no motion cues)
-    ctx.globalAlpha = 0.12;
-    const specks = 140; // fixed, not adaptive
-    for (let i = 0; i < specks; i++) {
-      const x = rng() * width;
-      const y = rng() * height;
-      const r = 0.5 + rng() * 1.2;
-      const v = 160 + rng() * 70;
-      ctx.fillStyle = `rgb(${v|0},${v|0},${v|0})`;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
 
-    ctx.globalAlpha = 1.0;
+# =========================
+# LOOP
+# =========================
 
-    requestAnimationFrame(draw);
-  }
+def run():
+    while True:
+        now = time.time()
 
-  // Initial tile fill
-  fillTileNoise();
-  lastTileRefresh = performance.now();
-  requestAnimationFrame(draw);
+        if frozen(now):
+            time.sleep(SCAN_INTERVAL_S)
+            continue
 
-})();
-</script>
-</body>
-</html>
+        listings = list(fetch_listings())
+        observed = False
+
+        for listing in listings:
+            if listing.listing_id in STATE.acted:
+                continue
+
+            anchor = sold_anchor(listing)
+            if not anchor:
+                continue
+
+            ratio = listing.price / anchor
+            push_ratio(ratio)
+            observed = True
+
+            if not stable():
+                continue
+
+            if mispriced(listing.price, anchor):
+                act(listing)
+                break
+
+        if observed and not stable():
+            freeze(now)
+
+        time.sleep(SCAN_INTERVAL_S)
+
+
+if __name__ == "__main__":
+    run()
