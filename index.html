@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Reselling Governor Bot (constraint-first)
-- Source: Gumtree Saved Search email alerts (official)
-- Action: notify only (no outreach)
-- Governor: binary gates on "posted mispricing" + labor-cost survival + mechanical execution
+ADD-ONS:
+- Per-listing price parsing (price nearest each URL)
+- Telegram notify (read-only)
 """
 
 import imaplib
@@ -12,32 +12,35 @@ from email.header import decode_header
 import re
 import sqlite3
 import time
+import requests
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
 # =========================
-# CONFIG (edit these only)
+# CONFIG
 # =========================
 
 IMAP_HOST = "imap.gmail.com"
 IMAP_USER = "YOUR_GMAIL_ADDRESS"
-IMAP_PASS = "YOUR_GMAIL_APP_PASSWORD"  # use Gmail App Password
+IMAP_PASS = "YOUR_GMAIL_APP_PASSWORD"
 
 IMAP_FOLDER = "INBOX"
-GUMTREE_FROM_HINT = "gumtree"          # matches Gumtree alert sender text (loose)
+GUMTREE_FROM_HINT = "gumtree"
 POLL_SECONDS = 60
 
-# Hard constraints (governor gates)
-MIN_ROI = 0.35                         # (resale - buy - costs) / (buy + costs)
-MIN_PROFIT_AUD = 40.0                  # absolute profit gate
-HOURLY_VALUE_AUD = 35.0                # "pay yourself" constraint
-DEFAULT_PICKUP_MIN = 35                # if unknown, assume this time cost
-DEFAULT_FLIP_TIME_MIN = 15             # listing/cleaning/hand-off estimate
-DEFAULT_FUEL_COST_AUD = 8.0            # rough friction cost per trip
+# Governor constraints
+MIN_ROI = 0.35
+MIN_PROFIT_AUD = 40.0
+HOURLY_VALUE_AUD = 35.0
+DEFAULT_PICKUP_MIN = 35
+DEFAULT_FLIP_TIME_MIN = 15
+DEFAULT_FUEL_COST_AUD = 8.0
 
-# Optional category heuristics (simple, mechanical, editable)
-# Each rule: (pattern, expected_resale_multiplier)
-# e.g. if listing title contains "Herman Miller", assume resale ~ buy*2.0
+# Telegram (notify only)
+TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"
+
+# Simple resale heuristics
 HEURISTICS = [
     (r"\bherman\s*miller\b", 2.0),
     (r"\beames\b", 2.0),
@@ -50,12 +53,10 @@ HEURISTICS = [
     (r"\bguitar\b", 1.5),
 ]
 
-# SQLite for dedupe
 DB_PATH = "resell_bot.sqlite3"
 
-
 # =========================
-# Data model
+# MODEL
 # =========================
 
 @dataclass(frozen=True)
@@ -69,68 +70,48 @@ class Listing:
 
 
 # =========================
-# Governor (terminal)
+# GOVERNOR
 # =========================
 
 class Governor:
-    """
-    Terminal governor:
-    - does NOT optimize
-    - does NOT learn
-    - does NOT add "helpful" behavior
-    - only returns ALLOW / DENY based on binary constraints
-    """
-
     def allow(self, listing: Listing) -> Tuple[bool, str]:
-        # Gate 0: must be posted with an explicit price (mispricing must be visible)
         if listing.price_aud is None or listing.price_aud <= 0:
             return False, "DENY: no explicit price"
 
-        # Gate 1: must have a plausible resale estimate (mechanical heuristic only)
         est_resale = estimate_resale(listing)
         if est_resale is None:
-            return False, "DENY: no mechanical resale estimate"
+            return False, "DENY: no resale heuristic"
 
-        # Gate 2: labor-cost survival (pay yourself)
         costs = estimate_costs()
         buy_total = listing.price_aud + costs
         est_profit = est_resale - buy_total
 
         if est_profit < MIN_PROFIT_AUD:
-            return False, f"DENY: profit {est_profit:.0f} < {MIN_PROFIT_AUD:.0f}"
+            return False, f"DENY: profit {est_profit:.0f}"
 
-        roi = est_profit / buy_total if buy_total > 0 else -1.0
+        roi = est_profit / buy_total
         if roi < MIN_ROI:
-            return False, f"DENY: ROI {roi:.2f} < {MIN_ROI:.2f}"
+            return False, f"DENY: ROI {roi:.2f}"
 
-        # Gate 3: "pull-based" only: we only notify, no outreach automation here
-        # (This is enforced by the pipeline design, not a runtime check.)
-
-        return True, f"ALLOW: est_resale={est_resale:.0f} profit={est_profit:.0f} ROI={roi:.2f}"
+        return True, f"ALLOW: resale≈{est_resale:.0f} profit≈{est_profit:.0f} ROI≈{roi:.2f}"
 
 
 def estimate_costs() -> float:
-    # Convert time costs to money + fuel
     minutes = DEFAULT_PICKUP_MIN + DEFAULT_FLIP_TIME_MIN
-    labor_cost = (minutes / 60.0) * HOURLY_VALUE_AUD
-    return labor_cost + DEFAULT_FUEL_COST_AUD
+    labor = (minutes / 60.0) * HOURLY_VALUE_AUD
+    return labor + DEFAULT_FUEL_COST_AUD
 
 
 def estimate_resale(listing: Listing) -> Optional[float]:
-    """
-    Purely mechanical resale proxy:
-    - If a heuristic matches title, apply multiplier.
-    - Otherwise, deny (no guessing, no narrative).
-    """
     title = listing.title.lower()
     for pattern, mult in HEURISTICS:
-        if re.search(pattern, title, re.IGNORECASE):
+        if re.search(pattern, title):
             return listing.price_aud * mult
     return None
 
 
 # =========================
-# Email ingestion (Gumtree alerts)
+# EMAIL PARSING (IMPROVED)
 # =========================
 
 URL_RE = re.compile(r"https?://[^\s<>\"]+")
@@ -146,77 +127,55 @@ def decode_mime(s: str) -> str:
             out.append(text)
     return "".join(out)
 
-def extract_text_parts(msg: email.message.Message) -> str:
-    # Prefer text/plain; fallback text/html stripped lightly.
-    chunks = []
+def extract_text(msg) -> str:
     if msg.is_multipart():
         for part in msg.walk():
-            ctype = part.get_content_type()
-            disp = str(part.get("Content-Disposition") or "")
-            if "attachment" in disp.lower():
-                continue
-            payload = part.get_payload(decode=True)
-            if not payload:
-                continue
-            text = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
-            if ctype == "text/plain":
-                chunks.append(text)
-            elif ctype == "text/html" and not chunks:
-                # very light strip
-                text = re.sub(r"<[^>]+>", " ", text)
-                chunks.append(text)
-    else:
-        payload = msg.get_payload(decode=True) or b""
-        chunks.append(payload.decode(msg.get_content_charset() or "utf-8", errors="replace"))
-    return "\n".join(chunks)
+            if part.get_content_type() == "text/plain":
+                return part.get_payload(decode=True).decode(errors="replace")
+    return msg.get_payload(decode=True).decode(errors="replace")
 
-def parse_gumtree_alert(raw_email: bytes, msg_id: str) -> List[Listing]:
-    msg = email.message_from_bytes(raw_email)
-    subject = decode_mime(msg.get("Subject", ""))
-    from_ = decode_mime(msg.get("From", ""))
+def parse_gumtree_alert(raw: bytes, msg_id: str) -> List[Listing]:
+    msg = email.message_from_bytes(raw)
+    subject = decode_mime(msg.get("Subject", "")).strip()
+    body = extract_text(msg)
 
-    body = extract_text_parts(msg)
-    urls = URL_RE.findall(body)
+    lines = body.splitlines()
+    listings: List[Listing] = []
 
-    # Gumtree emails may include multiple links; we keep plausible listing URLs only
-    listing_urls = [u for u in urls if "gumtree" in u.lower() and "/s-ad/" in u.lower()]
+    for i, line in enumerate(lines):
+        url_match = URL_RE.search(line)
+        if not url_match:
+            continue
 
-    # Extract a price anywhere in the body as a weak proxy per listing;
-    # keep it strict: if no price found, price=None and governor will deny.
-    price = None
-    m = PRICE_RE.search(body.replace(",", ""))
-    if m:
-        try:
-            price = float(m.group(1).replace(",", ""))
-        except ValueError:
-            price = None
+        url = url_match.group(0)
+        if "gumtree" not in url.lower():
+            continue
 
-    # Title best-effort: subject usually contains search alert info, not listing title.
-    # We keep it mechanical: use subject as title placeholder.
-    title = subject.strip() or "Gumtree Alert"
+        # Look for price in nearby lines (±3)
+        price = None
+        for j in range(max(0, i-3), min(len(lines), i+4)):
+            m = PRICE_RE.search(lines[j].replace(",", ""))
+            if m:
+                try:
+                    price = float(m.group(1))
+                    break
+                except ValueError:
+                    pass
 
-    # Location placeholder: some alerts contain suburb; if absent, keep empty string.
-    location = ""
-    loc_match = re.search(r"\b(NSW|VIC|QLD|SA|WA|TAS|ACT|NT)\b", body)
-    if loc_match:
-        location = loc_match.group(0)
-
-    listings = []
-    for url in listing_urls[:10]:
         listings.append(Listing(
             source="gumtree_email",
             msg_id=msg_id,
-            title=title,
+            title=subject or "Gumtree Alert",
             url=url,
             price_aud=price,
-            location=location
+            location=""
         ))
 
     return listings
 
 
 # =========================
-# Persistence (dedupe)
+# DB (DEDUPE)
 # =========================
 
 def init_db():
@@ -225,7 +184,7 @@ def init_db():
     cur.execute("""
     CREATE TABLE IF NOT EXISTS seen (
         url TEXT PRIMARY KEY,
-        first_seen_ts INTEGER NOT NULL
+        ts INTEGER
     )
     """)
     con.commit()
@@ -234,21 +193,40 @@ def init_db():
 def is_seen(url: str) -> bool:
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
-    cur.execute("SELECT 1 FROM seen WHERE url=? LIMIT 1", (url,))
-    row = cur.fetchone()
+    cur.execute("SELECT 1 FROM seen WHERE url=?", (url,))
+    r = cur.fetchone()
     con.close()
-    return row is not None
+    return r is not None
 
 def mark_seen(url: str):
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
-    cur.execute("INSERT OR IGNORE INTO seen(url, first_seen_ts) VALUES(?,?)", (url, int(time.time())))
+    cur.execute("INSERT OR IGNORE INTO seen VALUES (?,?)", (url, int(time.time())))
     con.commit()
     con.close()
 
 
 # =========================
-# IMAP loop
+# TELEGRAM NOTIFY
+# =========================
+
+def telegram_notify(text: str):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "disable_web_page_preview": True
+    }
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception:
+        pass
+
+
+# =========================
+# MAIN LOOP
 # =========================
 
 def imap_connect():
@@ -257,35 +235,6 @@ def imap_connect():
     M.select(IMAP_FOLDER)
     return M
 
-def search_recent_gumtree(M) -> List[str]:
-    # search unseen first; also allow quick re-run without losing events
-    # Gmail supports FROM queries but IMAP SEARCH is limited; keep loose.
-    status, data = M.search(None, '(UNSEEN)')
-    if status != "OK":
-        return []
-    ids = data[0].split()
-    return [i.decode("utf-8") for i in ids]
-
-def fetch_raw(M, imap_id: str) -> Optional[bytes]:
-    status, data = M.fetch(imap_id, "(RFC822)")
-    if status != "OK" or not data or not data[0]:
-        return None
-    return data[0][1]
-
-def looks_like_gumtree(raw_email: bytes) -> bool:
-    s = raw_email.lower()
-    return (GUMTREE_FROM_HINT.encode() in s) and (b"saved search" in s or b"gumtree" in s)
-
-def notify(listing: Listing, decision: str):
-    # Minimal notification (no leverage, no ranking)
-    print("\n=== RESALE CANDIDATE ===")
-    print(f"Title: {listing.title}")
-    print(f"Price: {listing.price_aud}")
-    print(f"URL:   {listing.url}")
-    print(f"Gate:  {decision}")
-    print("========================\n")
-
-
 def main():
     init_db()
     gov = Governor()
@@ -293,17 +242,16 @@ def main():
     while True:
         try:
             M = imap_connect()
-            ids = search_recent_gumtree(M)
+            _, data = M.search(None, "(UNSEEN)")
+            ids = data[0].split()
 
             for imap_id in ids:
-                raw = fetch_raw(M, imap_id)
-                if not raw:
-                    continue
-                if not looks_like_gumtree(raw):
+                _, raw = M.fetch(imap_id, "(RFC822)")
+                email_bytes = raw[0][1]
+                if GUMTREE_FROM_HINT.encode() not in email_bytes.lower():
                     continue
 
-                msg_id = imap_id
-                listings = parse_gumtree_alert(raw, msg_id)
+                listings = parse_gumtree_alert(email_bytes, imap_id.decode())
 
                 for lst in listings:
                     if is_seen(lst.url):
@@ -311,18 +259,22 @@ def main():
 
                     allow, reason = gov.allow(lst)
                     if allow:
-                        notify(lst, reason)
+                        msg = (
+                            "RESALE CANDIDATE\n"
+                            f"Title: {lst.title}\n"
+                            f"Price: ${lst.price_aud}\n"
+                            f"{lst.url}\n"
+                            f"{reason}"
+                        )
+                        print(msg)
+                        telegram_notify(msg)
 
-                    # Regardless of allow/deny: mark seen so we don't loop-spam
                     mark_seen(lst.url)
 
-            try:
-                M.logout()
-            except Exception:
-                pass
+            M.logout()
 
         except Exception as e:
-            print(f"[error] {type(e).__name__}: {e}")
+            print("error:", e)
 
         time.sleep(POLL_SECONDS)
 
