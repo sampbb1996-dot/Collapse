@@ -1,295 +1,60 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Noise Probe</title>
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      background: #050505;
-      height: 100%;
-      overflow: hidden;
-      touch-action: none;
-      -webkit-user-select: none;
-      user-select: none;
-    }
-    canvas {
-      display: block;
-      width: 100vw;
-      height: 100vh;
-    }
-  </style>
-</head>
-<body>
-<canvas id="c"></canvas>
+class Governor:
+    def allows_change(self, state):
+        """
+        Returns True only if behavior is stable.
+        No learning. No counters. No memory.
+        """
+        return (
+            state.calm and
+            not state.strategy_detected and
+            state.variance_low
+        )
 
-<script>
-(() => {
-  'use strict';
 
-  // ============================================================
-  // LOCKED LOGIC
-  // - No symbols, no events, no targets, no center bias.
-  // - One adaptive variable ONLY: windowMs.
-  // - Adaptation is silent and CALM-GATED.
-  // - Final layer: AGNOSTICISM (governor) => freeze under volatility.
-  // - Time is latent (no timers, scores, progress, or session goals).
-  // ============================================================
+class GameState:
+    def __init__(self):
+        self.window = INITIAL_WINDOW
+        self.calm = True
+        self.variance_low = True
+        self.strategy_detected = False
 
-  // -----------------------------
-  // Canvas setup (hi-DPI)
-  // -----------------------------
-  const canvas = document.getElementById('c');
-  const ctx = canvas.getContext('2d', { alpha: false });
 
-  function resize() {
-    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-    canvas.width = Math.floor(window.innerWidth * dpr);
-    canvas.height = Math.floor(window.innerHeight * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-  window.addEventListener('resize', resize, { passive: true });
-  resize();
+def observe_stimulus():
+    pass  # visual noise / non-salient field
 
-  const W = () => window.innerWidth;
-  const H = () => window.innerHeight;
 
-  // -----------------------------
-  // Deterministic-ish PRNG (session-local; non-meaningful)
-  // -----------------------------
-  let seed = (Date.now() ^ (Math.random() * 2**31)) >>> 0;
-  function rng() {
-    seed ^= (seed << 13) >>> 0;
-    seed ^= (seed >>> 17) >>> 0;
-    seed ^= (seed << 5) >>> 0;
-    return (seed >>> 0) / 4294967296;
-  }
+def get_action():
+    """
+    Returns True if user releases/taps within window,
+    False otherwise.
+    """
+    pass
 
-  // -----------------------------
-  // Noise tile (non-anchored)
-  // -----------------------------
-  const tile = document.createElement('canvas');
-  const tctx = tile.getContext('2d', { alpha: true });
 
-  let TILE = 192;
-  function resizeTile() {
-    tile.width = TILE;
-    tile.height = TILE;
-  }
-  resizeTile();
+def tighten(window):
+    return window * 0.97
 
-  function fillTileNoise() {
-    const img = tctx.createImageData(TILE, TILE);
-    const d = img.data;
 
-    // Mostly dark grain with rare bright specks.
-    // No gradients, no geometry, no center bias.
-    for (let i = 0; i < d.length; i += 4) {
-      const base = 6 + Math.floor(rng() * 10); // 6..15
-      const speck = (rng() < 0.02) ? Math.floor(40 + rng() * 80) : 0;
-      const v = Math.min(255, base + speck);
+def loosen(window):
+    return window * 1.03
 
-      d[i] = v; d[i+1] = v; d[i+2] = v; d[i+3] = 255;
-    }
-    tctx.putImageData(img, 0, 0);
-  }
 
-  let lastTileRefresh = 0;
-  const TILE_REFRESH_MS_MIN = 450;
-  const TILE_REFRESH_MS_JITTER = 900;
+# ---- Main Loop ----
 
-  // -----------------------------
-  // Single adaptive variable: engagement window (ms)
-  // -----------------------------
-  let windowMs = 420;
-  const WINDOW_MIN = 160;
-  const WINDOW_MAX = 900;
+state = GameState()
+governor = Governor()
 
-  // -----------------------------
-  // Stability evidence (for governor only)
-  // - We track inter-release intervals (dt)
-  // - We compute a calm score from relative std dev
-  // - Agnosticism governor: freeze adaptation under instability
-  // -----------------------------
-  const intervals = [];
-  const INTERVAL_BUF = 18;
+while session_active:
 
-  function pushInterval(ms) {
-    intervals.push(ms);
-    if (intervals.length > INTERVAL_BUF) intervals.shift();
-  }
+    observe_stimulus()
+    hit = get_action()
 
-  function relStdDev(arr) {
-    if (arr.length < 2) return null;
-    let mean = 0;
-    for (const x of arr) mean += x;
-    mean /= arr.length;
-    if (mean <= 1e-9) return null;
+    # Governor gate — terminal
+    if governor.allows_change(state):
 
-    let varSum = 0;
-    for (const x of arr) {
-      const dx = x - mean;
-      varSum += dx * dx;
-    }
-    const variance = varSum / arr.length;
-    const sd = Math.sqrt(variance);
-    return sd / mean;
-  }
+        if hit:
+            state.window = tighten(state.window)
+        else:
+            state.window = loosen(state.window)
 
-  // Calm gate thresholds (earned stability, conservative)
-  const CALM_MIN_SAMPLES = 6;
-  const CALM_RELSTD_MAX = 0.22; // lower = stricter calm requirement
-
-  function calmEnough() {
-    if (intervals.length < CALM_MIN_SAMPLES) return false;
-    const rel = relStdDev(intervals);
-    if (rel == null) return false;
-    return rel <= CALM_RELSTD_MAX;
-  }
-
-  // Final layer: agnosticism governor -> freeze adaptation if unstable.
-  let frozenUntil = 0;
-  const FREEZE_MS = 3000;
-
-  function frozen(now) {
-    return now < frozenUntil;
-  }
-
-  function freeze(now) {
-    frozenUntil = now + FREEZE_MS;
-  }
-
-  // Adaptation (silent): only moves windowMs, only when calm & not frozen.
-  function adapt(tighten) {
-    const now = performance.now();
-    if (frozen(now)) return;
-    if (!calmEnough()) return;
-
-    // bounded step (no escalation)
-    const rel = relStdDev(intervals);
-    const calmFactor = rel == null ? 0 : Math.max(0, Math.min(1, (CALM_RELSTD_MAX - rel) / CALM_RELSTD_MAX));
-    const step = 10 + Math.floor(8 * calmFactor); // 10..18
-
-    if (tighten) windowMs = Math.max(WINDOW_MIN, windowMs - step);
-    else         windowMs = Math.min(WINDOW_MAX, windowMs + step);
-  }
-
-  // -----------------------------
-  // Interaction: finger release only
-  // - No feedback
-  // - No events
-  // - Internal-only adjustment
-  // -----------------------------
-  let pressed = false;
-  let lastRelease = 0;
-
-  function onPressStart(e) {
-    pressed = true;
-    e.preventDefault?.();
-  }
-
-  function onRelease(e) {
-    if (!pressed) return;
-    pressed = false;
-    e.preventDefault?.();
-
-    const now = performance.now();
-    if (lastRelease > 0) {
-      const dt = now - lastRelease;
-      pushInterval(dt);
-
-      // Governor trigger: if not calm, freeze (do nothing else).
-      if (!calmEnough()) {
-        freeze(now);
-      } else {
-        // Frame-local comparison (no meaning, no target):
-        // Compare dt to recent mean with tolerance windowMs.
-        let mean = 0;
-        for (const x of intervals) mean += x;
-        mean /= intervals.length;
-
-        const within = Math.abs(dt - mean) <= windowMs;
-
-        // Tighten/loosen only; silent; single variable.
-        adapt(within);
-      }
-    }
-    lastRelease = now;
-  }
-
-  const supportsPointer = 'PointerEvent' in window;
-  if (supportsPointer) {
-    window.addEventListener('pointerdown', onPressStart, { passive: false });
-    window.addEventListener('pointerup', onRelease, { passive: false });
-    window.addEventListener('pointercancel', onRelease, { passive: false });
-  } else {
-    window.addEventListener('touchstart', onPressStart, { passive: false });
-    window.addEventListener('touchend', onRelease, { passive: false });
-    window.addEventListener('touchcancel', onRelease, { passive: false });
-    window.addEventListener('mousedown', onPressStart, { passive: false });
-    window.addEventListener('mouseup', onRelease, { passive: false });
-  }
-
-  // -----------------------------
-  // Render loop: full-field noise
-  // - No reference frame
-  // - No center bias
-  // - No cues
-  // -----------------------------
-  function draw() {
-    const now = performance.now();
-
-    // Background fill
-    ctx.fillStyle = '#050505';
-    ctx.fillRect(0, 0, W(), H());
-
-    // Refresh tile with jitter to avoid stable "handle"
-    if (now - lastTileRefresh > (TILE_REFRESH_MS_MIN + rng() * TILE_REFRESH_MS_JITTER)) {
-      fillTileNoise();
-      lastTileRefresh = now;
-    }
-
-    // Stamp tile across screen with random offsets each frame (de-align anchoring)
-    const ox = Math.floor(rng() * TILE);
-    const oy = Math.floor(rng() * TILE);
-
-    ctx.globalAlpha = 0.45;
-
-    const width = W();
-    const height = H();
-
-    for (let y = -TILE + oy; y < height + TILE; y += TILE) {
-      for (let x = -TILE + ox; x < width + TILE; x += TILE) {
-        ctx.drawImage(tile, x, y, TILE, TILE);
-      }
-    }
-
-    // Subtle unstructured shimmer (still non-anchored, non-eventful)
-    ctx.globalAlpha = 0.12;
-    const specks = 140;
-    for (let i = 0; i < specks; i++) {
-      const x = rng() * width;
-      const y = rng() * height;
-      const r = 0.5 + rng() * 1.2;
-      const v = 160 + rng() * 70;
-      ctx.fillStyle = `rgb(${v|0},${v|0},${v|0})`;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    ctx.globalAlpha = 1.0;
-    requestAnimationFrame(draw);
-  }
-
-  // Start
-  fillTileNoise();
-  lastTileRefresh = performance.now();
-  requestAnimationFrame(draw);
-
-})();
-</script>
-</body>
-</html>
+    # else: explicitly do nothing
