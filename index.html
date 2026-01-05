@@ -1,283 +1,122 @@
-#!/usr/bin/env python3
-"""
-Reselling Governor Bot (constraint-first)
-ADD-ONS:
-- Per-listing price parsing (price nearest each URL)
-- Telegram notify (read-only)
-"""
-
-import imaplib
-import email
-from email.header import decode_header
-import re
-import sqlite3
-import time
-import requests
-from dataclasses import dataclass
-from typing import Optional, List, Tuple
-
-# =========================
-# CONFIG
-# =========================
-
-IMAP_HOST = "imap.gmail.com"
-IMAP_USER = "YOUR_GMAIL_ADDRESS"
-IMAP_PASS = "YOUR_GMAIL_APP_PASSWORD"
-
-IMAP_FOLDER = "INBOX"
-GUMTREE_FROM_HINT = "gumtree"
-POLL_SECONDS = 60
-
-# Governor constraints
-MIN_ROI = 0.35
-MIN_PROFIT_AUD = 40.0
-HOURLY_VALUE_AUD = 35.0
-DEFAULT_PICKUP_MIN = 35
-DEFAULT_FLIP_TIME_MIN = 15
-DEFAULT_FUEL_COST_AUD = 8.0
-
-# Telegram (notify only)
-TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"
-
-# Simple resale heuristics
-HEURISTICS = [
-    (r"\bherman\s*miller\b", 2.0),
-    (r"\beames\b", 2.0),
-    (r"\bsony\b", 1.6),
-    (r"\bdyson\b", 1.7),
-    (r"\bmakita\b", 1.8),
-    (r"\bdewalt\b", 1.8),
-    (r"\bmilwaukee\b", 1.8),
-    (r"\blego\b", 1.6),
-    (r"\bguitar\b", 1.5),
-]
-
-DB_PATH = "resell_bot.sqlite3"
-
-# =========================
-# MODEL
-# =========================
-
-@dataclass(frozen=True)
-class Listing:
-    source: str
-    msg_id: str
-    title: str
-    url: str
-    price_aud: Optional[float]
-    location: str
-
-
-# =========================
-# GOVERNOR
-# =========================
-
-class Governor:
-    def allow(self, listing: Listing) -> Tuple[bool, str]:
-        if listing.price_aud is None or listing.price_aud <= 0:
-            return False, "DENY: no explicit price"
-
-        est_resale = estimate_resale(listing)
-        if est_resale is None:
-            return False, "DENY: no resale heuristic"
-
-        costs = estimate_costs()
-        buy_total = listing.price_aud + costs
-        est_profit = est_resale - buy_total
-
-        if est_profit < MIN_PROFIT_AUD:
-            return False, f"DENY: profit {est_profit:.0f}"
-
-        roi = est_profit / buy_total
-        if roi < MIN_ROI:
-            return False, f"DENY: ROI {roi:.2f}"
-
-        return True, f"ALLOW: resale≈{est_resale:.0f} profit≈{est_profit:.0f} ROI≈{roi:.2f}"
-
-
-def estimate_costs() -> float:
-    minutes = DEFAULT_PICKUP_MIN + DEFAULT_FLIP_TIME_MIN
-    labor = (minutes / 60.0) * HOURLY_VALUE_AUD
-    return labor + DEFAULT_FUEL_COST_AUD
-
-
-def estimate_resale(listing: Listing) -> Optional[float]:
-    title = listing.title.lower()
-    for pattern, mult in HEURISTICS:
-        if re.search(pattern, title):
-            return listing.price_aud * mult
-    return None
-
-
-# =========================
-# EMAIL PARSING (IMPROVED)
-# =========================
-
-URL_RE = re.compile(r"https?://[^\s<>\"]+")
-PRICE_RE = re.compile(r"\$([0-9][0-9,]*)(?:\.\d{2})?")
-
-def decode_mime(s: str) -> str:
-    parts = decode_header(s)
-    out = []
-    for text, enc in parts:
-        if isinstance(text, bytes):
-            out.append(text.decode(enc or "utf-8", errors="replace"))
-        else:
-            out.append(text)
-    return "".join(out)
-
-def extract_text(msg) -> str:
-    if msg.is_multipart():
-        for part in msg.walk():
-            if part.get_content_type() == "text/plain":
-                return part.get_payload(decode=True).decode(errors="replace")
-    return msg.get_payload(decode=True).decode(errors="replace")
-
-def parse_gumtree_alert(raw: bytes, msg_id: str) -> List[Listing]:
-    msg = email.message_from_bytes(raw)
-    subject = decode_mime(msg.get("Subject", "")).strip()
-    body = extract_text(msg)
-
-    lines = body.splitlines()
-    listings: List[Listing] = []
-
-    for i, line in enumerate(lines):
-        url_match = URL_RE.search(line)
-        if not url_match:
-            continue
-
-        url = url_match.group(0)
-        if "gumtree" not in url.lower():
-            continue
-
-        # Look for price in nearby lines (±3)
-        price = None
-        for j in range(max(0, i-3), min(len(lines), i+4)):
-            m = PRICE_RE.search(lines[j].replace(",", ""))
-            if m:
-                try:
-                    price = float(m.group(1))
-                    break
-                except ValueError:
-                    pass
-
-        listings.append(Listing(
-            source="gumtree_email",
-            msg_id=msg_id,
-            title=subject or "Gumtree Alert",
-            url=url,
-            price_aud=price,
-            location=""
-        ))
-
-    return listings
-
-
-# =========================
-# DB (DEDUPE)
-# =========================
-
-def init_db():
-    con = sqlite3.connect(DB_PATH)
-    cur = con.cursor()
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS seen (
-        url TEXT PRIMARY KEY,
-        ts INTEGER
-    )
-    """)
-    con.commit()
-    con.close()
-
-def is_seen(url: str) -> bool:
-    con = sqlite3.connect(DB_PATH)
-    cur = con.cursor()
-    cur.execute("SELECT 1 FROM seen WHERE url=?", (url,))
-    r = cur.fetchone()
-    con.close()
-    return r is not None
-
-def mark_seen(url: str):
-    con = sqlite3.connect(DB_PATH)
-    cur = con.cursor()
-    cur.execute("INSERT OR IGNORE INTO seen VALUES (?,?)", (url, int(time.time())))
-    con.commit()
-    con.close()
-
-
-# =========================
-# TELEGRAM NOTIFY
-# =========================
-
-def telegram_notify(text: str):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "disable_web_page_preview": True
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Collapse</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      overflow: hidden;
     }
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception:
-        pass
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
 
+<canvas id="c"></canvas>
 
-# =========================
-# MAIN LOOP
-# =========================
+<script>
+/* ================= Canvas ================= */
 
-def imap_connect():
-    M = imaplib.IMAP4_SSL(IMAP_HOST)
-    M.login(IMAP_USER, IMAP_PASS)
-    M.select(IMAP_FOLDER)
-    return M
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
 
-def main():
-    init_db()
-    gov = Governor()
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
 
-    while True:
-        try:
-            M = imap_connect()
-            _, data = M.search(None, "(UNSEEN)")
-            ids = data[0].split()
+/* ================= Governor ================= */
 
-            for imap_id in ids:
-                _, raw = M.fetch(imap_id, "(RFC822)")
-                email_bytes = raw[0][1]
-                if GUMTREE_FROM_HINT.encode() not in email_bytes.lower():
-                    continue
+class Governor {
+  allowsChange(state) {
+    return state.calm && state.stable && !state.strategy;
+  }
+}
 
-                listings = parse_gumtree_alert(email_bytes, imap_id.decode())
+/* ================= State ================= */
 
-                for lst in listings:
-                    if is_seen(lst.url):
-                        continue
+const state = {
+  window: 300,        // reaction window (ms)
+  calm: true,
+  stable: true,
+  strategy: false
+};
 
-                    allow, reason = gov.allow(lst)
-                    if allow:
-                        msg = (
-                            "RESALE CANDIDATE\n"
-                            f"Title: {lst.title}\n"
-                            f"Price: ${lst.price_aud}\n"
-                            f"{lst.url}\n"
-                            f"{reason}"
-                        )
-                        print(msg)
-                        telegram_notify(msg)
+const governor = new Governor();
 
-                    mark_seen(lst.url)
+/* ================= Adaptation ================= */
 
-            M.logout()
+function tighten() {
+  state.window *= 0.97;
+}
 
-        except Exception as e:
-            print("error:", e)
+function loosen() {
+  state.window *= 1.03;
+}
 
-        time.sleep(POLL_SECONDS)
+/* ================= Trial ================= */
 
+let awaiting = false;
+let startTime = 0;
 
-if __name__ == "__main__":
-    main()
+function beginTrial() {
+  awaiting = true;
+  startTime = performance.now();
+}
+
+document.addEventListener("pointerup", () => {
+  if (!awaiting) return;
+
+  const reaction = performance.now() - startTime;
+  const hit = reaction <= state.window;
+
+  // TERMINAL GOVERNOR
+  if (governor.allowsChange(state)) {
+    hit ? tighten() : loosen();
+  }
+
+  awaiting = false;
+});
+
+/* ================= Render ================= */
+
+function render() {
+  // Base frame (required on iOS)
+  ctx.fillStyle = "rgb(5,5,5)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Non-salient noise
+  ctx.fillStyle = "rgba(255,255,255,0.12)";
+  for (let i = 0; i < 40; i++) {
+    const x = Math.random() * canvas.width;
+    const y = Math.random() * canvas.height;
+    ctx.fillRect(x, y, 1, 1);
+  }
+}
+
+/* ================= Loop ================= */
+
+function loop() {
+  render();
+
+  // Irregular trial onset (no rhythm)
+  if (!awaiting && Math.random() < 0.004) {
+    beginTrial();
+  }
+
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+
+</body>
+</html>
