@@ -1,65 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Collapse Game</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #0b0b0b;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
 <script>
-/* -------- Governor -------- */
+/* ---------- Canvas ---------- */
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* ---------- Governor ---------- */
 
 class Governor {
   allowsChange(state) {
-    return (
-      state.calm === true &&
-      state.strategyDetected === false &&
-      state.varianceLow === true
-    );
+    return state.calm && !state.strategy && state.stable;
   }
 }
 
-/* -------- State -------- */
-
 const state = {
-  window: 300,          // ms reaction window
+  window: 300,
   calm: true,
-  varianceLow: true,
-  strategyDetected: false
+  stable: true,
+  strategy: false
 };
 
 const governor = new Governor();
 
-/* -------- Mechanics -------- */
+/* ---------- Visual Noise ---------- */
 
-function observeStimulus() {
-  // non-salient visual noise handled elsewhere
+function drawNoise() {
+  ctx.fillStyle = "rgba(255,255,255,0.015)";
+  const x = Math.random() * canvas.width;
+  const y = Math.random() * canvas.height;
+  ctx.fillRect(x, y, 1, 1);
 }
 
-function getAction(startTime) {
-  const reactionTime = performance.now() - startTime;
-  return reactionTime <= state.window;
+/* ---------- Loop ---------- */
+
+function loop() {
+  drawNoise();
+  requestAnimationFrame(loop);
 }
 
-function tighten() {
-  state.window *= 0.97;
-}
-
-function loosen() {
-  state.window *= 1.03;
-}
-
-/* -------- Main Loop -------- */
-
-function runTrial() {
-  observeStimulus();
-  const start = performance.now();
-
-  document.addEventListener(
-    "pointerup",
-    () => {
-      const hit = getAction(start);
-
-      // TERMINAL GOVERNOR
-      if (governor.allowsChange(state)) {
-        if (hit) tighten();
-        else loosen();
-      }
-      // else: do absolutely nothing
-    },
-    { once: true }
-  );
-}
+loop();
 </script>
+
+</body>
+</html>
