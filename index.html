@@ -1,8 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Collapse Game</title>
+  <meta charset="UTF-8">
+  <title>Collapse</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     html, body {
       margin: 0;
@@ -20,7 +21,7 @@
 <canvas id="c"></canvas>
 
 <script>
-/* ---------- Canvas ---------- */
+/* ================= Canvas ================= */
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -32,16 +33,18 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
-/* ---------- Governor ---------- */
+/* ================= Governor ================= */
 
 class Governor {
   allowsChange(state) {
-    return state.calm && !state.strategy && state.stable;
+    return state.calm && state.stable && !state.strategy;
   }
 }
 
+/* ================= State ================= */
+
 const state = {
-  window: 300,
+  window: 300,      // reaction window (ms)
   calm: true,
   stable: true,
   strategy: false
@@ -49,24 +52,57 @@ const state = {
 
 const governor = new Governor();
 
-/* ---------- Visual Noise ---------- */
+/* ================= Visual Field ================= */
 
 function drawNoise() {
-  ctx.fillStyle = "rgba(255,255,255,0.015)";
+  ctx.fillStyle = "rgba(255,255,255,0.08)"; // iOS-visible
   const x = Math.random() * canvas.width;
   const y = Math.random() * canvas.height;
   ctx.fillRect(x, y, 1, 1);
 }
 
-/* ---------- Loop ---------- */
+/* ================= Adaptation ================= */
+
+function tighten() {
+  state.window *= 0.97;
+}
+
+function loosen() {
+  state.window *= 1.03;
+}
+
+/* ================= Trial ================= */
+
+let awaiting = false;
+let startTime = 0;
+
+function beginTrial() {
+  awaiting = true;
+  startTime = performance.now();
+}
+
+document.addEventListener("pointerup", () => {
+  if (!awaiting) return;
+
+  const reaction = performance.now() - startTime;
+  const hit = reaction <= state.window;
+
+  if (governor.allowsChange(state)) {
+    if (hit) tighten();
+    else loosen();
+  }
+
+  awaiting = false;
+});
+
+/* ================= Loop ================= */
 
 function loop() {
   drawNoise();
-  requestAnimationFrame(loop);
-}
 
-loop();
-</script>
+  if (!awaiting) {
+    // irregular restart, no rhythm
+    if (Math.random() < 0.005) beginTrial();
+  }
 
-</body>
-</html>
+  requestAnimationFrame(loop
