@@ -1,122 +1,80 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Collapse</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+
+  <title>Field</title>
+
   <style>
-    html, body {
+    /* Hard reset */
+    * {
       margin: 0;
       padding: 0;
-      background: #000;
-      overflow: hidden;
+      box-sizing: border-box;
+
+      -webkit-user-select: none;
+      user-select: none;
+
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+
+      outline: none;
     }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #05070a;
+      touch-action: none;
+    }
+
     canvas {
       display: block;
+      width: 100%;
+      height: 100%;
     }
   </style>
 </head>
+
 <body>
+  <canvas id="c"></canvas>
 
-<canvas id="c"></canvas>
+  <script>
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d', { alpha: false });
 
-<script>
-/* ================= Canvas ================= */
+    function resize() {
+      canvas.width = window.innerWidth * devicePixelRatio;
+      canvas.height = window.innerHeight * devicePixelRatio;
+      ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    }
 
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+    window.addEventListener('resize', resize);
+    resize();
 
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener("resize", resize);
-resize();
+    function drawNoise() {
+      const w = canvas.width;
+      const h = canvas.height;
 
-/* ================= Governor ================= */
+      const image = ctx.createImageData(w, h);
+      const data = image.data;
 
-class Governor {
-  allowsChange(state) {
-    return state.calm && state.stable && !state.strategy;
-  }
-}
+      for (let i = 0; i < data.length; i += 4) {
+        const v = Math.random() * 8; // ultra-low salience
+        data[i] = v;
+        data[i + 1] = v;
+        data[i + 2] = v;
+        data[i + 3] = 255;
+      }
 
-/* ================= State ================= */
+      ctx.putImageData(image, 0, 0);
+      requestAnimationFrame(drawNoise);
+    }
 
-const state = {
-  window: 300,        // reaction window (ms)
-  calm: true,
-  stable: true,
-  strategy: false
-};
-
-const governor = new Governor();
-
-/* ================= Adaptation ================= */
-
-function tighten() {
-  state.window *= 0.97;
-}
-
-function loosen() {
-  state.window *= 1.03;
-}
-
-/* ================= Trial ================= */
-
-let awaiting = false;
-let startTime = 0;
-
-function beginTrial() {
-  awaiting = true;
-  startTime = performance.now();
-}
-
-document.addEventListener("pointerup", () => {
-  if (!awaiting) return;
-
-  const reaction = performance.now() - startTime;
-  const hit = reaction <= state.window;
-
-  // TERMINAL GOVERNOR
-  if (governor.allowsChange(state)) {
-    hit ? tighten() : loosen();
-  }
-
-  awaiting = false;
-});
-
-/* ================= Render ================= */
-
-function render() {
-  // Base frame (required on iOS)
-  ctx.fillStyle = "rgb(5,5,5)";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // Non-salient noise
-  ctx.fillStyle = "rgba(255,255,255,0.12)";
-  for (let i = 0; i < 40; i++) {
-    const x = Math.random() * canvas.width;
-    const y = Math.random() * canvas.height;
-    ctx.fillRect(x, y, 1, 1);
-  }
-}
-
-/* ================= Loop ================= */
-
-function loop() {
-  render();
-
-  // Irregular trial onset (no rhythm)
-  if (!awaiting && Math.random() < 0.004) {
-    beginTrial();
-  }
-
-  requestAnimationFrame(loop);
-}
-
-loop();
-</script>
-
+    drawNoise();
+  </script>
 </body>
 </html>
