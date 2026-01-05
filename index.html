@@ -1,120 +1,331 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Collapse</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      background: #000;
-      overflow: hidden;
-    }
-    canvas {
-      display: block;
-    }
-  </style>
-</head>
-<body>
+#!/usr/bin/env python3
+"""
+Reselling Governor Bot (constraint-first)
+- Source: Gumtree Saved Search email alerts (official)
+- Action: notify only (no outreach)
+- Governor: binary gates on "posted mispricing" + labor-cost survival + mechanical execution
+"""
 
-<canvas id="c"></canvas>
+import imaplib
+import email
+from email.header import decode_header
+import re
+import sqlite3
+import time
+from dataclasses import dataclass
+from typing import Optional, List, Tuple
 
-<script>
-/* ================= Canvas ================= */
+# =========================
+# CONFIG (edit these only)
+# =========================
 
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+IMAP_HOST = "imap.gmail.com"
+IMAP_USER = "YOUR_GMAIL_ADDRESS"
+IMAP_PASS = "YOUR_GMAIL_APP_PASSWORD"  # use Gmail App Password
 
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener("resize", resize);
-resize();
+IMAP_FOLDER = "INBOX"
+GUMTREE_FROM_HINT = "gumtree"          # matches Gumtree alert sender text (loose)
+POLL_SECONDS = 60
 
-/* ================= Governor ================= */
+# Hard constraints (governor gates)
+MIN_ROI = 0.35                         # (resale - buy - costs) / (buy + costs)
+MIN_PROFIT_AUD = 40.0                  # absolute profit gate
+HOURLY_VALUE_AUD = 35.0                # "pay yourself" constraint
+DEFAULT_PICKUP_MIN = 35                # if unknown, assume this time cost
+DEFAULT_FLIP_TIME_MIN = 15             # listing/cleaning/hand-off estimate
+DEFAULT_FUEL_COST_AUD = 8.0            # rough friction cost per trip
 
-class Governor {
-  allowsChange(state) {
-    return state.calm && state.stable && !state.strategy;
-  }
-}
+# Optional category heuristics (simple, mechanical, editable)
+# Each rule: (pattern, expected_resale_multiplier)
+# e.g. if listing title contains "Herman Miller", assume resale ~ buy*2.0
+HEURISTICS = [
+    (r"\bherman\s*miller\b", 2.0),
+    (r"\beames\b", 2.0),
+    (r"\bsony\b", 1.6),
+    (r"\bdyson\b", 1.7),
+    (r"\bmakita\b", 1.8),
+    (r"\bdewalt\b", 1.8),
+    (r"\bmilwaukee\b", 1.8),
+    (r"\blego\b", 1.6),
+    (r"\bguitar\b", 1.5),
+]
 
-/* ================= State ================= */
+# SQLite for dedupe
+DB_PATH = "resell_bot.sqlite3"
 
-const state = {
-  window: 300,
-  calm: true,
-  stable: true,
-  strategy: false
-};
 
-const governor = new Governor();
+# =========================
+# Data model
+# =========================
 
-/* ================= Adaptation ================= */
+@dataclass(frozen=True)
+class Listing:
+    source: str
+    msg_id: str
+    title: str
+    url: str
+    price_aud: Optional[float]
+    location: str
 
-function tighten() {
-  state.window *= 0.97;
-}
 
-function loosen() {
-  state.window *= 1.03;
-}
+# =========================
+# Governor (terminal)
+# =========================
 
-/* ================= Trial ================= */
+class Governor:
+    """
+    Terminal governor:
+    - does NOT optimize
+    - does NOT learn
+    - does NOT add "helpful" behavior
+    - only returns ALLOW / DENY based on binary constraints
+    """
 
-let awaiting = false;
-let startTime = 0;
+    def allow(self, listing: Listing) -> Tuple[bool, str]:
+        # Gate 0: must be posted with an explicit price (mispricing must be visible)
+        if listing.price_aud is None or listing.price_aud <= 0:
+            return False, "DENY: no explicit price"
 
-function beginTrial() {
-  awaiting = true;
-  startTime = performance.now();
-}
+        # Gate 1: must have a plausible resale estimate (mechanical heuristic only)
+        est_resale = estimate_resale(listing)
+        if est_resale is None:
+            return False, "DENY: no mechanical resale estimate"
 
-document.addEventListener("pointerup", () => {
-  if (!awaiting) return;
+        # Gate 2: labor-cost survival (pay yourself)
+        costs = estimate_costs()
+        buy_total = listing.price_aud + costs
+        est_profit = est_resale - buy_total
 
-  const reaction = performance.now() - startTime;
-  const hit = reaction <= state.window;
+        if est_profit < MIN_PROFIT_AUD:
+            return False, f"DENY: profit {est_profit:.0f} < {MIN_PROFIT_AUD:.0f}"
 
-  if (governor.allowsChange(state)) {
-    hit ? tighten() : loosen();
-  }
+        roi = est_profit / buy_total if buy_total > 0 else -1.0
+        if roi < MIN_ROI:
+            return False, f"DENY: ROI {roi:.2f} < {MIN_ROI:.2f}"
 
-  awaiting = false;
-});
+        # Gate 3: "pull-based" only: we only notify, no outreach automation here
+        # (This is enforced by the pipeline design, not a runtime check.)
 
-/* ================= Render ================= */
+        return True, f"ALLOW: est_resale={est_resale:.0f} profit={est_profit:.0f} ROI={roi:.2f}"
 
-function render() {
-  // Base frame — REQUIRED on iOS
-  ctx.fillStyle = "rgb(5,5,5)";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Noise layer
-  ctx.fillStyle = "rgba(255,255,255,0.12)";
-  for (let i = 0; i < 40; i++) {
-    const x = Math.random() * canvas.width;
-    const y = Math.random() * canvas.height;
-    ctx.fillRect(x, y, 1, 1);
-  }
-}
+def estimate_costs() -> float:
+    # Convert time costs to money + fuel
+    minutes = DEFAULT_PICKUP_MIN + DEFAULT_FLIP_TIME_MIN
+    labor_cost = (minutes / 60.0) * HOURLY_VALUE_AUD
+    return labor_cost + DEFAULT_FUEL_COST_AUD
 
-/* ================= Loop ================= */
 
-function loop() {
-  render();
+def estimate_resale(listing: Listing) -> Optional[float]:
+    """
+    Purely mechanical resale proxy:
+    - If a heuristic matches title, apply multiplier.
+    - Otherwise, deny (no guessing, no narrative).
+    """
+    title = listing.title.lower()
+    for pattern, mult in HEURISTICS:
+        if re.search(pattern, title, re.IGNORECASE):
+            return listing.price_aud * mult
+    return None
 
-  if (!awaiting && Math.random() < 0.004) {
-    beginTrial();
-  }
 
-  requestAnimationFrame(loop);
-}
+# =========================
+# Email ingestion (Gumtree alerts)
+# =========================
 
-loop();
-</script>
+URL_RE = re.compile(r"https?://[^\s<>\"]+")
+PRICE_RE = re.compile(r"\$([0-9][0-9,]*)(?:\.\d{2})?")
 
-</body>
-</html>
+def decode_mime(s: str) -> str:
+    parts = decode_header(s)
+    out = []
+    for text, enc in parts:
+        if isinstance(text, bytes):
+            out.append(text.decode(enc or "utf-8", errors="replace"))
+        else:
+            out.append(text)
+    return "".join(out)
+
+def extract_text_parts(msg: email.message.Message) -> str:
+    # Prefer text/plain; fallback text/html stripped lightly.
+    chunks = []
+    if msg.is_multipart():
+        for part in msg.walk():
+            ctype = part.get_content_type()
+            disp = str(part.get("Content-Disposition") or "")
+            if "attachment" in disp.lower():
+                continue
+            payload = part.get_payload(decode=True)
+            if not payload:
+                continue
+            text = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+            if ctype == "text/plain":
+                chunks.append(text)
+            elif ctype == "text/html" and not chunks:
+                # very light strip
+                text = re.sub(r"<[^>]+>", " ", text)
+                chunks.append(text)
+    else:
+        payload = msg.get_payload(decode=True) or b""
+        chunks.append(payload.decode(msg.get_content_charset() or "utf-8", errors="replace"))
+    return "\n".join(chunks)
+
+def parse_gumtree_alert(raw_email: bytes, msg_id: str) -> List[Listing]:
+    msg = email.message_from_bytes(raw_email)
+    subject = decode_mime(msg.get("Subject", ""))
+    from_ = decode_mime(msg.get("From", ""))
+
+    body = extract_text_parts(msg)
+    urls = URL_RE.findall(body)
+
+    # Gumtree emails may include multiple links; we keep plausible listing URLs only
+    listing_urls = [u for u in urls if "gumtree" in u.lower() and "/s-ad/" in u.lower()]
+
+    # Extract a price anywhere in the body as a weak proxy per listing;
+    # keep it strict: if no price found, price=None and governor will deny.
+    price = None
+    m = PRICE_RE.search(body.replace(",", ""))
+    if m:
+        try:
+            price = float(m.group(1).replace(",", ""))
+        except ValueError:
+            price = None
+
+    # Title best-effort: subject usually contains search alert info, not listing title.
+    # We keep it mechanical: use subject as title placeholder.
+    title = subject.strip() or "Gumtree Alert"
+
+    # Location placeholder: some alerts contain suburb; if absent, keep empty string.
+    location = ""
+    loc_match = re.search(r"\b(NSW|VIC|QLD|SA|WA|TAS|ACT|NT)\b", body)
+    if loc_match:
+        location = loc_match.group(0)
+
+    listings = []
+    for url in listing_urls[:10]:
+        listings.append(Listing(
+            source="gumtree_email",
+            msg_id=msg_id,
+            title=title,
+            url=url,
+            price_aud=price,
+            location=location
+        ))
+
+    return listings
+
+
+# =========================
+# Persistence (dedupe)
+# =========================
+
+def init_db():
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS seen (
+        url TEXT PRIMARY KEY,
+        first_seen_ts INTEGER NOT NULL
+    )
+    """)
+    con.commit()
+    con.close()
+
+def is_seen(url: str) -> bool:
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute("SELECT 1 FROM seen WHERE url=? LIMIT 1", (url,))
+    row = cur.fetchone()
+    con.close()
+    return row is not None
+
+def mark_seen(url: str):
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute("INSERT OR IGNORE INTO seen(url, first_seen_ts) VALUES(?,?)", (url, int(time.time())))
+    con.commit()
+    con.close()
+
+
+# =========================
+# IMAP loop
+# =========================
+
+def imap_connect():
+    M = imaplib.IMAP4_SSL(IMAP_HOST)
+    M.login(IMAP_USER, IMAP_PASS)
+    M.select(IMAP_FOLDER)
+    return M
+
+def search_recent_gumtree(M) -> List[str]:
+    # search unseen first; also allow quick re-run without losing events
+    # Gmail supports FROM queries but IMAP SEARCH is limited; keep loose.
+    status, data = M.search(None, '(UNSEEN)')
+    if status != "OK":
+        return []
+    ids = data[0].split()
+    return [i.decode("utf-8") for i in ids]
+
+def fetch_raw(M, imap_id: str) -> Optional[bytes]:
+    status, data = M.fetch(imap_id, "(RFC822)")
+    if status != "OK" or not data or not data[0]:
+        return None
+    return data[0][1]
+
+def looks_like_gumtree(raw_email: bytes) -> bool:
+    s = raw_email.lower()
+    return (GUMTREE_FROM_HINT.encode() in s) and (b"saved search" in s or b"gumtree" in s)
+
+def notify(listing: Listing, decision: str):
+    # Minimal notification (no leverage, no ranking)
+    print("\n=== RESALE CANDIDATE ===")
+    print(f"Title: {listing.title}")
+    print(f"Price: {listing.price_aud}")
+    print(f"URL:   {listing.url}")
+    print(f"Gate:  {decision}")
+    print("========================\n")
+
+
+def main():
+    init_db()
+    gov = Governor()
+
+    while True:
+        try:
+            M = imap_connect()
+            ids = search_recent_gumtree(M)
+
+            for imap_id in ids:
+                raw = fetch_raw(M, imap_id)
+                if not raw:
+                    continue
+                if not looks_like_gumtree(raw):
+                    continue
+
+                msg_id = imap_id
+                listings = parse_gumtree_alert(raw, msg_id)
+
+                for lst in listings:
+                    if is_seen(lst.url):
+                        continue
+
+                    allow, reason = gov.allow(lst)
+                    if allow:
+                        notify(lst, reason)
+
+                    # Regardless of allow/deny: mark seen so we don't loop-spam
+                    mark_seen(lst.url)
+
+            try:
+                M.logout()
+            except Exception:
+                pass
+
+        except Exception as e:
+            print(f"[error] {type(e).__name__}: {e}")
+
+        time.sleep(POLL_SECONDS)
+
+
+if __name__ == "__main__":
+    main()
