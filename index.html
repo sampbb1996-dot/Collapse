@@ -2,33 +2,46 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 <title>Noise Game</title>
+
 <style>
+  /* ===== HARD UI INVARIANTS ===== */
+  * {
+    -webkit-tap-highlight-color: rgba(0,0,0,0);
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: none;
+  }
+
   html, body {
     margin: 0;
     padding: 0;
     background: #000;
     overflow: hidden;
   }
+
   canvas {
     display: block;
+    background: transparent;
   }
 </style>
 </head>
+
 <body>
 <canvas id="c"></canvas>
 
 <script>
-/* ========= HARD INVARIANTS =========
+/* ========= RENDER INVARIANTS =========
    - Render loop always runs
-   - Noise amplitude NEVER zero
-   - Alpha NEVER zero
-   - No early returns
+   - Signal never zero
+   - No color bias
+   - Interaction does nothing visually
    ================================= */
 
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+const ctx = canvas.getContext("2d", { alpha: true });
 
 function resize() {
   canvas.width = window.innerWidth;
@@ -37,33 +50,38 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
-// Minimum non-zero signal (locked)
-const MIN_ALPHA = 0.015;   // prevents black
-const MAX_ALPHA = 0.04;    // stays sub-salient
+/* Kill iOS long-press / selection entirely */
+["touchstart", "touchend", "touchmove", "contextmenu"].forEach(evt =>
+  document.addEventListener(evt, e => e.preventDefault(), { passive: false })
+);
+
+/* Locked perceptual bounds */
+const MIN_ALPHA = 0.015;
+const MAX_ALPHA = 0.04;
 const NOISE_DENSITY = 0.08;
 
 function drawNoise() {
   const w = canvas.width;
   const h = canvas.height;
 
-  // Near-black base, not pure black
+  /* Near-black neutral base */
   ctx.fillStyle = "rgb(2,2,2)";
   ctx.fillRect(0, 0, w, h);
 
-  const image = ctx.getImageData(0, 0, w, h);
-  const data = image.data;
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
 
-  for (let i = 0; i < data.length; i += 4) {
+  for (let i = 0; i < d.length; i += 4) {
     if (Math.random() < NOISE_DENSITY) {
       const v = Math.random() * 255;
-      data[i]     = v;
-      data[i + 1] = v;
-      data[i + 2] = v;
-      data[i + 3] = 255 * (MIN_ALPHA + Math.random() * (MAX_ALPHA - MIN_ALPHA));
+      d[i]     = v;
+      d[i + 1] = v;
+      d[i + 2] = v;
+      d[i + 3] = 255 * (MIN_ALPHA + Math.random() * (MAX_ALPHA - MIN_ALPHA));
     }
   }
 
-  ctx.putImageData(image, 0, 0);
+  ctx.putImageData(img, 0, 0);
 }
 
 function loop() {
