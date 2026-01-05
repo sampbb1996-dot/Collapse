@@ -1,60 +1,65 @@
-class Governor:
-    def allows_change(self, state):
-        """
-        Returns True only if behavior is stable.
-        No learning. No counters. No memory.
-        """
-        return (
-            state.calm and
-            not state.strategy_detected and
-            state.variance_low
-        )
+<script>
+/* -------- Governor -------- */
 
+class Governor {
+  allowsChange(state) {
+    return (
+      state.calm === true &&
+      state.strategyDetected === false &&
+      state.varianceLow === true
+    );
+  }
+}
 
-class GameState:
-    def __init__(self):
-        self.window = INITIAL_WINDOW
-        self.calm = True
-        self.variance_low = True
-        self.strategy_detected = False
+/* -------- State -------- */
 
+const state = {
+  window: 300,          // ms reaction window
+  calm: true,
+  varianceLow: true,
+  strategyDetected: false
+};
 
-def observe_stimulus():
-    pass  # visual noise / non-salient field
+const governor = new Governor();
 
+/* -------- Mechanics -------- */
 
-def get_action():
-    """
-    Returns True if user releases/taps within window,
-    False otherwise.
-    """
-    pass
+function observeStimulus() {
+  // non-salient visual noise handled elsewhere
+}
 
+function getAction(startTime) {
+  const reactionTime = performance.now() - startTime;
+  return reactionTime <= state.window;
+}
 
-def tighten(window):
-    return window * 0.97
+function tighten() {
+  state.window *= 0.97;
+}
 
+function loosen() {
+  state.window *= 1.03;
+}
 
-def loosen(window):
-    return window * 1.03
+/* -------- Main Loop -------- */
 
+function runTrial() {
+  observeStimulus();
+  const start = performance.now();
 
-# ---- Main Loop ----
+  document.addEventListener(
+    "pointerup",
+    () => {
+      const hit = getAction(start);
 
-state = GameState()
-governor = Governor()
-
-while session_active:
-
-    observe_stimulus()
-    hit = get_action()
-
-    # Governor gate — terminal
-    if governor.allows_change(state):
-
-        if hit:
-            state.window = tighten(state.window)
-        else:
-            state.window = loosen(state.window)
-
-    # else: explicitly do nothing
+      // TERMINAL GOVERNOR
+      if (governor.allowsChange(state)) {
+        if (hit) tighten();
+        else loosen();
+      }
+      // else: do absolutely nothing
+    },
+    { once: true }
+  );
+}
+</script>
