@@ -21,3 +21,28 @@
   <script src="main.js" defer></script>
 </body>
 </html>
+<script>
+const c = document.getElementById("c");
+const ctx = c.getContext("2d");
+
+function resize() {
+  c.width = window.innerWidth;
+  c.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
+
+let t = 0;
+function loop() {
+  t += 0.01;
+  ctx.fillStyle = "rgb(0,0,0)";
+  ctx.fillRect(0,0,c.width,c.height);
+
+  ctx.fillStyle = "rgba(255,255,255,0.08)";
+  const x = c.width/2 + Math.sin(t)*3;
+  ctx.fillRect(x, c.height*0.25, 1, c.height*0.5);
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
