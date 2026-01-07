@@ -2,93 +2,127 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title> </title>
 <style>
-  /* ===== HARD UI INVARIANTS ===== */
-  * {
-    -webkit-tap-highlight-color: rgba(0,0,0,0);
-    -webkit-touch-callout: none;
-    -webkit-user-select: none;
-    user-select: none;
-    touch-action: none;
-  }
-
   html, body {
     margin: 0;
     padding: 0;
     background: #000;
     overflow: hidden;
+    touch-action: manipulation;
   }
-
   canvas {
     display: block;
-    background: transparent;
   }
 </style>
 </head>
-
 <body>
 <canvas id="c"></canvas>
 
 <script>
-/* ========= RENDER INVARIANTS =========
-   - Render loop always runs
-   - Signal never zero
-   - No color bias
-   - Interaction does nothing visually
-   ================================= */
-
 const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d", { alpha: true });
+const ctx = canvas.getContext("2d");
 
+let W, H;
 function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
 }
 window.addEventListener("resize", resize);
 resize();
 
-/* Kill iOS long-press / selection entirely */
-["touchstart", "touchend", "touchmove", "contextmenu"].forEach(evt =>
-  document.addEventListener(evt, e => e.preventDefault(), { passive: false })
-);
+/* -----------------------------
+   Core parameters (locked)
+----------------------------- */
 
-/* Locked perceptual bounds */
-const MIN_ALPHA = 0.015;
-const MAX_ALPHA = 0.04;
-const NOISE_DENSITY = 0.08;
+// reaction window (single adaptive variable)
+let reactionWindow = 280; // ms
+const MIN_WINDOW = 120;
+const MAX_WINDOW = 420;
 
-function drawNoise() {
-  const w = canvas.width;
-  const h = canvas.height;
+// stimulus timing
+const BASE_INTERVAL = 1800;
 
-  /* Near-black neutral base */
-  ctx.fillStyle = "rgb(2,2,2)";
-  ctx.fillRect(0, 0, w, h);
+// upstream admissibility gate
+const ADMIT_PROB = 0.18; // most events are discarded
 
-  const img = ctx.getImageData(0, 0, w, h);
-  const d = img.data;
+/* -----------------------------
+   State
+----------------------------- */
 
-  for (let i = 0; i < d.length; i += 4) {
-    if (Math.random() < NOISE_DENSITY) {
-      const v = Math.random() * 255;
-      d[i]     = v;
-      d[i + 1] = v;
-      d[i + 2] = v;
-      d[i + 3] = 255 * (MIN_ALPHA + Math.random() * (MAX_ALPHA - MIN_ALPHA));
-    }
+let stimulusActive = false;
+let stimulusTime = 0;
+let admitted = false;
+
+/* -----------------------------
+   Stimulus generation
+----------------------------- */
+
+function maybeEmitStimulus() {
+  // upstream gate: most events never become real
+  admitted = Math.random() < ADMIT_PROB;
+
+  if (!admitted) return;
+
+  stimulusActive = true;
+  stimulusTime = performance.now();
+}
+
+setInterval(maybeEmitStimulus, BASE_INTERVAL);
+
+/* -----------------------------
+   Input
+----------------------------- */
+
+window.addEventListener("pointerup", () => {
+  if (!stimulusActive) return;
+
+  const now = performance.now();
+  const dt = now - stimulusTime;
+
+  stimulusActive = false;
+
+  // only evaluate if the event was admitted
+  if (!admitted) return;
+
+  if (dt <= reactionWindow) {
+    // clean hit → tighten
+    reactionWindow = Math.max(
+      MIN_WINDOW,
+      reactionWindow - 8
+    );
+  } else {
+    // miss → loosen
+    reactionWindow = Math.min(
+      MAX_WINDOW,
+      reactionWindow + 12
+    );
+  }
+});
+
+/* -----------------------------
+   Rendering (non-symbolic)
+----------------------------- */
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  if (stimulusActive && admitted) {
+    const age = performance.now() - stimulusTime;
+    const alpha = Math.max(0, 1 - age / 400);
+
+    ctx.strokeStyle = `rgba(245,245,240,${alpha * 0.35})`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(W * 0.3, H * 0.5);
+    ctx.lineTo(W * 0.7, H * 0.5);
+    ctx.stroke();
   }
 
-  ctx.putImageData(img, 0, 0);
+  requestAnimationFrame(draw);
 }
-
-function loop() {
-  drawNoise();
-  requestAnimationFrame(loop);
-}
-
-loop();
+draw();
 </script>
 </body>
 </html>
