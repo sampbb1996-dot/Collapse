@@ -1,128 +1,23 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title> </title>
-<style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: #000;
-    overflow: hidden;
-    touch-action: manipulation;
-  }
-  canvas {
-    display: block;
-  }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title> </title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
 </head>
 <body>
-<canvas id="c"></canvas>
-
-<script>
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
-
-let W, H;
-function resize() {
-  W = canvas.width = window.innerWidth;
-  H = canvas.height = window.innerHeight;
-}
-window.addEventListener("resize", resize);
-resize();
-
-/* -----------------------------
-   Core parameters (locked)
------------------------------ */
-
-// reaction window (single adaptive variable)
-let reactionWindow = 280; // ms
-const MIN_WINDOW = 120;
-const MAX_WINDOW = 420;
-
-// stimulus timing
-const BASE_INTERVAL = 1800;
-
-// upstream admissibility gate
-const ADMIT_PROB = 0.18; // most events are discarded
-
-/* -----------------------------
-   State
------------------------------ */
-
-let stimulusActive = false;
-let stimulusTime = 0;
-let admitted = false;
-
-/* -----------------------------
-   Stimulus generation
------------------------------ */
-
-function maybeEmitStimulus() {
-  // upstream gate: most events never become real
-  admitted = Math.random() < ADMIT_PROB;
-
-  if (!admitted) return;
-
-  stimulusActive = true;
-  stimulusTime = performance.now();
-}
-
-setInterval(maybeEmitStimulus, BASE_INTERVAL);
-
-/* -----------------------------
-   Input
------------------------------ */
-
-window.addEventListener("pointerup", () => {
-  if (!stimulusActive) return;
-
-  const now = performance.now();
-  const dt = now - stimulusTime;
-
-  stimulusActive = false;
-
-  // only evaluate if the event was admitted
-  if (!admitted) return;
-
-  if (dt <= reactionWindow) {
-    // clean hit → tighten
-    reactionWindow = Math.max(
-      MIN_WINDOW,
-      reactionWindow - 8
-    );
-  } else {
-    // miss → loosen
-    reactionWindow = Math.min(
-      MAX_WINDOW,
-      reactionWindow + 12
-    );
-  }
-});
-
-/* -----------------------------
-   Rendering (non-symbolic)
------------------------------ */
-
-function draw() {
-  ctx.clearRect(0, 0, W, H);
-
-  if (stimulusActive && admitted) {
-    const age = performance.now() - stimulusTime;
-    const alpha = Math.max(0, 1 - age / 400);
-
-    ctx.strokeStyle = `rgba(245,245,240,${alpha * 0.35})`;
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(W * 0.3, H * 0.5);
-    ctx.lineTo(W * 0.7, H * 0.5);
-    ctx.stroke();
-  }
-
-  requestAnimationFrame(draw);
-}
-draw();
-</script>
+  <canvas id="c"></canvas>
+  <script src="main.js" defer></script>
 </body>
 </html>
