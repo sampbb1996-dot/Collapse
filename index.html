@@ -3,18 +3,18 @@ const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d", { alpha: false });
 
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.floor(window.innerWidth * dpr);
-  canvas.height = Math.floor(window.innerHeight * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
 }
 window.addEventListener("resize", resize);
 resize();
 
-/* ---- STATIC NOISE (ONCE) ---- */
+/* ---- STATIC NOISE, ONCE ---- */
 
 function drawStaticNoise() {
-  const img = ctx.createImageData(canvas.width, canvas.height);
+  const w = canvas.width;
+  const h = canvas.height;
+  const img = ctx.createImageData(w, h);
   const d = img.data;
 
   for (let i = 0; i < d.length; i += 4) {
@@ -22,15 +22,17 @@ function drawStaticNoise() {
     d[i] = v;
     d[i + 1] = v;
     d[i + 2] = v;
-    d[i + 3] = 255; // fully opaque — no accumulation
+    d[i + 3] = 255; // opaque, no accumulation
   }
 
   ctx.putImageData(img, 0, 0);
 }
 
+ctx.fillStyle = "#000";
+ctx.fillRect(0, 0, canvas.width, canvas.height);
 drawStaticNoise();
 
-/* ---- INPUT (ABSORBED, NO FEEDBACK) ---- */
+/* ---- INPUT ABSORBED ---- */
 document.addEventListener("touchstart", e => e.preventDefault(), { passive: false });
 document.addEventListener("touchmove", e => e.preventDefault(), { passive: false });
 document.addEventListener("touchend", e => e.preventDefault(), { passive: false });
