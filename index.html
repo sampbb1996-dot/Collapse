@@ -1,50 +1,3 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta
-  name="viewport"
-  content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-/>
-
-<title></title>
-
-<style>
-  /* HARD RESET */
-  * {
-    margin: 0;
-    padding: 0;
-    border: 0;
-    outline: 0;
-    box-sizing: border-box;
-
-    /* CRITICAL: disable all selection & callouts */
-    -webkit-user-select: none;
-    user-select: none;
-    -webkit-touch-callout: none;
-    -webkit-tap-highlight-color: transparent;
-  }
-
-  html, body {
-    width: 100%;
-    height: 100%;
-    background: #000;
-    overflow: hidden;
-    touch-action: none; /* prevents gesture interpretation */
-  }
-
-  canvas {
-    display: block;
-    width: 100%;
-    height: 100%;
-    pointer-events: auto;
-  }
-</style>
-</head>
-
-<body>
-<canvas id="c"></canvas>
-
 <script>
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d", { alpha: false });
@@ -55,13 +8,12 @@ function resize() {
   canvas.height = Math.floor(window.innerHeight * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
-
 window.addEventListener("resize", resize);
 resize();
 
-/* --- FIELD ONLY --- */
+/* ---- STATIC NOISE (ONCE) ---- */
 
-function drawNoise() {
+function drawStaticNoise() {
   const img = ctx.createImageData(canvas.width, canvas.height);
   const d = img.data;
 
@@ -70,28 +22,16 @@ function drawNoise() {
     d[i] = v;
     d[i + 1] = v;
     d[i + 2] = v;
-    d[i + 3] = 14; // faint, ignorable
+    d[i + 3] = 255; // fully opaque — no accumulation
   }
 
   ctx.putImageData(img, 0, 0);
 }
 
-function loop() {
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  drawNoise();
-  requestAnimationFrame(loop);
-}
+drawStaticNoise();
 
-loop();
-
-/* INPUT — absorbed, no feedback */
+/* ---- INPUT (ABSORBED, NO FEEDBACK) ---- */
 document.addEventListener("touchstart", e => e.preventDefault(), { passive: false });
 document.addEventListener("touchmove", e => e.preventDefault(), { passive: false });
 document.addEventListener("touchend", e => e.preventDefault(), { passive: false });
-
-document.addEventListener("pointerdown", e => e.preventDefault());
-document.addEventListener("pointerup", e => e.preventDefault());
 </script>
-</body>
-</html>
