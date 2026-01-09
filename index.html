@@ -1,39 +1,44 @@
-<script>
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d", { alpha: false });
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta
+  name="viewport"
+  content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+/>
+<title></title>
 
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener("resize", resize);
-resize();
+<style>
+  /* Absolute hard reset */
+  * {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    outline: 0;
+    box-sizing: border-box;
 
-/* ---- STATIC NOISE, ONCE ---- */
-
-function drawStaticNoise() {
-  const w = canvas.width;
-  const h = canvas.height;
-  const img = ctx.createImageData(w, h);
-  const d = img.data;
-
-  for (let i = 0; i < d.length; i += 4) {
-    const v = Math.random() * 255;
-    d[i] = v;
-    d[i + 1] = v;
-    d[i + 2] = v;
-    d[i + 3] = 255; // opaque, no accumulation
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
   }
 
-  ctx.putImageData(img, 0, 0);
-}
+  html, body {
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+    touch-action: none;
+  }
+</style>
+</head>
 
-ctx.fillStyle = "#000";
-ctx.fillRect(0, 0, canvas.width, canvas.height);
-drawStaticNoise();
-
-/* ---- INPUT ABSORBED ---- */
-document.addEventListener("touchstart", e => e.preventDefault(), { passive: false });
-document.addEventListener("touchmove", e => e.preventDefault(), { passive: false });
-document.addEventListener("touchend", e => e.preventDefault(), { passive: false });
+<body>
+<script>
+  // Absorb all interaction. No visuals. No state.
+  document.addEventListener("touchstart", e => e.preventDefault(), { passive: false });
+  document.addEventListener("touchmove", e => e.preventDefault(), { passive: false });
+  document.addEventListener("touchend", e => e.preventDefault(), { passive: false });
 </script>
+</body>
+</html>
