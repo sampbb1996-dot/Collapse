@@ -2,14 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+
+  <!-- Viewport for full device size, no scaling -->
   <meta name="viewport"
         content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-  <!-- iOS: Disable web app name display -->
+  <!-- Enable fullscreen iOS web app mode -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content=" ">
 
+  <!-- Empty title to avoid fallback to anything else -->
   <title> </title>
 
   <style>
@@ -44,17 +47,17 @@
 <body tabindex="-1" contenteditable="false">
 
 <script>
-  // Block all browser interaction surfaces
-  const block = e => e.preventDefault();
-  document.addEventListener("contextmenu", block);
-  document.addEventListener("selectstart", block);
-  document.addEventListener("mousedown", block);
-  document.addEventListener("touchstart", block, { passive: false });
-  document.addEventListener("touchmove", block, { passive: false });
-  document.addEventListener("touchend", block, { passive: false });
-  document.addEventListener("gesturestart", block);
+  // Block all browser interaction
+  const prevent = e => e.preventDefault();
+  ["contextmenu", "selectstart", "mousedown", "gesturestart"].forEach(event =>
+    document.addEventListener(event, prevent)
+  );
 
-  // 0-Allergy Core (unchanged)
+  ["touchstart", "touchmove", "touchend"].forEach(event =>
+    document.addEventListener(event, prevent, { passive: false })
+  );
+
+  // Allergy Core
   let lastAction = performance.now();
   let windowMs = 400;
 
