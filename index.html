@@ -1,60 +1,116 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>0-Allergic Noise Game</title>
+  <style>
+    html, body { margin:0; padding:0; background:#000; overflow:hidden; }
+    canvas { display:block; touch-action: manipulation; }
+  </style>
+</head>
 <body>
-
-<h3>0-Allergic Game</h3>
-
-<button onclick="act()">ACT</button>
-<button onclick="step()">WAIT</button>
-
-<pre id="out"></pre>
+<canvas id="c"></canvas>
 
 <script>
-let error = 0;
-let t = 0;
+(() => {
+  const c = document.getElementById("c");
+  const ctx = c.getContext("2d", { alpha: false });
 
-const CEILING = 10;
-const DRIFT = 1;        // unavoidable 0-pressure
-const ACT_RELIEF = 3;  // action can counter drift, but only after
+  // ---- Resize ----
+  function resize() {
+    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    c.width = Math.floor(window.innerWidth * dpr);
+    c.height = Math.floor(window.innerHeight * dpr);
+    c.style.width = window.innerWidth + "px";
+    c.style.height = window.innerHeight + "px";
+    ctx.setTransform(1,0,0,1,0,0);
+  }
+  window.addEventListener("resize", resize, { passive:true });
+  resize();
 
-function render() {
-  document.getElementById("out").textContent =
-    "t: " + t +
-    "\nerror: " + error.toFixed(2) +
-    "\nalive: " + (error < CEILING);
-}
+  // ---- 0-allergy (SUGGESTIVE, not hard) ----
+  // Inaction slowly increases "pressure". Action reduces it a bit.
+  // No UI, no score. Pressure only modulates subtle noise contrast/decay.
+  let pressure = 0.0;                // 0 = calm; higher = worse
+  const PRESSURE_MAX = 1.0;
 
-function step() {
-  t++;
+  const DRIFT_PER_SEC = 0.06;        // suggestive drift away from 0
+  const ACT_RELIEF = 0.18;           // tap/release reduces pressure
+  const RELIEF_COOLDOWN_MS = 120;    // prevents spam from flattening instantly
+  let lastReliefAt = 0;
 
-  // universal 0-allergic drift
-  error += DRIFT;
+  // ---- Noise field (full-field, no center, no handles) ----
+  let seed = (Math.random() * 1e9) | 0;
+  const img = ctx.createImageData(1, 1); // placeholder; recreated per frame size
+  let frame = null;
 
-  // clamp
-  if (error < 0) error = 0;
-  if (error > CEILING) error = CEILING;
+  function xorshift32(x) {
+    x ^= x << 13; x |= 0;
+    x ^= x >>> 17; x |= 0;
+    x ^= x << 5;  x |= 0;
+    return x | 0;
+  }
 
-  render();
-}
+  function ensureFrame() {
+    if (!frame || frame.width !== c.width || frame.height !== c.height) {
+      frame = ctx.createImageData(c.width, c.height);
+    }
+  }
 
-function act() {
-  t++;
+  // Action is on RELEASE (absence-based commitment)
+  function relieve() {
+    const now = Date.now();
+    if (now - lastReliefAt < RELIEF_COOLDOWN_MS) return;
+    lastReliefAt = now;
+    pressure = Math.max(0, pressure - ACT_RELIEF);
+  }
+  window.addEventListener("pointerup", relieve, { passive:true });
 
-  // drift ALWAYS happens first
-  error += DRIFT;
+  // ---- Render loop ----
+  let last = performance.now();
+  function tick(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
 
-  // action happens AFTER drift (no same-step cancellation)
-  const noise = Math.random() * ACT_RELIEF;
-  error -= noise;
+    // Suggestive 0-allergy drift
+    pressure = Math.min(PRESSURE_MAX, pressure + DRIFT_PER_SEC * dt);
 
-  if (error < 0) error = 0;
-  if (error > CEILING) error = CEILING;
+    ensureFrame();
 
-  render();
-}
+    // Pressure modulates contrast very subtly:
+    // - at higher pressure, noise gets slightly more contrasty (harder to ignore)
+    // - at lower pressure, it softens (more ignorable)
+    const base = 6;                           // near-black base
+    const contrast = 18 + pressure * 28;      // 18..46 (subtle)
+    const gamma = 1.0 + pressure * 0.35;      // 1.0..1.35
 
-render();
+    // Update seed so the field moves (no static frame)
+    seed = xorshift32(seed + ((dt * 1e6) | 0));
+
+    const data = frame.data;
+    let x = seed;
+    for (let i = 0; i < data.length; i += 4) {
+      x = xorshift32(x + i);
+      // random in [0,1)
+      const u = ((x >>> 0) / 4294967296);
+      // shape distribution slightly to avoid "sparkle handles"
+      const v = Math.pow(u, gamma);
+      const px = Math.max(0, Math.min(255, (base + v * contrast) | 0));
+
+      data[i+0] = px;
+      data[i+1] = px;
+      data[i+2] = px;
+      data[i+3] = 255;
+    }
+
+    ctx.putImageData(frame, 0, 0);
+
+    requestAnimationFrame(tick);
+  }
+
+  requestAnimationFrame(tick);
+})();
 </script>
-
 </body>
 </html>
