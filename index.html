@@ -11,9 +11,7 @@ html, body {
   background: #000;
   overflow: hidden;
 }
-canvas {
-  display: block;
-}
+canvas { display: block; }
 </style>
 </head>
 <body>
@@ -30,35 +28,32 @@ canvas {
     canvas.height = Math.floor(innerHeight * dpr);
     canvas.style.width  = innerWidth + "px";
     canvas.style.height = innerHeight + "px";
-    ctx.setTransform(1,0,0,1,0,0);
   }
   addEventListener("resize", resize, { passive: true });
   resize();
 
-  /* ---------- CORE STATE ---------- */
-
-  let lastFrame = performance.now();
+  // ---------- CORE STATE ----------
   let lastAction = performance.now();
 
   // single adaptive variable: reaction window (ms)
-  let windowMs = 420;          // starts permissive
+  let windowMs = 420;
   const MIN_WINDOW = 120;
   const MAX_WINDOW = 600;
 
-  // calm gate
-  let burstCount = 0;
-  let lastRelease = 0;
+  // ---------- INPUT (release only) ----------
+  addEventListener("pointerup", () => {
+    const now = performance.now();
+    const dt = now - lastAction;
+    lastAction = now;
 
-  /* ---------- NOISE ---------- */
+    if (dt <= windowMs) {
+      windowMs = Math.max(MIN_WINDOW, windowMs * 0.96);
+    } else {
+      windowMs = Math.min(MAX_WINDOW, windowMs * 1.04);
+    }
+  }, { passive: true });
 
-  let seed = (Math.random() * 1e9) | 0;
-  function xorshift(x) {
-    x ^= x << 13; x |= 0;
-    x ^= x >>> 17;
-    x ^= x << 5;  x |= 0;
-    return x;
-  }
-
+  // ---------- NOISE ----------
   let frame = null;
   function ensureFrame() {
     if (!frame || frame.width !== canvas.width || frame.height !== canvas.height) {
@@ -66,69 +61,44 @@ canvas {
     }
   }
 
-  /* ---------- INPUT (release only) ---------- */
+  function hash(x, y, t) {
+    let h = x * 374761393 + y * 668265263 + t * 1442695041;
+    h = (h ^ (h >> 13)) * 1274126177;
+    return (h ^ (h >> 16)) >>> 0;
+  }
 
-  addEventListener("pointerup", () => {
-    const now = performance.now();
-    const dt = now - lastAction;
-    lastAction = now;
-
-    // burst detection (no benefit)
-    if (now - lastRelease < 120) {
-      burstCount++;
-      return;
-    }
-    burstCount = 0;
-    lastRelease = now;
-
-    // correct-window hit tightens
-    if (dt <= windowMs) {
-      windowMs = Math.max(MIN_WINDOW, windowMs * 0.96);
-    } else {
-      // miss loosens slightly
-      windowMs = Math.min(MAX_WINDOW, windowMs * 1.04);
-    }
-  }, { passive: true });
-
-  /* ---------- LOOP ---------- */
-
-  function tick(now) {
-    const dt = Math.min(50, now - lastFrame);
-    lastFrame = now;
-
-    // 0-allergy: inaction tightens window
-    if (now - lastAction > windowMs) {
-      windowMs = Math.max(MIN_WINDOW, windowMs - 0.15 * dt);
-    }
-
-    // calm gate: instability freezes adaptation
-    if (burstCount > 3) {
-      windowMs = windowMs;
-    }
-
-    // render noise (non-salient)
+  let tickCount = 0;
+  function loop() {
+    tickCount++;
     ensureFrame();
-    seed = xorshift(seed + dt | 0);
+
+    // 0-allergy: inaction tightens silently
+    const now = performance.now();
+    if (now - lastAction > windowMs) {
+      windowMs = Math.max(MIN_WINDOW, windowMs - 0.15);
+    }
 
     const data = frame.data;
-    const base = 3;          // near-black
-    const span = 10;         // minimal contrast
+    const base = 3;    // near-black
+    const span = 10;   // minimal contrast
 
-    let x = seed;
-    for (let i = 0; i < data.length; i += 4) {
-      x = xorshift(x + i);
-      const v = base + (x & 15) % span;
-      data[i]   = v;
-      data[i+1] = v;
-      data[i+2] = v;
-      data[i+3] = 255;
+    let i = 0;
+    for (let y = 0; y < frame.height; y++) {
+      for (let x = 0; x < frame.width; x++) {
+        const r = hash(x, y, tickCount) & 15;
+        const v = base + (r % span);
+        data[i++] = v;
+        data[i++] = v;
+        data[i++] = v;
+        data[i++] = 255;
+      }
     }
 
     ctx.putImageData(frame, 0, 0);
-    requestAnimationFrame(tick);
+    requestAnimationFrame(loop);
   }
 
-  requestAnimationFrame(tick);
+  requestAnimationFrame(loop);
 })();
 </script>
 </body>
