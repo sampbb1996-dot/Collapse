@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
 
-  <!-- Responsive fullscreen scaling -->
+  <!-- Fullscreen scaling, disable zooming -->
   <meta name="viewport"
         content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-  <!-- iOS fullscreen web app config -->
+  <!-- iOS: Fullscreen web app mode -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content=" ">
 
-  <!-- Prevent any fallback name -->
+  <!-- Empty title to suppress fallback names -->
   <title> </title>
 
   <style>
@@ -36,6 +36,20 @@
       background: #000;
       overflow: hidden;
       touch-action: none;
+      margin: 0;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+
+    /* Fill the iOS status bar safe area */
+    body::before {
+      content: "";
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: env(safe-area-inset-top);
+      background: #000;
+      z-index: 9999;
     }
 
     body {
@@ -47,7 +61,7 @@
 <body tabindex="-1" contenteditable="false">
 
 <script>
-  // Disable all user interaction
+  // Block all browser interaction
   const prevent = e => e.preventDefault();
   ["contextmenu", "selectstart", "mousedown", "gesturestart"].forEach(event =>
     document.addEventListener(event, prevent)
