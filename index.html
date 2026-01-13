@@ -14,6 +14,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="">
 
+<!-- TITLE REMOVED ON PURPOSE -->
 <title></title>
 
 <style>
@@ -28,6 +29,7 @@
     user-select: none !important;
     -webkit-touch-callout: none !important;
     -webkit-tap-highlight-color: transparent !important;
+    caret-color: transparent !important;
   }
 
   html, body {
@@ -37,23 +39,26 @@
     overflow: hidden;
     touch-action: none;
   }
+
+  body {
+    -webkit-user-modify: read-only;
+  }
 </style>
 </head>
 
-<body tabindex="-1">
+<body tabindex="-1" contenteditable="false">
 
 <script>
-/* hard-disable selection & focus */
+/* kill all browser interaction surfaces */
+document.addEventListener("contextmenu", e => e.preventDefault());
 document.addEventListener("selectstart", e => e.preventDefault());
-document.addEventListener("mousedown",   e => e.preventDefault());
-document.addEventListener("touchstart",  e => e.preventDefault(), { passive: false });
-document.addEventListener("touchmove",   e => e.preventDefault(), { passive: false });
-document.addEventListener("touchend",    e => e.preventDefault(), { passive: false });
+document.addEventListener("mousedown", e => e.preventDefault());
+document.addEventListener("touchstart", e => e.preventDefault(), { passive: false });
+document.addEventListener("touchmove",  e => e.preventDefault(), { passive: false });
+document.addEventListener("touchend",   e => e.preventDefault(), { passive: false });
+document.addEventListener("gesturestart", e => e.preventDefault());
 
-/*
-  0-ALLERGY CORE (UNCHANGED)
-*/
-
+/* 0-ALLERGY CORE — UNCHANGED */
 let lastAction = performance.now();
 let windowMs = 400;
 
