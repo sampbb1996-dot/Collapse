@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
 
-  <!-- Viewport for full device size, no scaling -->
+  <!-- Responsive fullscreen scaling -->
   <meta name="viewport"
         content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-  <!-- Enable fullscreen iOS web app mode -->
+  <!-- iOS fullscreen web app config -->
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content=" ">
 
-  <!-- Empty title to avoid fallback to anything else -->
+  <!-- Prevent any fallback name -->
   <title> </title>
 
   <style>
@@ -47,7 +47,7 @@
 <body tabindex="-1" contenteditable="false">
 
 <script>
-  // Block all browser interaction
+  // Disable all user interaction
   const prevent = e => e.preventDefault();
   ["contextmenu", "selectstart", "mousedown", "gesturestart"].forEach(event =>
     document.addEventListener(event, prevent)
@@ -57,7 +57,7 @@
     document.addEventListener(event, prevent, { passive: false })
   );
 
-  // Allergy Core
+  // 0-ALLERGY CORE
   let lastAction = performance.now();
   let windowMs = 400;
 
