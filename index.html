@@ -3,48 +3,51 @@ import random
 class GameGovernor:
     def __init__(
         self,
-        error_ceiling=10,
+        error_ceiling=10.0,
         zero_penalty=1.0,
         action_error=1.0,
-        info_reward=0.0,
+        info_reward=0.0
     ):
         self.error = 0.0
+        self.timestep = 0
         self.error_ceiling = error_ceiling
         self.zero_penalty = zero_penalty
         self.action_error = action_error
         self.info_reward = info_reward
-        self.timestep = 0
 
     def step(self, action):
         """
-        action ∈ {"ACT", "WAIT"}
-        WAIT = advances time without information
-        ACT  = probes environment (information-generating)
+        ACT  = probe environment (noisy, informative)
+        WAIT = inaction (guaranteed liability)
         """
 
         self.timestep += 1
 
         if action == "WAIT":
-            # suggestive allergy to 0
+            # 0-allergy: inaction is always a liability
             self.error += self.zero_penalty
 
         elif action == "ACT":
-            # stochastic outcome (fake environment)
+            # stochastic outcome from environment
             outcome = random.choice(["GOOD", "BAD"])
 
             if outcome == "BAD":
                 self.error += self.action_error
             else:
+                # good outcome reduces accumulated error slightly
                 self.error = max(0.0, self.error - self.info_reward)
 
         else:
             raise ValueError("Invalid action")
 
-        return self._status()
+        # hard ceiling enforcement
+        self.error = min(self.error, self.error_ceiling)
 
-    def _status(self):
+        return self.status()
+
+    def status(self):
         return {
             "timestep": self.timestep,
             "error": self.error,
-            "alive": self.error < self.error_ceiling,
+            "alive": self.error < self.error_ceiling
         }
