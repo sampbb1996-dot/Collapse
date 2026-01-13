@@ -1,38 +1,21 @@
-import random
+<!DOCTYPE html>
+<html>
+<body>
+<h3>0-Allergic Game</h3>
+<button onclick="step()">STEP</button>
+<pre id="out"></pre>
 
-class GameGovernor:
-    def __init__(self, error_ceiling=10.0, zero_penalty=1.0, act_cost=1.0):
-        self.error = 0.0
-        self.timestep = 0
-        self.error_ceiling = error_ceiling
-        self.zero_penalty = zero_penalty
-        self.act_cost = act_cost
+<script>
+let error = 0;
+const CEILING = 10;
 
-    def step(self, action):
-        self.timestep += 1
-
-        if action == "WAIT":
-            # 0-allergy: inaction is guaranteed liability
-            self.error += self.zero_penalty
-
-        elif action == "ACT":
-            # action is noisy but admissible
-            outcome = random.choice((1, -1))  # good / bad
-            self.error += self.act_cost * max(0, outcome * -1)
-
-        else:
-            raise ValueError("Invalid action")
-
-        # hard ceiling
-        if self.error >= self.error_ceiling:
-            self.error = self.error_ceiling
-            return self.status(dead=True)
-
-        return self.status(dead=False)
-
-    def status(self, dead=False):
-        return {
-            "timestep": self.timestep,
-            "error": self.error,
-            "alive": not dead
-        }
+function step() {
+  error += 1;              // 0-allergy drift
+  if (Math.random() < 0.5) error -= 2; // noisy action
+  error = Math.max(0, Math.min(error, CEILING));
+  document.getElementById("out").textContent =
+    "error: " + error + " alive: " + (error < CEILING);
+}
+</script>
+</body>
+</html>
