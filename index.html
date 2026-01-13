@@ -1,96 +1,91 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
+  <meta charset="utf-8">
+  <meta name="viewport"
+        content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-<meta name="viewport"
-  content="width=device-width,
-           height=device-height,
-           initial-scale=1.0,
-           maximum-scale=1.0,
-           user-scalable=no">
+  <!-- iOS: Disable web app name display -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content=" ">
 
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="">
+  <title> </title>
 
-<!-- TITLE REMOVED ON PURPOSE -->
-<title></title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      border: 0;
+      outline: 0;
+      box-sizing: border-box;
 
-<style>
-  * {
-    margin: 0;
-    padding: 0;
-    border: 0;
-    outline: 0;
-    box-sizing: border-box;
+      -webkit-user-select: none !important;
+      user-select: none !important;
+      -webkit-touch-callout: none !important;
+      -webkit-tap-highlight-color: transparent !important;
+      caret-color: transparent !important;
+    }
 
-    -webkit-user-select: none !important;
-    user-select: none !important;
-    -webkit-touch-callout: none !important;
-    -webkit-tap-highlight-color: transparent !important;
-    caret-color: transparent !important;
-  }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+      touch-action: none;
+    }
 
-  html, body {
-    width: 100%;
-    height: 100%;
-    background: #000;
-    overflow: hidden;
-    touch-action: none;
-  }
-
-  body {
-    -webkit-user-modify: read-only;
-  }
-</style>
+    body {
+      -webkit-user-modify: read-only;
+    }
+  </style>
 </head>
 
 <body tabindex="-1" contenteditable="false">
 
 <script>
-/* kill all browser interaction surfaces */
-document.addEventListener("contextmenu", e => e.preventDefault());
-document.addEventListener("selectstart", e => e.preventDefault());
-document.addEventListener("mousedown", e => e.preventDefault());
-document.addEventListener("touchstart", e => e.preventDefault(), { passive: false });
-document.addEventListener("touchmove",  e => e.preventDefault(), { passive: false });
-document.addEventListener("touchend",   e => e.preventDefault(), { passive: false });
-document.addEventListener("gesturestart", e => e.preventDefault());
+  // Block all browser interaction surfaces
+  const block = e => e.preventDefault();
+  document.addEventListener("contextmenu", block);
+  document.addEventListener("selectstart", block);
+  document.addEventListener("mousedown", block);
+  document.addEventListener("touchstart", block, { passive: false });
+  document.addEventListener("touchmove", block, { passive: false });
+  document.addEventListener("touchend", block, { passive: false });
+  document.addEventListener("gesturestart", block);
 
-/* 0-ALLERGY CORE — UNCHANGED */
-let lastAction = performance.now();
-let windowMs = 400;
+  // 0-Allergy Core (unchanged)
+  let lastAction = performance.now();
+  let windowMs = 400;
 
-const MIN_WINDOW = 120;
-const MAX_WINDOW = 600;
-const DECAY_PER_MS = 0.02;
+  const MIN_WINDOW = 120;
+  const MAX_WINDOW = 600;
+  const DECAY_PER_MS = 0.02;
 
-document.addEventListener("pointerup", () => {
-  const now = performance.now();
-  const dt = now - lastAction;
-  lastAction = now;
+  document.addEventListener("pointerup", () => {
+    const now = performance.now();
+    const dt = now - lastAction;
+    lastAction = now;
 
-  if (dt <= windowMs) {
-    windowMs = Math.max(MIN_WINDOW, windowMs * 0.97);
-  } else {
-    windowMs = Math.min(MAX_WINDOW, windowMs * 1.03);
-  }
-}, { passive: true });
+    windowMs = dt <= windowMs
+      ? Math.max(MIN_WINDOW, windowMs * 0.97)
+      : Math.min(MAX_WINDOW, windowMs * 1.03);
+  }, { passive: true });
 
-(function loop() {
-  const now = performance.now();
-  const idle = now - lastAction;
+  (function loop() {
+    const now = performance.now();
+    const idle = now - lastAction;
 
-  if (idle > windowMs) {
-    windowMs = Math.max(
-      MIN_WINDOW,
-      windowMs - (idle - windowMs) * DECAY_PER_MS
-    );
-  }
+    if (idle > windowMs) {
+      windowMs = Math.max(
+        MIN_WINDOW,
+        windowMs - (idle - windowMs) * DECAY_PER_MS
+      );
+    }
 
-  requestAnimationFrame(loop);
-})();
+    requestAnimationFrame(loop);
+  })();
 </script>
+
 </body>
 </html>
