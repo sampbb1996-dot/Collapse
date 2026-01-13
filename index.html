@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
 
-  <!-- Fullscreen scaling, disable zooming -->
+  <!-- Viewport scaling -->
   <meta name="viewport"
         content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-  <!-- iOS: Fullscreen web app mode -->
+  <!-- Enable fullscreen mode on iOS -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content=" ">
 
-  <!-- Empty title to suppress fallback names -->
+  <!-- Hide all fallback titles -->
   <title> </title>
 
   <style>
@@ -33,76 +33,75 @@
     html, body {
       width: 100%;
       height: 100%;
-      background: #000;
       overflow: hidden;
       touch-action: none;
-      margin: 0;
-      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-    }
-
-    /* Fill the iOS status bar safe area */
-    body::before {
-      content: "";
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: env(safe-area-inset-top);
       background: #000;
-      z-index: 9999;
     }
 
     body {
+      position: relative;
       -webkit-user-modify: read-only;
+    }
+
+    /* Safe-area background filler to fix iOS white status bar */
+    .fullscreen-bg {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      z-index: -1;
     }
   </style>
 </head>
 
 <body tabindex="-1" contenteditable="false">
+  <div class="fullscreen-bg"></div>
 
-<script>
-  // Block all browser interaction
-  const prevent = e => e.preventDefault();
-  ["contextmenu", "selectstart", "mousedown", "gesturestart"].forEach(event =>
-    document.addEventListener(event, prevent)
-  );
+  <script>
+    // Disable all interaction
+    const prevent = e => e.preventDefault();
+    ["contextmenu", "selectstart", "mousedown", "gesturestart"].forEach(event =>
+      document.addEventListener(event, prevent)
+    );
 
-  ["touchstart", "touchmove", "touchend"].forEach(event =>
-    document.addEventListener(event, prevent, { passive: false })
-  );
+    ["touchstart", "touchmove", "touchend"].forEach(event =>
+      document.addEventListener(event, prevent, { passive: false })
+    );
 
-  // 0-ALLERGY CORE
-  let lastAction = performance.now();
-  let windowMs = 400;
+    // 0-ALLERGY CORE
+    let lastAction = performance.now();
+    let windowMs = 400;
 
-  const MIN_WINDOW = 120;
-  const MAX_WINDOW = 600;
-  const DECAY_PER_MS = 0.02;
+    const MIN_WINDOW = 120;
+    const MAX_WINDOW = 600;
+    const DECAY_PER_MS = 0.02;
 
-  document.addEventListener("pointerup", () => {
-    const now = performance.now();
-    const dt = now - lastAction;
-    lastAction = now;
+    document.addEventListener("pointerup", () => {
+      const now = performance.now();
+      const dt = now - lastAction;
+      lastAction = now;
 
-    windowMs = dt <= windowMs
-      ? Math.max(MIN_WINDOW, windowMs * 0.97)
-      : Math.min(MAX_WINDOW, windowMs * 1.03);
-  }, { passive: true });
+      windowMs = dt <= windowMs
+        ? Math.max(MIN_WINDOW, windowMs * 0.97)
+        : Math.min(MAX_WINDOW, windowMs * 1.03);
+    }, { passive: true });
 
-  (function loop() {
-    const now = performance.now();
-    const idle = now - lastAction;
+    (function loop() {
+      const now = performance.now();
+      const idle = now - lastAction;
 
-    if (idle > windowMs) {
-      windowMs = Math.max(
-        MIN_WINDOW,
-        windowMs - (idle - windowMs) * DECAY_PER_MS
-      );
-    }
+      if (idle > windowMs) {
+        windowMs = Math.max(
+          MIN_WINDOW,
+          windowMs - (idle - windowMs) * DECAY_PER_MS
+        );
+      }
 
-    requestAnimationFrame(loop);
-  })();
-</script>
-
+      requestAnimationFrame(loop);
+    })();
+  </script>
 </body>
 </html>
