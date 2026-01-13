@@ -1,21 +1,60 @@
 <!DOCTYPE html>
 <html>
 <body>
+
 <h3>0-Allergic Game</h3>
-<button onclick="step()">STEP</button>
+
+<button onclick="act()">ACT</button>
+<button onclick="step()">WAIT</button>
+
 <pre id="out"></pre>
 
 <script>
 let error = 0;
+let t = 0;
+
 const CEILING = 10;
+const DRIFT = 1;        // unavoidable 0-pressure
+const ACT_RELIEF = 3;  // action can counter drift, but only after
+
+function render() {
+  document.getElementById("out").textContent =
+    "t: " + t +
+    "\nerror: " + error.toFixed(2) +
+    "\nalive: " + (error < CEILING);
+}
 
 function step() {
-  error += 1;              // 0-allergy drift
-  if (Math.random() < 0.5) error -= 2; // noisy action
-  error = Math.max(0, Math.min(error, CEILING));
-  document.getElementById("out").textContent =
-    "error: " + error + " alive: " + (error < CEILING);
+  t++;
+
+  // universal 0-allergic drift
+  error += DRIFT;
+
+  // clamp
+  if (error < 0) error = 0;
+  if (error > CEILING) error = CEILING;
+
+  render();
 }
+
+function act() {
+  t++;
+
+  // drift ALWAYS happens first
+  error += DRIFT;
+
+  // action happens AFTER drift (no same-step cancellation)
+  const noise = Math.random() * ACT_RELIEF;
+  error -= noise;
+
+  if (error < 0) error = 0;
+  if (error > CEILING) error = CEILING;
+
+  render();
+}
+
+render();
 </script>
+
 </body>
 </html>
