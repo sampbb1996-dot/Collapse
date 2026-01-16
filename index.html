@@ -1,6 +1,134 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<title>Field</title>
+
+<style>
+/* =========================
+   GLOBAL RESET
+   ========================= */
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: #050505;
+  overflow: hidden;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+/* =========================
+   TIME BANNER (BLACK, FIXED)
+   ========================= */
+#time-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+
+  height: 28px;
+  background: #000;     /* stays black */
+  color: #666;
+  font-size: 11px;
+  line-height: 28px;
+  text-align: center;
+
+  border: none;
+  box-shadow: none;
+  z-index: 10;
+}
+
+/* =========================
+   FIELD
+   ========================= */
+#field {
+  position: absolute;
+  inset: 0;
+  background: #050505;
+}
+
+/* =========================
+   BUBBLE (SUPPRESSED)
+   ========================= */
+#bubble {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+
+  background: rgba(255, 255, 255, 0.015); /* barely there */
+  filter: blur(2px);
+
+  opacity: 0.15;      /* reduced presence */
+  pointer-events: none;
+  will-change: transform;
+}
+</style>
+</head>
+
+<body>
+
+<div id="time-banner">00:00</div>
+<div id="field">
+  <div id="bubble"></div>
+</div>
+
+<script>
+/* =========================
+   TIME
+   ========================= */
+let startTime = Date.now();
+const timeBanner = document.getElementById("time-banner");
+
+function updateTime() {
+  const elapsed = Math.floor((Date.now() - startTime) / 1000);
+  const m = String(Math.floor(elapsed / 60)).padStart(2, "0");
+  const s = String(elapsed % 60).padStart(2, "0");
+  timeBanner.textContent = `${m}:${s}`;
+}
+setInterval(updateTime, 1000);
+
+/* =========================
+   BUBBLE DRIFT (NON-SALIENT)
+   ========================= */
+const bubble = document.getElementById("bubble");
+
+let x = Math.random() * window.innerWidth;
+let y = Math.random() * window.innerHeight;
+
+let vx = (Math.random() - 0.5) * 0.12;
+let vy = (Math.random() - 0.5) * 0.12;
+
+function drift() {
+  x += vx;
+  y += vy;
+
+  if (x < 0 || x > window.innerWidth) vx *= -1;
+  if (y < 0 || y > window.innerHeight) vy *= -1;
+
+  bubble.style.transform = `translate(${x}px, ${y}px)`;
+
+  requestAnimationFrame(drift);
+}
+
+drift();
+
+/* =========================
+   INPUT (NO FEEDBACK)
+   ========================= */
+document.addEventListener("pointerup", () => {
+  // intentionally empty
+});
+</script>
+
+</body>
+</html><!DOCTYPE html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
 
 <meta name="viewport"
