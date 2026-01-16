@@ -10,12 +10,11 @@
                  maximum-scale=1.0,
                  user-scalable=no" />
 
-  <!-- iOS fullscreen / minimal UI -->
+  <!-- iOS fullscreen web app behavior -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black" />
   <meta name="apple-mobile-web-app-title" content="" />
 
-  <!-- No title shown -->
   <title></title>
 
   <style>
@@ -29,7 +28,7 @@
       touch-action: none;
       -webkit-user-select: none;
       user-select: none;
-      -webkit-tap-highlight-color: transparent; /* ✅ No blue oval on tap */
+      -webkit-tap-highlight-color: transparent; /* disables iOS tap glow */
     }
 
     #field {
@@ -45,8 +44,7 @@
 
   <script>
     /*
-      LOGIC SUMMARY (DO NOT MODIFY):
-
+      TOUCH LOGIC — unchanged from original
       - Exactly ONE thumb must be down at all times
       - No resting / no 0-state
       - Event-gated replacement only
