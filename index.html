@@ -1,89 +1,109 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
+<meta charset="utf-8">
 
-  <meta name="viewport"
-        content="width=device-width,
-                 height=device-height,
-                 initial-scale=1.0,
-                 maximum-scale=1.0,
-                 user-scalable=no" />
+<meta name="viewport"
+  content="width=device-width,
+           height=device-height,
+           initial-scale=1.0,
+           maximum-scale=1.0,
+           user-scalable=no">
 
-  <!-- iOS fullscreen web app behavior -->
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
-  <meta name="apple-mobile-web-app-title" content="" />
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 
-  <title></title>
+<title></title>
 
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      background: #000;
-      overflow: hidden;
-      touch-action: none;
-      -webkit-user-select: none;
-      user-select: none;
-      -webkit-tap-highlight-color: transparent; /* disables iOS tap glow */
-    }
+<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
 
-    #field {
-      position: fixed;
-      inset: 0;
-      background: #000;
-    }
-  </style>
+  /* hard suppression */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: rgba(0,0,0,0);
+  caret-color: transparent;
+  cursor: none;
+  overscroll-behavior: none;
+}
+
+#field {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  pointer-events: none;
+}
+</style>
 </head>
 
 <body>
-  <div id="field"></div>
+<div id="field"></div>
 
-  <script>
-    /*
-      TOUCH LOGIC — unchanged from original
-      - Exactly ONE thumb must be down at all times
-      - No resting / no 0-state
-      - Event-gated replacement only
-      - No alternation, no rhythm, no cadence
-      - Action = replace thumb, not lift into void
-    */
+<script>
+/*
+  LOGIC SUMMARY (DO NOT MODIFY):
 
-    let activeTouchId = null;
-    let awaitingReplacement = false;
+  - Exactly ONE thumb must be down at all times
+  - No resting / no 0-state
+  - Event-gated replacement only
+  - No alternation, no rhythm, no cadence
+  - Action = replace thumb, not lift into void
+*/
 
-    document.addEventListener('touchstart', e => {
-      if (activeTouchId === null && e.touches.length === 1) {
-        activeTouchId = e.touches[0].identifier;
+let activeTouchId = null;
+let awaitingReplacement = false;
+
+// Hard block all default touch UI immediately
+function kill(e) {
+  e.preventDefault();
+}
+
+document.addEventListener('touchstart', e => {
+  kill(e);
+
+  if (activeTouchId === null && e.touches.length === 1) {
+    activeTouchId = e.touches[0].identifier;
+    return;
+  }
+
+  if (awaitingReplacement && e.touches.length === 2) {
+    for (const t of e.touches) {
+      if (t.identifier !== activeTouchId) {
+        activeTouchId = t.identifier;
+        awaitingReplacement = false;
+        break;
       }
+    }
+  }
+}, { passive: false });
 
-      if (awaitingReplacement && e.touches.length === 2) {
-        for (const t of e.touches) {
-          if (t.identifier !== activeTouchId) {
-            activeTouchId = t.identifier;
-            awaitingReplacement = false;
-            break;
-          }
-        }
-      }
-    }, { passive: false });
+document.addEventListener('touchmove', kill, { passive: false });
 
-    document.addEventListener('touchend', e => {
-      for (const t of e.changedTouches) {
-        if (t.identifier === activeTouchId) {
-          awaitingReplacement = true;
-          return;
-        }
-      }
-    }, { passive: false });
+document.addEventListener('touchend', e => {
+  kill(e);
 
-    document.addEventListener('touchcancel', () => {
-      awaitingReplacement = false;
-      activeTouchId = null;
-    });
-  </script>
+  for (const t of e.changedTouches) {
+    if (t.identifier === activeTouchId) {
+      awaitingReplacement = true;
+      return;
+    }
+  }
+}, { passive: false });
+
+document.addEventListener('touchcancel', e => {
+  kill(e);
+  awaitingReplacement = false;
+  activeTouchId = null;
+}, { passive: false });
+
+</script>
 </body>
 </html>
