@@ -3,39 +3,54 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Field</title>
+
+  <!-- Invisible title to prevent "Field" from showing in Safari -->
+  <title>&#8203;</title>
+
+  <!-- Ensure dark mode and full black theme -->
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+
   <style>
+    /* ========== GLOBAL RESET ========== */
     html, body {
       margin: 0;
       padding: 0;
       width: 100%;
       height: 100%;
-      background: #050505;
+      background-color: #000 !important; /* Full black background */
       overflow: hidden;
       touch-action: manipulation;
       user-select: none;
+      -webkit-appearance: none;
+      color-scheme: only dark;
     }
 
-    /* TIME BANNER — flat and black */
+    /* ========== TIME BANNER ========== */
     #time-banner {
       position: fixed;
       top: 0;
       left: 0;
       right: 0;
       height: 28px;
-      background: #000; /* black bar */
-      color: #666;
+      background: #000;        /* Flat black */
+      color: #bbb;             /* Subtle, visible */
       font-size: 11px;
-      line-height: 28px;
+      line-height: 28px;       /* Vertically centered */
       text-align: center;
-      z-index: 10;
+      margin: 0;
+      padding: 0;
+      border: none;
+      box-shadow: none;
+      z-index: 9999;
     }
 
-    /* FIELD — full black space */
+    /* ========== FIELD ========== */
     #field {
       position: absolute;
       inset: 0;
-      background: #050505;
+      background: #000;        /* Black matches full canvas */
     }
   </style>
 </head>
@@ -58,10 +73,11 @@
 
     setInterval(updateTime, 1000);
 
-    // INPUT (disabled feedback)
+    // INPUT HANDLER (intentionally empty)
     document.addEventListener("pointerup", () => {
-      // No visual or audible feedback
+      // no feedback
     });
   </script>
+
 </body>
 </html>
