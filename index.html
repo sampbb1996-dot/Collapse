@@ -59,32 +59,21 @@ html, body {
 */
 
 /* =========================
-   INFO BLOB (NEW)
+   INFO BLOB (STATE MIRROR)
    ========================= */
 
 const infoBlob = {
   startedAt: Date.now(),
   activeTouchId: null,
   awaitingReplacement: false,
-
-  events: [],
-  cleanReplacements: 0,
-  violations: 0,
-
-  adaptationFrozen: false
+  lastEvent: null
 };
 
-function record(type, data = {}) {
-  infoBlob.events.push({
+function record(type) {
+  infoBlob.lastEvent = {
     t: Date.now(),
-    type,
-    ...data
-  });
-
-  // hard cap to avoid growth
-  if (infoBlob.events.length > 200) {
-    infoBlob.events.shift();
-  }
+    type
+  };
 }
 
 /* ========================= */
@@ -99,15 +88,19 @@ function kill(e) {
 document.addEventListener('touchstart', e => {
   kill(e);
 
-  // initial acquisition
+  // Initial acquisition
   if (activeTouchId === null && e.touches.length === 1) {
     activeTouchId = e.touches[0].identifier;
+    awaitingReplacement = false;
+
     infoBlob.activeTouchId = activeTouchId;
+    infoBlob.awaitingReplacement = false;
     record("acquire");
+
     return;
   }
 
-  // replacement window
+  // Replacement only when explicitly awaiting
   if (awaitingReplacement && e.touches.length === 2) {
     for (const t of e.touches) {
       if (t.identifier !== activeTouchId) {
@@ -116,16 +109,7 @@ document.addEventListener('touchstart', e => {
 
         infoBlob.activeTouchId = activeTouchId;
         infoBlob.awaitingReplacement = false;
-
-        infoBlob.cleanReplacements++;
-        infoBlob.violations = 0;
-
-        record("clean_replace");
-
-        // unfreeze adaptation after sustained stability
-        if (infoBlob.cleanReplacements >= 5) {
-          infoBlob.adaptationFrozen = false;
-        }
+        record("replace");
 
         break;
       }
@@ -153,19 +137,12 @@ document.addEventListener('touchend', e => {
 document.addEventListener('touchcancel', e => {
   kill(e);
 
-  record("cancel");
-
-  awaitingReplacement = false;
   activeTouchId = null;
+  awaitingReplacement = false;
 
-  infoBlob.awaitingReplacement = false;
   infoBlob.activeTouchId = null;
-
-  infoBlob.violations++;
-  infoBlob.cleanReplacements = 0;
-
-  // freeze adaptation on instability
-  infoBlob.adaptationFrozen = true;
+  infoBlob.awaitingReplacement = false;
+  record("cancel");
 }, { passive: false });
 
 </script>
