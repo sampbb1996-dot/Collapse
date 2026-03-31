@@ -31,40 +31,36 @@ html, body {
 
 <script>
 /*
-  FINAL SYSTEM:
+FINAL SYSTEM:
 
-  - EXACTLY ONE touch at all times
-  - Replacement only (no 0-state)
-  - STATE ESTIMATE (timing stability)
-  - HIDDEN THRESHOLD
-  - COLLAPSE = full reset
+- EXACTLY ONE touch (original constraint)
+- NO 0-state
+- NO targets, no thresholds
+- STATE = your own recent behavior
+- COLLAPSE = deviation from your own stability
 */
 
 /* =========================
-   STATE
+   CORE STATE
 ========================= */
 
 let activeTouchId = null;
 let awaitingReplacement = false;
 
 /* =========================
-   STATE ESTIMATION (CORE)
+   SELF-REFERENTIAL STATE
 ========================= */
 
-// timing buffer
 let intervals = [];
 let lastTapTime = null;
 
-// config
 const MAX_BUFFER = 20;
-const BASE_THRESHOLD = 0.015; // variance threshold
-let threshold = BASE_THRESHOLD;
 
 /*
-  Estimate stability from timing variance
+  Compute deviation from your own pattern
 */
-function updateEstimate() {
-  if (intervals.length < 5) return 1;
+function computeDeviation() {
+  if (intervals.length < 5) return 0;
 
   let mean = intervals.reduce((a,b)=>a+b,0) / intervals.length;
 
@@ -73,29 +69,42 @@ function updateEstimate() {
   return variance;
 }
 
+/*
+  Collapse condition:
+  Compare newest interval vs recent stability
+*/
+function shouldCollapse(newInterval) {
+  if (intervals.length < 5) return false;
+
+  let mean = intervals.reduce((a,b)=>a+b,0) / intervals.length;
+
+  let variance = computeDeviation();
+
+  let deviation = Math.abs(newInterval - mean);
+
+  // collapse if deviation exceeds natural variance scale
+  return deviation > (2 * Math.sqrt(variance));
+}
+
 /* =========================
    COLLAPSE
 ========================= */
 
 function collapse() {
-  // hard reset everything
   activeTouchId = null;
   awaitingReplacement = false;
   intervals = [];
   lastTapTime = null;
 
-  // slight difficulty increase (adaptive)
-  threshold *= 0.99;
-
-  // visual reset (optional flash)
+  // minimal feedback (flash)
   document.body.style.background = "#111";
   setTimeout(() => {
     document.body.style.background = "#000";
-  }, 50);
+  }, 40);
 }
 
 /* =========================
-   TOUCH LOGIC
+   TOUCH LOGIC (UNCHANGED)
 ========================= */
 
 function kill(e) {
@@ -120,11 +129,15 @@ document.addEventListener('touchstart', e => {
     for (const t of e.touches) {
       if (t.identifier !== activeTouchId) {
 
-        // timing interval
         if (lastTapTime !== null) {
           let dt = now - lastTapTime;
-          intervals.push(dt);
 
+          if (shouldCollapse(dt)) {
+            collapse();
+            return;
+          }
+
+          intervals.push(dt);
           if (intervals.length > MAX_BUFFER) {
             intervals.shift();
           }
@@ -132,15 +145,6 @@ document.addEventListener('touchstart', e => {
 
         lastTapTime = now;
 
-        // evaluate state
-        const estimate = updateEstimate();
-
-        if (estimate > threshold) {
-          collapse();
-          return;
-        }
-
-        // switch touch
         activeTouchId = t.identifier;
         awaitingReplacement = false;
         break;
