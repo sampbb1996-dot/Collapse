@@ -10,12 +10,6 @@
            maximum-scale=1.0,
            user-scalable=no">
 
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="theme-color" content="#000000">
-
-<title></title>
-
 <style>
 html, body {
   margin: 0;
@@ -28,58 +22,81 @@ html, body {
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
-  -webkit-touch-callout: none;
   -webkit-tap-highlight-color: rgba(0,0,0,0);
-  caret-color: transparent;
-  cursor: none;
-  overscroll-behavior: none;
-}
-
-#field {
-  position: fixed;
-  inset: 0;
-  background: #000;
-  pointer-events: none;
 }
 </style>
 </head>
 
 <body>
-<div id="field"></div>
 
 <script>
 /*
-  LOGIC SUMMARY (DO NOT MODIFY):
+  FINAL SYSTEM:
 
-  - Exactly ONE thumb must be down at all times
-  - No resting / no 0-state
-  - Event-gated replacement only
-  - No alternation, no rhythm, no cadence
-  - Action = replace thumb, not lift into void
+  - EXACTLY ONE touch at all times
+  - Replacement only (no 0-state)
+  - STATE ESTIMATE (timing stability)
+  - HIDDEN THRESHOLD
+  - COLLAPSE = full reset
 */
 
 /* =========================
-   INFO BLOB (STATE MIRROR)
-   ========================= */
-
-const infoBlob = {
-  startedAt: Date.now(),
-  activeTouchId: null,
-  awaitingReplacement: false,
-  lastEvent: null
-};
-
-function record(type) {
-  infoBlob.lastEvent = {
-    t: Date.now(),
-    type
-  };
-}
-
-/* ========================= */
+   STATE
+========================= */
 
 let activeTouchId = null;
 let awaitingReplacement = false;
+
+/* =========================
+   STATE ESTIMATION (CORE)
+========================= */
+
+// timing buffer
+let intervals = [];
+let lastTapTime = null;
+
+// config
+const MAX_BUFFER = 20;
+const BASE_THRESHOLD = 0.015; // variance threshold
+let threshold = BASE_THRESHOLD;
+
+/*
+  Estimate stability from timing variance
+*/
+function updateEstimate() {
+  if (intervals.length < 5) return 1;
+
+  let mean = intervals.reduce((a,b)=>a+b,0) / intervals.length;
+
+  let variance = intervals.reduce((a,b)=>a + (b-mean)*(b-mean), 0) / intervals.length;
+
+  return variance;
+}
+
+/* =========================
+   COLLAPSE
+========================= */
+
+function collapse() {
+  // hard reset everything
+  activeTouchId = null;
+  awaitingReplacement = false;
+  intervals = [];
+  lastTapTime = null;
+
+  // slight difficulty increase (adaptive)
+  threshold *= 0.99;
+
+  // visual reset (optional flash)
+  document.body.style.background = "#111";
+  setTimeout(() => {
+    document.body.style.background = "#000";
+  }, 50);
+}
+
+/* =========================
+   TOUCH LOGIC
+========================= */
 
 function kill(e) {
   e.preventDefault();
@@ -88,36 +105,49 @@ function kill(e) {
 document.addEventListener('touchstart', e => {
   kill(e);
 
-  // Initial acquisition
+  const now = Date.now();
+
+  // Initial acquire
   if (activeTouchId === null && e.touches.length === 1) {
     activeTouchId = e.touches[0].identifier;
     awaitingReplacement = false;
-
-    infoBlob.activeTouchId = activeTouchId;
-    infoBlob.awaitingReplacement = false;
-    record("acquire");
-
+    lastTapTime = now;
     return;
   }
 
-  // Replacement only when explicitly awaiting
+  // Replacement
   if (awaitingReplacement && e.touches.length === 2) {
     for (const t of e.touches) {
       if (t.identifier !== activeTouchId) {
+
+        // timing interval
+        if (lastTapTime !== null) {
+          let dt = now - lastTapTime;
+          intervals.push(dt);
+
+          if (intervals.length > MAX_BUFFER) {
+            intervals.shift();
+          }
+        }
+
+        lastTapTime = now;
+
+        // evaluate state
+        const estimate = updateEstimate();
+
+        if (estimate > threshold) {
+          collapse();
+          return;
+        }
+
+        // switch touch
         activeTouchId = t.identifier;
         awaitingReplacement = false;
-
-        infoBlob.activeTouchId = activeTouchId;
-        infoBlob.awaitingReplacement = false;
-        record("replace");
-
         break;
       }
     }
   }
 }, { passive: false });
-
-document.addEventListener('touchmove', kill, { passive: false });
 
 document.addEventListener('touchend', e => {
   kill(e);
@@ -125,26 +155,19 @@ document.addEventListener('touchend', e => {
   for (const t of e.changedTouches) {
     if (t.identifier === activeTouchId) {
       awaitingReplacement = true;
-
-      infoBlob.awaitingReplacement = true;
-      record("release");
-
       return;
     }
   }
 }, { passive: false });
 
+document.addEventListener('touchmove', kill, { passive: false });
+
 document.addEventListener('touchcancel', e => {
   kill(e);
-
-  activeTouchId = null;
-  awaitingReplacement = false;
-
-  infoBlob.activeTouchId = null;
-  infoBlob.awaitingReplacement = false;
-  record("cancel");
+  collapse();
 }, { passive: false });
 
 </script>
+
 </body>
 </html>
