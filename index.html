@@ -30,147 +30,78 @@ html, body {
 <body>
 
 <script>
-/*
-FINAL SYSTEM:
-
-- EXACTLY ONE touch (original constraint)
-- NO 0-state
-- NO targets, no thresholds
-- STATE = your own recent behavior
-- COLLAPSE = deviation from your own stability
-*/
-
-/* =========================
-   CORE STATE
-========================= */
-
-let activeTouchId = null;
-let awaitingReplacement = false;
-
-/* =========================
-   SELF-REFERENTIAL STATE
-========================= */
-
 let intervals = [];
 let lastTapTime = null;
 
 const MAX_BUFFER = 20;
+const MIN_VARIANCE = 4;
 
-/*
-  Compute deviation from your own pattern
-*/
-function computeDeviation() {
-  if (intervals.length < 5) return 0;
+function computeStats() {
+  if (intervals.length < 5) return null;
 
   let mean = intervals.reduce((a,b)=>a+b,0) / intervals.length;
 
   let variance = intervals.reduce((a,b)=>a + (b-mean)*(b-mean), 0) / intervals.length;
 
-  return variance;
+  variance = Math.max(variance, MIN_VARIANCE);
+
+  return { mean, variance };
 }
 
-/*
-  Collapse condition:
-  Compare newest interval vs recent stability
-*/
 function shouldCollapse(newInterval) {
-  if (intervals.length < 5) return false;
+  const stats = computeStats();
+  if (!stats) return false;
 
-  let mean = intervals.reduce((a,b)=>a+b,0) / intervals.length;
+  let deviation = Math.abs(newInterval - stats.mean);
 
-  let variance = computeDeviation();
-
-  let deviation = Math.abs(newInterval - mean);
-
-  // collapse if deviation exceeds natural variance scale
-  return deviation > (2 * Math.sqrt(variance));
+  return deviation > (2 * Math.sqrt(stats.variance));
 }
-
-/* =========================
-   COLLAPSE
-========================= */
 
 function collapse() {
-  activeTouchId = null;
-  awaitingReplacement = false;
-  intervals = [];
+  intervals = intervals.slice(-5);
   lastTapTime = null;
 
-  // minimal feedback (flash)
   document.body.style.background = "#111";
   setTimeout(() => {
     document.body.style.background = "#000";
   }, 40);
 }
 
-/* =========================
-   TOUCH LOGIC (UNCHANGED)
-========================= */
-
 function kill(e) {
   e.preventDefault();
 }
 
-document.addEventListener('touchstart', e => {
-  kill(e);
-
-  const now = Date.now();
-
-  // Initial acquire
-  if (activeTouchId === null && e.touches.length === 1) {
-    activeTouchId = e.touches[0].identifier;
-    awaitingReplacement = false;
-    lastTapTime = now;
-    return;
-  }
-
-  // Replacement
-  if (awaitingReplacement && e.touches.length === 2) {
-    for (const t of e.touches) {
-      if (t.identifier !== activeTouchId) {
-
-        if (lastTapTime !== null) {
-          let dt = now - lastTapTime;
-
-          if (shouldCollapse(dt)) {
-            collapse();
-            return;
-          }
-
-          intervals.push(dt);
-          if (intervals.length > MAX_BUFFER) {
-            intervals.shift();
-          }
-        }
-
-        lastTapTime = now;
-
-        activeTouchId = t.identifier;
-        awaitingReplacement = false;
-        break;
-      }
-    }
-  }
-}, { passive: false });
+document.addEventListener('touchstart', kill, { passive: false });
 
 document.addEventListener('touchend', e => {
   kill(e);
 
-  for (const t of e.changedTouches) {
-    if (t.identifier === activeTouchId) {
-      awaitingReplacement = true;
+  if (e.changedTouches.length !== 1) return;
+
+  const now = performance.now();
+
+  if (lastTapTime !== null) {
+    const dt = now - lastTapTime;
+
+    if (shouldCollapse(dt)) {
+      collapse();
       return;
     }
+
+    intervals.push(dt);
+    if (intervals.length > MAX_BUFFER) intervals.shift();
   }
+
+  lastTapTime = now;
+
 }, { passive: false });
 
 document.addEventListener('touchmove', kill, { passive: false });
 
 document.addEventListener('touchcancel', e => {
   kill(e);
-  collapse();
+  lastTapTime = null;
 }, { passive: false });
-
 </script>
 
 </body>
