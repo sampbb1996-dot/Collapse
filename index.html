@@ -47,7 +47,19 @@ let lastTapTime = null;
 let lastTime   = performance.now();
 
 const scoreEl = document.getElementById('score');
-function render() { scoreEl.textContent = state.toFixed(4); }
+function render() {
+  scoreEl.textContent = state.toFixed(4);
+
+  const x = Math.max(-1, Math.min(1, state));
+
+  if (x > 0) {
+    scoreEl.style.color = 'rgb(0, 255, 0)';
+  } else if (x < 0) {
+    scoreEl.style.color = 'rgb(255, 0, 0)';
+  } else {
+    scoreEl.style.color = 'rgb(120, 180, 255)';
+  }
+}
 
 function onTap() {
   const now = performance.now();
@@ -88,12 +100,13 @@ function onTap() {
 
   // Stability-of-change: EMA of tap-to-tap movement in raw
   // Rewards consistent drift direction, not static value
-  const delta = Math.abs(raw - prevRaw);
-  drift = (1 - ALPHA) * drift + ALPHA * delta;
-  const stabilityWeight = 1 / (1 + drift / (ALPHA + delta));
+  drift = (1 - ALPHA) * drift + ALPHA * Math.abs(raw - prevRaw);
+  const stabilityWeight = 1 / (1 + drift);
 
   // Continuous state update — no gate, no threshold, weighted by stability of change
-  state += (raw - instability) * stabilityWeight * (1 - Math.abs(raw - prevRaw));
+  const instabilityWeight = 1 / (1 + instability);
+  const direction = raw - prevRaw;
+  state += direction * stabilityWeight * instabilityWeight;
 
   prevRaw = raw;
   render();
