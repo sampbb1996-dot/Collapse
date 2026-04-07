@@ -1,145 +1,56 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <style>html, body { background: #000 !important; }</style>
-  <script>document.documentElement.style.background = "#000";</script>
-
-  <meta charset="UTF-8" />
-  <meta name="color-scheme" content="dark" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="theme-color" content="#000000" />
-
-  <title>Tap Surface</title>
-
-  <style>
-    *, *::before, *::after {
-      -webkit-tap-highlight-color: transparent !important;
-      -webkit-touch-callout: none !important;
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    html, body {
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: #000 !important;
-      touch-action: none;
-      user-select: none;
-      -webkit-user-select: none;
-    }
-
-    #surface {
-      position: fixed;
-      inset: 0;
-      background: #000;
-    }
-
-    #score {
-      position: fixed;
-      top: 10px;
-      right: 10px;
-      color: #0f0;
-      font-family: monospace;
-      font-size: 18px;
-      pointer-events: none;
-      z-index: 10;
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="viewport"
+  content="width=device-width,
+           height=device-height,
+           initial-scale=1.0,
+           maximum-scale=1.0,
+           user-scalable=no">
+<style>
+html, body, * { -webkit-tap-highlight-color: transparent !important; }
+html, body { margin:0; padding:0; width:100%; height:100%; background:#000; overflow:hidden; -webkit-user-select:none; user-select:none; }
+body { -webkit-touch-callout:none; touch-action:none; }
+</style>
 </head>
-
 <body>
-  <div id="surface"></div>
-  <div id="score">0.00</div>
+<script>
+document.body.style.webkitTapHighlightColor = 'transparent';
 
-  <script>
-    (function () {
-      var surface = document.getElementById("surface");
-      var scoreEl = document.getElementById("score");
+const ALPHA = 0.2;
+const K = 2;
+const MIN_VARIANCE = 4;
 
-      var lastTap = null;
-      var mean = null;
-      var variance = 0;
+let mean = 0;
+let variance = MIN_VARIANCE;
+let initialized = false;
+let lastTapTime = null;
 
-      var score = 0;
-      var showScore = true;
+function onTap() {
+  const now = performance.now();
+  if (lastTapTime === null) { lastTapTime = now; return; }
+  const dt = now - lastTapTime;
+  if (!initialized) { mean = dt; initialized = true; lastTapTime = now; return; }
+  const prevMean = mean;
+  const prevVariance = variance;
+  if (Math.abs(dt - prevMean) > K * Math.sqrt(prevVariance)) {
+    lastTapTime = null;
+    return;
+  }
+  mean += ALPHA * (dt - prevMean);
+  variance = (1 - ALPHA) * (variance + ALPHA * (dt - prevMean) * (dt - prevMean));
+  variance = Math.max(variance, MIN_VARIANCE);
+  lastTapTime = now;
+}
 
-      var ALPHA = 0.2;
-      var MIN_VARIANCE = 10;
-      var SCALE = 100;
-      var TOGGLE_SIZE = 80;
-
-      function renderScore() {
-        scoreEl.style.display = showScore ? "block" : "none";
-        scoreEl.textContent = score.toFixed(2);
-      }
-
-      function updateState(dt) {
-        if (mean === null) {
-          mean = dt;
-          variance = 0;
-          return;
-        }
-        var diff = dt - mean;
-        mean += ALPHA * diff;
-        variance = (1 - ALPHA) * (variance + ALPHA * diff * diff);
-      }
-
-      function shouldCollapse(dt) {
-        if (mean === null) return false;
-        var dev = Math.abs(dt - mean);
-        var v = Math.max(variance, MIN_VARIANCE);
-        var pressure = 1 / v;
-        var threshold = Math.sqrt(v) * (2 - Math.min(pressure * 0.05, 1));
-        return dev > threshold;
-      }
-
-      function collapse() {
-        score -= Math.min(score * 0.15, 20);
-        if (score < 0) score = 0;
-        mean = null;
-        variance = 0;
-        lastTap = null;
-      }
-
-      surface.addEventListener("pointerdown", function (e) {
-        e.preventDefault();
-
-        var x = e.clientX;
-        var y = e.clientY;
-
-        if (x < TOGGLE_SIZE && y < TOGGLE_SIZE) {
-          showScore = !showScore;
-          renderScore();
-          return;
-        }
-
-        var now = performance.now();
-
-        if (lastTap !== null) {
-          var dt = now - lastTap;
-
-          if (shouldCollapse(dt)) {
-            collapse();
-            renderScore();
-            return;
-          }
-
-          updateState(dt);
-
-          var dtSec = dt / 1000;
-          var pressure = 1 / Math.max(variance, MIN_VARIANCE);
-          score += Math.sqrt(pressure) * dtSec * SCALE;
-        }
-
-        lastTap = now;
-        renderScore();
-      }, { passive: false });
-
-      renderScore();
-    })();
-  </script>
+function kill(e) { e.preventDefault(); }
+document.addEventListener('touchstart',  kill, { passive: false });
+document.addEventListener('touchmove',   kill, { passive: false });
+document.addEventListener('touchend', e => { kill(e); if (e.changedTouches.length !== 1) return; onTap(); }, { passive: false });
+document.addEventListener('touchcancel', e => { kill(e); lastTapTime = null; }, { passive: false });
+document.addEventListener('pointerup', e => { if (e.pointerType === 'touch') return; onTap(); });
+</script>
 </body>
 </html>
