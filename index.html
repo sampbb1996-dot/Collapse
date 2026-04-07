@@ -1,10 +1,13 @@
 <!DOCTYPE html>
-<html lang="en" style="background:#000;height:100%;overflow:hidden">
+<html lang="en">
 <head>
+  <script>document.documentElement.style.cssText="background:#000;height:100%;overflow:hidden";</script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
   <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#000000" />
   <title>Tap Surface</title>
   <style>
     *, *::before, *::after {
@@ -31,10 +34,11 @@
       user-select: none;
       -webkit-user-select: none;
       cursor: default;
+      will-change: transform;
     }
   </style>
 </head>
-<body style="background:#000">
+<body bgcolor="#000000" style="background:#000">
   <div id="surface"></div>
 
   <script>
@@ -102,7 +106,6 @@
       surface.addEventListener("touchend", prevent, { passive: false, capture: true });
       surface.addEventListener("touchcancel", prevent, { passive: false, capture: true });
 
-      // Block any touch on document level too
       document.addEventListener("touchstart", prevent, { passive: false, capture: true });
       document.addEventListener("touchmove", prevent, { passive: false, capture: true });
     })();
