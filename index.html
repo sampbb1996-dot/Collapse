@@ -28,6 +28,8 @@ body { -webkit-touch-callout:none; touch-action:none; }
   color: rgba(255,255,255,0.6);
   font: 32px monospace;
   pointer-events: none;
+  white-space: pre;
+  text-align: center;
 }
 </style>
 </head>
@@ -46,22 +48,18 @@ let prevRaw    = 0;
 let drift      = 0;   // EMA of tap-to-tap raw change — rewards stability of change
 let state      = 0;
 let score      = 0;   // all-time improvement accumulator with continuous decay
+let perfScore  = 0;   // time-weighted magnitude: integral of |state| with decay
 let lastTapTime = null;
 let lastTime   = performance.now();
 
 const scoreEl = document.getElementById('score');
 function render() {
-  scoreEl.textContent = state.toFixed(4);
+  scoreEl.textContent = Math.round(perfScore * 10000).toString().padStart(5, '0');
 
-  const x = Math.max(-1, Math.min(1, state));
-  const t = (x + 1) / 2;
+  const m = Math.min(1, Math.abs(state));
 
-  const centered = (t - 0.5) * 2;
-  const amplified = Math.sign(centered) * Math.pow(Math.abs(centered), 0.35);
-  const tt = (amplified + 1) / 2;
-
-  const r = Math.round(40 + 180 * tt);
-  const g = Math.round(100 - 80 * tt);
+  const r = Math.round(60 + 160 * m);
+  const g = Math.round(80 - 60 * m);
   const b = 255;
 
   document.body.style.background = `rgb(${r}, ${g}, ${b})`;
@@ -130,8 +128,10 @@ function tick() {
 
   // Decay rate: instability-derived, with ALPHA as minimum floor so decay is always visible
   const decayRate = ALPHA + instability / (1 + instability);
-  state *= Math.exp(-decayRate * dt);
-  score *= Math.exp(-decayRate * dt);
+  state     *= Math.exp(-decayRate * dt);
+  score     *= Math.exp(-decayRate * dt);
+  perfScore += Math.abs(state) * dt;
+  perfScore *= Math.exp(-decayRate * dt);
 
   render();
   requestAnimationFrame(tick);
