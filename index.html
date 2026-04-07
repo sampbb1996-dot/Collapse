@@ -49,6 +49,7 @@ let drift      = 0;   // EMA of tap-to-tap raw change — rewards stability of c
 let state      = 0;
 let score      = 0;   // all-time improvement accumulator with continuous decay
 let perfScore  = 0;   // time-weighted magnitude: integral of |state| with decay
+let idleTime   = 0;   // seconds since last tap
 let lastTapTime = null;
 let lastTime   = performance.now();
 
@@ -117,6 +118,7 @@ function onTap() {
   const improvement = Math.max(0, raw - prevRaw);
   score += improvement;
 
+  idleTime = 0;
   prevRaw = raw;
   render();
 }
@@ -127,10 +129,12 @@ function tick() {
   lastTime = now;
 
   // Decay rate: instability-derived, with ALPHA as minimum floor so decay is always visible
+  idleTime += dt;
   const decayRate = ALPHA + instability / (1 + instability);
   state     *= Math.exp(-decayRate * dt);
   score     *= Math.exp(-decayRate * dt);
-  perfScore += Math.abs(state) * dt;
+  const idlePenalty = 1 / (1 + idleTime * 2);
+  perfScore += Math.abs(state) * dt * idlePenalty;
   perfScore *= Math.exp(-decayRate * dt);
 
   render();
