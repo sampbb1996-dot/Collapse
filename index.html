@@ -12,182 +12,147 @@
 <style>
 html, body, * { -webkit-tap-highlight-color: transparent !important; }
 html, body {
-  margin:0; padding:0;
-  width:100%; height:100%;
-  background: rgb(130, 60, 255);
-  overflow:hidden;
-  -webkit-user-select:none;
-  user-select:none;
+  margin: 0; padding: 0;
+  width: 100%; height: 100%;
+  background: #000;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
 }
-body { -webkit-touch-callout:none; touch-action:none; }
-#score {
+body { -webkit-touch-callout: none; touch-action: none; }
+#result {
   position: fixed;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  color: rgba(255,255,255,0.6);
-  font: 32px monospace;
-  pointer-events: none;
-  white-space: pre;
-  text-align: center;
-}
-#indicator {
-  position: fixed;
-  top: 12px;
-  left: 12px;
-  width: 72px;
-  height: 28px;
-  border-radius: 6px;
-  pointer-events: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font: bold 12px monospace;
   color: #fff;
-  background: rgb(255, 0, 0);
-  z-index: 9999;
+  font: bold 72px monospace;
+  pointer-events: none;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.08s ease-in;
+  white-space: pre;
+}
+#result.show {
+  opacity: 1;
+  transition: opacity 0.08s ease-in;
+}
+#result.fade {
+  opacity: 0;
+  transition: opacity 0.4s ease-out;
 }
 </style>
 </head>
 <body>
-<div id="score">0.0000</div>
-<div id="indicator"></div>
+<div id="result"></div>
 <script>
 document.body.style.webkitTapHighlightColor = 'transparent';
 
-const ALPHA = 0.2;
+let hidden = 0;
+let tapBest = 0;
 
-let mean         = 0;
-let variance     = 0;
-let instability  = 0;
-let prevRaw      = 0;
-let drift        = 0;
-let state        = 0;
-let score        = 0;
-let perfScore    = 0;
-let idleTime     = 0;
-let displayScore = 0;
-let lastTapTime  = null;
-let lastTime     = performance.now();
-let skill        = 0;
-let lifetimeSkill = 0;
-try { lifetimeSkill = parseFloat(localStorage.getItem('skill')) || 0; } catch(e) {}
+let best   = parseInt(localStorage.getItem('best'))   || 0;
+let streak = parseInt(localStorage.getItem('streak')) || 0;
 
-const scoreEl = document.getElementById('score');
-const indicatorEl = document.getElementById('indicator');
+function save() {
+  localStorage.setItem('best', best);
+  localStorage.setItem('streak', streak);
+}
 
-function render() {
-  const velocity = Math.abs(perfScore - displayScore);
-  const k = 0.05 + Math.min(0.4, velocity * 10);
-  displayScore += (perfScore - displayScore) * k;
+function updateStreak(success) {
+  if (success) {
+    streak += 1;
+    if (streak > best) best = streak;
+  } else {
+    streak = 0;
+  }
+  save();
+}
 
-  const value = Math.round(Math.exp(-2 * Math.abs(state)) * 1000000);
-  scoreEl.textContent = value.toString().padStart(7, '0');
+const resultEl = document.getElementById('result');
+let fadeTimer     = null;
+let longPressTimer = null;
+let longPressFired = false;
 
-  const m = Math.min(1, Math.abs(state));
-  const r = Math.round(60 + 160 * m);
-  const g = Math.round(80 - 60 * m);
-  document.body.style.background = `rgb(${r}, ${g}, 255)`;
-  scoreEl.style.color = 'rgba(255,255,255,0.6)';
+function showText(text, duration) {
+  if (fadeTimer) clearTimeout(fadeTimer);
+  resultEl.classList.remove('fade');
+  resultEl.textContent = text;
+  void resultEl.offsetWidth;
+  resultEl.classList.add('show');
+  fadeTimer = setTimeout(() => {
+    resultEl.classList.remove('show');
+    resultEl.classList.add('fade');
+  }, duration);
+}
+
+function showResult(value) {
+  showText(value.toString().padStart(7, '0'), 400);
+}
+
+function showStats() {
+  showText('BEST: ' + best + '\nSTREAK: ' + streak, 1200);
 }
 
 function onTap() {
-  const now = performance.now();
+  const alignment = 1 - Math.abs(hidden);
+  const score = Math.exp(-6 * (1 - alignment));
 
-  if (lastTapTime === null) {
-    lastTapTime = now;
-    return;
-  }
+  const success = score >= tapBest;
+  tapBest = success ? score : 0;
+  updateStreak(success);
 
-  const dt = now - lastTapTime;
-  lastTapTime = now;
-
-  if (dt <= 0) return;
-
-  const prevMean = mean > 0 ? mean : dt;
-  mean = prevMean + ALPHA * (dt - prevMean);
-  const err = dt - prevMean;
-  variance = (1 - ALPHA) * (variance + ALPHA * err * err);
-
-  const std = Math.sqrt(variance + 1);
-  const cv = std / (std + Math.abs(mean) + 1);
-  const coherence = 4 * cv * (1 - cv) * (1 - prevRaw);
-
-  instability = (1 - ALPHA) * instability + ALPHA * (Math.abs(err) / (std + 1));
-
-  const penalty = 1 / (1 + instability);
-  const raw = coherence * penalty;
-
-  drift = (1 - ALPHA) * drift + ALPHA * Math.abs(raw - prevRaw);
-  const stabilityWeight = 1 / (1 + drift);
-
-  const instabilityWeight = 1 / (1 + instability);
-  const direction = raw - prevRaw;
-  const m = Math.abs(state);
-  const gainScale = Math.exp(-5 * m);
-  const towardZero = Math.abs(state + direction) < Math.abs(state);
-  const asymmetry = towardZero ? gainScale : 1;
-  state += direction * stabilityWeight * instabilityWeight * asymmetry;
-
-  score += Math.max(0, raw - prevRaw);
-
-  idleTime = 0;
-  prevRaw = raw;
-  render();
+  showResult(Math.round(score * 1000000));
 }
 
-function tick() {
-  const now = performance.now();
-  const dt = (now - lastTime) / 1000;
-  lastTime = now;
+function startLongPress() {
+  longPressFired = false;
+  longPressTimer = setTimeout(() => {
+    longPressFired = true;
+    showStats();
+  }, 800);
+}
 
-  idleTime += dt;
-
-  const s = Math.abs(state);
-  const grad = Math.exp(-s) * (1 - s);
-  const dir = state === 0 ? 1 : Math.sign(state);
-  state += dir * grad * dt;
-
-  const m = Math.min(1, Math.abs(state));
-  const decayRate = (ALPHA + instability / (1 + instability)) * (1 + 4 * m * m);
-  score *= Math.exp(-decayRate * dt);
-
-  const idlePenalty = 1 / (1 + idleTime * 2);
-  const continuity = 1 / (1 + drift + instability);
-  const band = Math.abs(state) * Math.exp(-Math.abs(state));
-
-  perfScore = band * idlePenalty * continuity;
-
-  skill += 0.001 * (perfScore - skill);
-  lifetimeSkill += 0.0001 * (perfScore - lifetimeSkill);
-
-  if (!window._lastSave || now - window._lastSave > 1000) {
-    try { localStorage.setItem('skill', lifetimeSkill); } catch(e) {}
-    window._lastSave = now;
+function endLongPress(doTap) {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
   }
-
-  const t = skill;
-  const ir = Math.round(255 * (1 - t));
-  const ig = Math.round(255 * t);
-  indicatorEl.style.background = `rgb(${ir}, ${ig}, 0)`;
-  indicatorEl.textContent = Math.round(skill * 100) + '|' + Math.round(lifetimeSkill * 100);
-
-  render();
-  requestAnimationFrame(tick);
+  if (!longPressFired && doTap) onTap();
+  longPressFired = false;
 }
 
 function kill(e) { e.preventDefault(); }
 
-document.addEventListener('touchstart', kill, { passive: false });
+document.addEventListener('touchstart', e => {
+  kill(e);
+  if (e.touches.length === 1) startLongPress();
+}, { passive: false });
 document.addEventListener('touchmove', kill, { passive: false });
 document.addEventListener('touchend', e => {
   kill(e);
-  if (e.changedTouches.length === 1) onTap();
+  if (e.changedTouches.length === 1) endLongPress(true);
 }, { passive: false });
-document.addEventListener('touchcancel', kill, { passive: false });
-document.addEventListener('pointerup', e => {
-  if (e.pointerType !== 'touch') onTap();
+document.addEventListener('touchcancel', e => {
+  kill(e);
+  endLongPress(false);
+}, { passive: false });
+
+document.addEventListener('pointerdown', e => {
+  if (e.pointerType !== 'touch') startLongPress();
 });
+document.addEventListener('pointerup', e => {
+  if (e.pointerType !== 'touch') endLongPress(true);
+});
+document.addEventListener('pointercancel', e => {
+  if (e.pointerType !== 'touch') endLongPress(false);
+});
+
+function tick() {
+  const now = performance.now();
+  hidden = Math.sin(now * 0.001);
+  requestAnimationFrame(tick);
+}
 
 tick();
 </script>
