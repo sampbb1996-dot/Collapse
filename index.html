@@ -74,6 +74,8 @@
       var MIN_VARIANCE = 1;
       var TOGGLE_SIZE = 80;
 
+      var lastTime = performance.now();
+
       function renderScore() {
         scoreEl.style.display = showScore ? "block" : "none";
         scoreEl.textContent = score.toFixed(2);
@@ -96,13 +98,6 @@
         return 1 / v;
       }
 
-      function updateScore() {
-        var p = getPressure();
-
-        // smooth growth
-        score += Math.sqrt(p) * 12;
-      }
-
       function shouldCollapse(dt) {
         if (mean === null) return false;
 
@@ -115,7 +110,6 @@
       }
 
       function collapse() {
-        // 🔥 FIXED: controlled penalty instead of 50% cut
         var penalty = Math.min(score * 0.15, 20);
         score -= penalty;
 
@@ -124,8 +118,6 @@
         mean = null;
         variance = 0;
         lastTap = null;
-
-        renderScore();
       }
 
       function handleInput(e) {
@@ -134,7 +126,7 @@
         var x = e.clientX;
         var y = e.clientY;
 
-        // toggle
+        // toggle zone
         if (x < TOGGLE_SIZE && y < TOGGLE_SIZE) {
           showScore = !showScore;
           renderScore();
@@ -152,16 +144,31 @@
           }
 
           updateState(dt);
-          updateScore();
         }
 
         lastTap = now;
+      }
+
+      // 🔥 TRUE TIME-BASED SCORING LOOP
+      function tick() {
+        var now = performance.now();
+        var dt = (now - lastTime) / 1000;
+        lastTime = now;
+
+        var p = getPressure();
+
+        // score grows continuously with stability
+        score += Math.sqrt(p) * dt * 100;
+
         renderScore();
+        requestAnimationFrame(tick);
       }
 
       renderScore();
+      tick();
 
       surface.addEventListener("pointerdown", handleInput, { passive: false });
+
     })();
   </script>
 </body>
