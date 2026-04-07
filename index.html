@@ -25,9 +25,7 @@
 
   <title>Tap Surface</title>
   <style>
-    :root {
-      color-scheme: dark;
-    }
+    :root { color-scheme: dark; }
     *, *::before, *::after {
       -webkit-tap-highlight-color: rgba(0,0,0,0) !important;
       -webkit-touch-callout: none !important;
@@ -60,6 +58,13 @@
   <div id="surface"></div>
 
   <script>
+    // Register service worker so all subsequent launches are served from
+    // cache instantly — this eliminates the white WebView background that
+    // appears while waiting for a network response.
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+
     (function () {
       var surface = document.getElementById("surface");
 
