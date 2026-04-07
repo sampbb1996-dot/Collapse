@@ -99,8 +99,8 @@
       function updateScore() {
         var p = getPressure();
 
-        // 🔥 SMOOTH + NON-LINEAR (fixes stepping)
-        score += Math.sqrt(p) * 15;
+        // smooth growth
+        score += Math.sqrt(p) * 12;
       }
 
       function shouldCollapse(dt) {
@@ -115,10 +115,16 @@
       }
 
       function collapse() {
-        score *= 0.5; // keep memory but punish instability
+        // 🔥 FIXED: controlled penalty instead of 50% cut
+        var penalty = Math.min(score * 0.15, 20);
+        score -= penalty;
+
+        if (score < 0) score = 0;
+
         mean = null;
         variance = 0;
         lastTap = null;
+
         renderScore();
       }
 
@@ -128,7 +134,7 @@
         var x = e.clientX;
         var y = e.clientY;
 
-        // toggle zone
+        // toggle
         if (x < TOGGLE_SIZE && y < TOGGLE_SIZE) {
           showScore = !showScore;
           renderScore();
