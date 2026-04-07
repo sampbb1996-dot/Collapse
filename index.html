@@ -1,18 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <script>document.documentElement.style.cssText="background:#000;height:100%;overflow:hidden";</script>
   <meta charset="UTF-8" />
+  <meta name="color-scheme" content="dark" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Tap Surface" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#000000" />
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="icon-192.png" />
 
-  <!-- iOS splash screens — one per device so there's no white frame on launch -->
+  <!-- iOS splash screens -->
   <link rel="apple-touch-startup-image" media="screen and (device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)"  href="splash-640x1136.png" />
   <link rel="apple-touch-startup-image" media="screen and (device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)"  href="splash-750x1334.png" />
   <link rel="apple-touch-startup-image" media="screen and (device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"  href="splash-1125x2436.png" />
@@ -25,6 +25,9 @@
 
   <title>Tap Surface</title>
   <style>
+    :root {
+      color-scheme: dark;
+    }
     *, *::before, *::after {
       -webkit-tap-highlight-color: rgba(0,0,0,0) !important;
       -webkit-touch-callout: none !important;
@@ -53,7 +56,7 @@
     }
   </style>
 </head>
-<body bgcolor="#000000" style="background:#000">
+<body bgcolor="#000000" style="background:#000;color-scheme:dark">
   <div id="surface"></div>
 
   <script>
