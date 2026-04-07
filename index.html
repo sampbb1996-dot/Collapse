@@ -1,12 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <style>
-    html, body { background:#000 !important; }
-  </style>
-  <script>
-    document.documentElement.style.background = "#000";
-  </script>
+  <style>html, body { background: #000 !important; }</style>
+  <script>document.documentElement.style.background = "#000";</script>
 
   <meta charset="UTF-8" />
   <meta name="color-scheme" content="dark" />
@@ -71,10 +67,9 @@
       var showScore = true;
 
       var ALPHA = 0.2;
-      var MIN_VARIANCE = 1;
+      var MIN_VARIANCE = 10;
+      var SCALE = 100;
       var TOGGLE_SIZE = 80;
-
-      var lastTime = performance.now();
 
       function renderScore() {
         scoreEl.style.display = showScore ? "block" : "none";
@@ -87,46 +82,34 @@
           variance = 0;
           return;
         }
-
         var diff = dt - mean;
         mean += ALPHA * diff;
         variance = (1 - ALPHA) * (variance + ALPHA * diff * diff);
       }
 
-      function getPressure() {
-        var v = Math.max(variance, MIN_VARIANCE);
-        return 1 / v;
-      }
-
       function shouldCollapse(dt) {
         if (mean === null) return false;
-
         var dev = Math.abs(dt - mean);
         var v = Math.max(variance, MIN_VARIANCE);
-        var p = 1 / v;
-
-        var threshold = Math.sqrt(v) * (2 - Math.min(p * 0.01, 1));
+        var pressure = 1 / v;
+        var threshold = Math.sqrt(v) * (2 - Math.min(pressure * 0.05, 1));
         return dev > threshold;
       }
 
       function collapse() {
-        var penalty = Math.min(score * 0.15, 20);
-        score -= penalty;
-
+        score -= Math.min(score * 0.15, 20);
         if (score < 0) score = 0;
-
         mean = null;
         variance = 0;
         lastTap = null;
       }
 
-      function handleInput(e) {
+      surface.addEventListener("pointerdown", function (e) {
         e.preventDefault();
 
         var x = e.clientX;
         var y = e.clientY;
 
-        // toggle zone
         if (x < TOGGLE_SIZE && y < TOGGLE_SIZE) {
           showScore = !showScore;
           renderScore();
@@ -140,35 +123,22 @@
 
           if (shouldCollapse(dt)) {
             collapse();
+            renderScore();
             return;
           }
 
           updateState(dt);
+
+          var dtSec = dt / 1000;
+          var pressure = 1 / Math.max(variance, MIN_VARIANCE);
+          score += Math.sqrt(pressure) * dtSec * SCALE;
         }
 
         lastTap = now;
-      }
-
-      // 🔥 TRUE TIME-BASED SCORING LOOP
-      function tick() {
-        var now = performance.now();
-        var dt = (now - lastTime) / 1000;
-        lastTime = now;
-
-        var p = getPressure();
-
-        // score grows continuously with stability
-        score += Math.sqrt(p) * dt * 100;
-
         renderScore();
-        requestAnimationFrame(tick);
-      }
+      }, { passive: false });
 
       renderScore();
-      tick();
-
-      surface.addEventListener("pointerdown", handleInput, { passive: false });
-
     })();
   </script>
 </body>
