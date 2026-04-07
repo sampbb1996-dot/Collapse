@@ -11,56 +11,89 @@
 <title>tap</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { width:100%; height:100%; background:#000; overflow:hidden; -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; }
-body { -webkit-touch-callout:none; touch-action:none; }
-#score { position:fixed; top:20px; right:20px; color:#00ff00; font-family:monospace; font-size:24px; font-weight:bold; pointer-events:none; }
+html, body { width: 100%; height: 100%; background: #000; overflow: hidden; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+body { -webkit-touch-callout: none; touch-action: none; }
+#score { position: fixed; top: 20px; right: 20px; color: #00ff00; font-family: monospace; font-size: 24px; font-weight: bold; pointer-events: none; }
 </style>
 </head>
 <body>
 <div id="score">0.0000</div>
 <script>
 const BUFFER_SIZE = 24;
+const TOGGLE_ZONE = 60;
+const COLLAPSE_EXIT_REQUIRED = 8;
+const K = 8;
+const P = 3;
+
 let history = [];
 let lastTapTime = null;
+let collapseFlag = false;
+let stableCount = 0;
+let showScore = true;
 
 function computePRIM(history) {
   const dts = history.map(h => h.dt).filter(dt => dt > 0);
-  if (dts.length < 4) return 0;
+  if (dts.length < 4) return { score: 0, extremeFailure: false, stable: false };
   const n = dts.length;
   const mean = dts.reduce((a, b) => a + b, 0) / n;
-  if (mean === 0) return 0;
+  if (mean === 0) return { score: 0, extremeFailure: false, stable: false };
   const variance = dts.reduce((a, b) => a + (b - mean) ** 2, 0) / n;
   const cv = Math.sqrt(variance) / mean;
   let liSum = 0;
-  for (let i = 1; i < n; i++) liSum += Math.abs(dts[i] - dts[i-1]);
-  const localInstability = (liSum / (n-1)) / mean;
+  for (let i = 1; i < n; i++) liSum += Math.abs(dts[i] - dts[i - 1]);
+  const jerk = (liSum / (n - 1)) / mean;
   let repCount = 0;
-  const pairs = n * (n-1) / 2;
+  const pairs = n * (n - 1) / 2;
   for (let i = 0; i < n; i++)
-    for (let j = i+1; j < n; j++)
+    for (let j = i + 1; j < n; j++)
       if (Math.abs(dts[i] - dts[j]) / mean < 0.1) repCount++;
   const repetition = repCount / pairs;
   const burstiness = dts.filter(dt => dt < 0.4 * mean).length / n;
   const xs = history.map(h => h.x), ys = history.map(h => h.y);
-  const xm = xs.reduce((a,b)=>a+b,0)/xs.length, ym = ys.reduce((a,b)=>a+b,0)/ys.length;
-  const spatialVar = xs.reduce((a,b)=>a+(b-xm)**2,0)/xs.length + ys.reduce((a,b)=>a+(b-ym)**2,0)/ys.length;
+  const xm = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const ym = ys.reduce((a, b) => a + b, 0) / ys.length;
+  const spatialVar =
+    xs.reduce((a, b) => a + (b - xm) ** 2, 0) / xs.length +
+    ys.reduce((a, b) => a + (b - ym) ** 2, 0) / ys.length;
   const spatialNorm = Math.min(spatialVar / 0.25, 1);
-  if (mean < 80 || mean > 4000 || cv > 1.2) return 0;
-  const coherence =
-    Math.exp(-(cv*cv)*3) *
-    Math.exp(-(localInstability*localInstability)*3) *
-    Math.exp(-(repetition*repetition)*8) *
-    Math.exp(-(burstiness*burstiness)*8) *
-    (0.7 + 0.3 * Math.min(spatialNorm * 4, 1));
-  return Math.min(Math.max(Math.exp(-Math.pow((1-coherence)*3, 2)), 0), 1);
+  const extremeFailure = mean < 80 || cv > 1.2 || burstiness > 0.5;
+  const stable = !extremeFailure && cv < 0.35 && burstiness < 0.08 && mean > 200 && jerk < 0.5;
+  const noisePenalty    = Math.exp(-(cv * cv) * 6);
+  const jerkPenalty     = Math.exp(-(jerk * jerk) * 6);
+  const rigidityPenalty = Math.exp(-(repetition * repetition) * 10);
+  const burstPenalty    = Math.exp(-(burstiness * burstiness) * 10);
+  const spatialPenalty  = 0.7 + 0.3 * Math.min(spatialNorm * 4, 1);
+  const coherence = noisePenalty * jerkPenalty * rigidityPenalty * burstPenalty * spatialPenalty;
+  let S = Math.exp(-Math.pow((1 - coherence) * K, P));
+  if (collapseFlag) S *= 0.2;
+  if (extremeFailure) S = Math.min(S, 0.04);
+  return { score: Math.min(Math.max(S, 0), 1), extremeFailure, stable };
 }
 
 function registerTap(clientX, clientY) {
   const now = performance.now();
+  if (clientX < TOGGLE_ZONE && clientY < TOGGLE_ZONE) {
+    showScore = !showScore;
+    document.getElementById('score').style.display = showScore ? 'block' : 'none';
+    lastTapTime = null;
+    return;
+  }
   if (lastTapTime !== null) {
     const dt = now - lastTapTime;
-    history = [...history, { dt, x: clientX/window.innerWidth, y: clientY/window.innerHeight }].slice(-BUFFER_SIZE);
-    document.getElementById('score').textContent = computePRIM(history).toFixed(4);
+    history = [...history, { dt, x: clientX / window.innerWidth, y: clientY / window.innerHeight }].slice(-BUFFER_SIZE);
+    const { score, extremeFailure, stable } = computePRIM(history);
+    if (extremeFailure) {
+      collapseFlag = true;
+      stableCount = 0;
+    } else if (collapseFlag) {
+      if (stable) {
+        stableCount++;
+        if (stableCount >= COLLAPSE_EXIT_REQUIRED) { collapseFlag = false; stableCount = 0; }
+      } else {
+        stableCount = 0;
+      }
+    }
+    if (showScore) document.getElementById('score').textContent = score.toFixed(4);
   }
   lastTapTime = now;
 }
