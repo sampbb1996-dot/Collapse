@@ -6,42 +6,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Tap Surface" />
-  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#000000" />
-  <link rel="manifest" href="manifest.json" />
-  <link rel="apple-touch-icon" href="icon-192.png" />
-
-  <!-- iOS splash screens -->
-  <link rel="apple-touch-startup-image" media="screen and (device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)"  href="splash-640x1136.png" />
-  <link rel="apple-touch-startup-image" media="screen and (device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)"  href="splash-750x1334.png" />
-  <link rel="apple-touch-startup-image" media="screen and (device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"  href="splash-1125x2436.png" />
-  <link rel="apple-touch-startup-image" media="screen and (device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)"  href="splash-828x1792.png" />
-  <link rel="apple-touch-startup-image" media="screen and (device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"  href="splash-1242x2688.png" />
-  <link rel="apple-touch-startup-image" media="screen and (device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"  href="splash-1170x2532.png" />
-  <link rel="apple-touch-startup-image" media="screen and (device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"  href="splash-1284x2778.png" />
-  <link rel="apple-touch-startup-image" media="screen and (device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"  href="splash-1179x2556.png" />
-  <link rel="apple-touch-startup-image" media="screen and (device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"  href="splash-1290x2796.png" />
 
   <title>Tap Surface</title>
+
   <style>
-    :root { color-scheme: dark; }
     *, *::before, *::after {
-      -webkit-tap-highlight-color: rgba(0,0,0,0) !important;
-      -webkit-touch-callout: none !important;
-      outline: none !important;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
       box-sizing: border-box;
       margin: 0;
       padding: 0;
     }
+
     html, body {
       width: 100%;
       height: 100%;
       overflow: hidden;
       background: #000;
       touch-action: none;
-      overscroll-behavior: none;
     }
+
     #surface {
       position: fixed;
       inset: 0;
@@ -49,22 +34,14 @@
       touch-action: none;
       user-select: none;
       -webkit-user-select: none;
-      cursor: default;
-      will-change: transform;
     }
   </style>
 </head>
-<body bgcolor="#000000" style="background:#000;color-scheme:dark">
+
+<body>
   <div id="surface"></div>
 
   <script>
-    // Register service worker so all subsequent launches are served from
-    // cache instantly — this eliminates the white WebView background that
-    // appears while waiting for a network response.
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js');
-    }
-
     (function () {
       var surface = document.getElementById("surface");
 
@@ -88,10 +65,13 @@
 
       function shouldCollapse(dt) {
         if (mean === null) return false;
+
         var dev = Math.abs(dt - mean);
         var v = Math.max(variance, MIN_VARIANCE);
+
         var pressure = 1 / v;
         var threshold = Math.sqrt(v) * (2 - Math.min(pressure * 0.01, 1));
+
         return dev > threshold;
       }
 
@@ -103,34 +83,26 @@
 
       function handleInput(e) {
         e.preventDefault();
-        e.stopPropagation();
 
         var now = performance.now();
 
         if (lastTap !== null) {
           var dt = now - lastTap;
+
           if (shouldCollapse(dt)) {
             collapse();
             return;
           }
+
           updateState(dt);
         }
 
         lastTap = now;
       }
 
-      function prevent(e) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
+      // ONLY listener (this is key)
+      surface.addEventListener("touchstart", handleInput, { passive: false });
 
-      surface.addEventListener("touchstart", handleInput, { passive: false, capture: true });
-      surface.addEventListener("touchmove", prevent, { passive: false, capture: true });
-      surface.addEventListener("touchend", prevent, { passive: false, capture: true });
-      surface.addEventListener("touchcancel", prevent, { passive: false, capture: true });
-
-      document.addEventListener("touchstart", prevent, { passive: false, capture: true });
-      document.addEventListener("touchmove", prevent, { passive: false, capture: true });
     })();
   </script>
 </body>
