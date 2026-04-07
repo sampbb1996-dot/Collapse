@@ -58,9 +58,9 @@
       right: 10px;
       color: #0f0;
       font-family: monospace;
-      font-size: 16px;
+      font-size: 18px;
       line-height: 1;
-      display: none;
+      display: block; /* visible immediately */
       pointer-events: none;
       z-index: 10;
     }
@@ -76,17 +76,20 @@
       var scoreEl = document.getElementById("score");
 
       var lastTap = null;
-
-      // continuous decay state
       var mean = null;
       var variance = 0;
 
-      // score state
       var score = 0;
-      var showScore = false;
+      var showScore = true; // visible immediately on app open
 
       var ALPHA = 0.2;
       var MIN_VARIANCE = 1;
+      var TOGGLE_SIZE = 80;
+
+      function renderScore() {
+        scoreEl.style.display = showScore ? "block" : "none";
+        scoreEl.textContent = String(Math.floor(score));
+      }
 
       function updateState(dt) {
         if (mean === null) {
@@ -115,8 +118,8 @@
         var dev = Math.abs(dt - mean);
         var v = Math.max(variance, MIN_VARIANCE);
         var pressure = 1 / v;
-
         var threshold = Math.sqrt(v) * (2 - Math.min(pressure * 0.01, 1));
+
         return dev > threshold;
       }
 
@@ -128,13 +131,8 @@
         renderScore();
       }
 
-      function renderScore() {
-        if (showScore) {
-          scoreEl.style.display = "block";
-          scoreEl.textContent = String(Math.floor(score));
-        } else {
-          scoreEl.style.display = "none";
-        }
+      function inToggleZone(x, y) {
+        return x < TOGGLE_SIZE && y < TOGGLE_SIZE;
       }
 
       function handleInput(e) {
@@ -143,8 +141,7 @@
         var x = e.clientX;
         var y = e.clientY;
 
-        // top-left toggle zone
-        if (x < 80 && y < 80) {
+        if (inToggleZone(x, y)) {
           showScore = !showScore;
           renderScore();
           return;
@@ -162,13 +159,14 @@
 
           updateState(dt);
           updateScore();
-          renderScore();
         }
 
         lastTap = now;
+        renderScore();
       }
 
-      // pointer events only
+      renderScore(); // show immediately on first paint
+
       surface.addEventListener("pointerdown", handleInput, { passive: false });
     })();
   </script>
