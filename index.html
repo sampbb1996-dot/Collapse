@@ -1,155 +1,176 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <style>
+    html, body { background:#000 !important; }
+  </style>
+  <script>
+    document.documentElement.style.background = "#000";
+  </script>
 
-<script>
-document.documentElement.style.background = "#000";
-</script>
+  <meta charset="UTF-8" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Tap Surface" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#000000" />
 
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="theme-color" content="#000000" />
+  <title>Tap Surface</title>
 
-<style>
-html {
-  background: #000 !important;
-}
+  <style>
+    :root { color-scheme: dark; }
 
-*, *::before, *::after {
-  -webkit-tap-highlight-color: transparent;
-  -webkit-touch-callout: none;
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
+    *, *::before, *::after {
+      -webkit-tap-highlight-color: transparent !important;
+      -webkit-touch-callout: none !important;
+      outline: none !important;
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
 
-html, body {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  background: #000;
-  touch-action: none;
-}
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000 !important;
+      touch-action: none;
+      overscroll-behavior: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
 
-#surface {
-  position: fixed;
-  inset: 0;
-  background: #000;
-  touch-action: none;
-}
+    #surface {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      cursor: default;
+    }
 
-#score {
-  position: fixed;
-  top: 10px;
-  right: 10px;
-  color: #0f0;
-  font-family: monospace;
-  font-size: 16px;
-  display: none;
-}
-</style>
+    #score {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      color: #0f0;
+      font-family: monospace;
+      font-size: 16px;
+      line-height: 1;
+      display: none;
+      pointer-events: none;
+      z-index: 10;
+    }
+  </style>
 </head>
+<body bgcolor="#000000" style="background:#000;color-scheme:dark">
+  <div id="surface"></div>
+  <div id="score">0</div>
 
-<body>
+  <script>
+    (function () {
+      var surface = document.getElementById("surface");
+      var scoreEl = document.getElementById("score");
 
-<div id="surface"></div>
-<div id="score">0</div>
+      var lastTap = null;
 
-<script>
-(function () {
-  var surface = document.getElementById("surface");
-  var scoreEl = document.getElementById("score");
+      // continuous decay state
+      var mean = null;
+      var variance = 0;
 
-  var lastTap = null;
+      // score state
+      var score = 0;
+      var showScore = false;
 
-  // decay state
-  var mean = null;
-  var variance = 0;
+      var ALPHA = 0.2;
+      var MIN_VARIANCE = 1;
 
-  var score = 0;
-  var showScore = false;
+      function updateState(dt) {
+        if (mean === null) {
+          mean = dt;
+          variance = 0;
+          return;
+        }
 
-  var ALPHA = 0.2;
-  var MIN_VARIANCE = 1;
-
-  function updateState(dt) {
-    if (mean === null) {
-      mean = dt;
-      variance = 0;
-      return;
-    }
-
-    var diff = dt - mean;
-
-    mean += ALPHA * diff;
-    variance = (1 - ALPHA) * (variance + ALPHA * diff * diff);
-  }
-
-  function updateScore() {
-    var v = Math.max(variance, MIN_VARIANCE);
-    var pressure = 1 / v;
-    score += pressure;
-  }
-
-  function shouldCollapse(dt) {
-    if (mean === null) return false;
-
-    var dev = Math.abs(dt - mean);
-    var v = Math.max(variance, MIN_VARIANCE);
-
-    var pressure = 1 / v;
-    var threshold = Math.sqrt(v) * (2 - Math.min(pressure * 0.01, 1));
-
-    return dev > threshold;
-  }
-
-  function collapse() {
-    score *= 0.5;
-    mean = null;
-    variance = 0;
-    lastTap = null;
-  }
-
-  function handleInput(e) {
-    e.preventDefault();
-
-    var x = e.clientX;
-    var y = e.clientY;
-
-    // toggle zone
-    if (x < 80 && y < 80) {
-      showScore = !showScore;
-      scoreEl.style.display = showScore ? "block" : "none";
-      return;
-    }
-
-    var now = performance.now();
-
-    if (lastTap !== null) {
-      var dt = now - lastTap;
-
-      if (shouldCollapse(dt)) {
-        collapse();
-        return;
+        var diff = dt - mean;
+        mean += ALPHA * diff;
+        variance = (1 - ALPHA) * (variance + ALPHA * diff * diff);
       }
 
-      updateState(dt);
-      updateScore();
-    }
+      function currentPressure() {
+        var v = Math.max(variance, MIN_VARIANCE);
+        return 1 / v;
+      }
 
-    lastTap = now;
+      function updateScore() {
+        score += currentPressure();
+      }
 
-    if (showScore) {
-      scoreEl.textContent = Math.floor(score);
-    }
-  }
+      function shouldCollapse(dt) {
+        if (mean === null) return false;
 
-  // ONLY one listener (critical)
-  surface.addEventListener("touchstart", handleInput, { passive: false });
+        var dev = Math.abs(dt - mean);
+        var v = Math.max(variance, MIN_VARIANCE);
+        var pressure = 1 / v;
 
-})();
-</script>
+        var threshold = Math.sqrt(v) * (2 - Math.min(pressure * 0.01, 1));
+        return dev > threshold;
+      }
 
+      function collapse() {
+        score *= 0.5;
+        mean = null;
+        variance = 0;
+        lastTap = null;
+        renderScore();
+      }
+
+      function renderScore() {
+        if (showScore) {
+          scoreEl.style.display = "block";
+          scoreEl.textContent = String(Math.floor(score));
+        } else {
+          scoreEl.style.display = "none";
+        }
+      }
+
+      function handleInput(e) {
+        e.preventDefault();
+
+        var x = e.clientX;
+        var y = e.clientY;
+
+        // top-left toggle zone
+        if (x < 80 && y < 80) {
+          showScore = !showScore;
+          renderScore();
+          return;
+        }
+
+        var now = performance.now();
+
+        if (lastTap !== null) {
+          var dt = now - lastTap;
+
+          if (shouldCollapse(dt)) {
+            collapse();
+            return;
+          }
+
+          updateState(dt);
+          updateScore();
+          renderScore();
+        }
+
+        lastTap = now;
+      }
+
+      // pointer events only
+      surface.addEventListener("pointerdown", handleInput, { passive: false });
+    })();
+  </script>
 </body>
 </html>
