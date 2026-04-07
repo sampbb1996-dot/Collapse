@@ -38,26 +38,24 @@ body { -webkit-touch-callout:none; touch-action:none; }
 <script>
 document.body.style.webkitTapHighlightColor = 'transparent';
 
-// Single smoothing parameter — all other quantities derived from tap data
 const ALPHA = 0.2;
 
-let mean       = 0;
-let variance   = 0;
-let instability = 0;  // EMA of normalised error — bounded, continuous, slow decay
-let prevRaw    = 0;
-let drift      = 0;   // EMA of tap-to-tap raw change — rewards stability of change
-let state      = 0;
-let score      = 0;   // all-time improvement accumulator with continuous decay
-let perfScore  = 0;   // time-weighted magnitude: integral of |state| with decay
+let mean        = 0;
+let variance    = 0;
+let instability = 0;
+let prevRaw     = 0;
+let drift       = 0;
+let state       = 0;
+let score       = 0;
+let perfScore   = 0;
 let lastTapTime = null;
-let lastTime   = performance.now();
+let lastTime    = performance.now();
 
 const scoreEl = document.getElementById('score');
 function render() {
   scoreEl.textContent = Math.round(perfScore * 10000).toString().padStart(5, '0');
 
   const m = Math.min(1, Math.abs(state));
-
   const r = Math.round(60 + 160 * m);
   const g = Math.round(80 - 60 * m);
   const b = 255;
@@ -68,52 +66,31 @@ function render() {
 
 function onTap() {
   const now = performance.now();
-
-  if (lastTapTime === null) {
-    lastTapTime = now;
-    return;
-  }
+  if (lastTapTime === null) { lastTapTime = now; return; }
 
   const dt = now - lastTapTime;
   lastTapTime = now;
-
-  // Silent guard — no hard reset, no render
   if (dt <= 0) return;
 
-  // EMA update — always applied, no rejection
   const prevMean = mean > 0 ? mean : dt;
   mean = prevMean + ALPHA * (dt - prevMean);
   const err = dt - prevMean;
   variance = (1 - ALPHA) * (variance + ALPHA * err * err);
 
   const std = Math.sqrt(variance + 1);
-
-  // cv measures variability relative to mean scale — bounded by construction
   const cv = std / (std + Math.abs(mean) + 1);
-
-  // Parabolic coherence — peaks at cv=0.5, zero at rigid (cv=0) and chaotic (cv=1)
-  // No arbitrary shape constants — 4 is the natural normaliser for 4x(1-x)
   const coherence = 4 * cv * (1 - cv) * (1 - prevRaw);
 
-  // Instability: continuous EMA of normalised deviation — never resets
   instability = (1 - ALPHA) * instability + ALPHA * (Math.abs(err) / (std + 1));
-
-  // Penalty: inversely proportional to accumulated instability
   const penalty = 1 / (1 + instability);
-
   const raw = coherence * penalty;
 
-  // Stability-of-change: EMA of tap-to-tap movement in raw
-  // Rewards consistent drift direction, not static value
   drift = (1 - ALPHA) * drift + ALPHA * Math.abs(raw - prevRaw);
   const stabilityWeight = 1 / (1 + drift);
-
-  // Continuous state update — no gate, no threshold, weighted by stability of change
   const instabilityWeight = 1 / (1 + instability);
   const direction = raw - prevRaw;
   state += direction * stabilityWeight * instabilityWeight;
 
-  // Accumulate positive improvement only — no reset, no gate
   const improvement = Math.max(0, raw - prevRaw);
   score += improvement;
 
@@ -126,7 +103,6 @@ function tick() {
   const dt = (now - lastTime) / 1000;
   lastTime = now;
 
-  // Decay rate: instability-derived, with ALPHA as minimum floor so decay is always visible
   const decayRate = ALPHA + instability / (1 + instability);
   state     *= Math.exp(-decayRate * dt);
   score     *= Math.exp(-decayRate * dt);
