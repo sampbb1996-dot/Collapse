@@ -76,7 +76,7 @@
 
       function renderScore() {
         scoreEl.style.display = showScore ? "block" : "none";
-        scoreEl.textContent = score.toFixed(2); // 🔥 decimals
+        scoreEl.textContent = score.toFixed(2);
       }
 
       function updateState(dt) {
@@ -91,14 +91,16 @@
         variance = (1 - ALPHA) * (variance + ALPHA * diff * diff);
       }
 
-      function currentPressure() {
+      function getPressure() {
         var v = Math.max(variance, MIN_VARIANCE);
         return 1 / v;
       }
 
       function updateScore() {
-        // 🔥 scaled so it actually moves
-        score += currentPressure() * 50;
+        var p = getPressure();
+
+        // 🔥 SMOOTH + NON-LINEAR (fixes stepping)
+        score += Math.sqrt(p) * 15;
       }
 
       function shouldCollapse(dt) {
@@ -113,7 +115,7 @@
       }
 
       function collapse() {
-        score *= 0.5;
+        score *= 0.5; // keep memory but punish instability
         mean = null;
         variance = 0;
         lastTap = null;
@@ -126,7 +128,7 @@
         var x = e.clientX;
         var y = e.clientY;
 
-        // toggle score
+        // toggle zone
         if (x < TOGGLE_SIZE && y < TOGGLE_SIZE) {
           showScore = !showScore;
           renderScore();
