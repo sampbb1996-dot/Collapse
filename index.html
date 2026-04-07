@@ -142,7 +142,8 @@ function tick() {
   state     *= Math.exp(-decayRate * dt);
   score     *= Math.exp(-decayRate * dt);
   const idlePenalty = 1 / (1 + idleTime * 2);
-  perfScore += Math.abs(state) * dt * idlePenalty;
+  const continuity = 1 / (1 + drift + instability);
+  perfScore += Math.abs(state) * dt * idlePenalty * continuity;
   perfScore *= Math.exp(-decayRate * dt);
 
   render();
