@@ -31,10 +31,25 @@ body { -webkit-touch-callout:none; touch-action:none; }
   white-space: pre;
   text-align: center;
 }
+#indicator {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 10px monospace;
+  color: rgba(255,255,255,0.85);
+}
 </style>
 </head>
 <body>
 <div id="score">0.0000</div>
+<div id="indicator"></div>
 <script>
 document.body.style.webkitTapHighlightColor = 'transparent';
 
@@ -52,8 +67,11 @@ let idleTime     = 0;
 let displayScore = 0;
 let lastTapTime  = null;
 let lastTime     = performance.now();
+let skill        = 0;
+let lifetimeSkill = parseFloat(localStorage.getItem('skill')) || 0;
 
 const scoreEl = document.getElementById('score');
+const indicatorEl = document.getElementById('indicator');
 
 function render() {
   const velocity = Math.abs(perfScore - displayScore);
@@ -136,6 +154,20 @@ function tick() {
   const band = Math.abs(state) * Math.exp(-Math.abs(state));
 
   perfScore = band * idlePenalty * continuity;
+
+  skill += 0.001 * (perfScore - skill);
+  lifetimeSkill += 0.0001 * (perfScore - lifetimeSkill);
+
+  if (!window._lastSave || now - window._lastSave > 1000) {
+    localStorage.setItem('skill', lifetimeSkill);
+    window._lastSave = now;
+  }
+
+  const t = skill;
+  const ir = Math.round(255 * (1 - t));
+  const ig = Math.round(255 * t);
+  indicatorEl.style.background = `rgb(${ir}, ${ig}, 0)`;
+  indicatorEl.textContent = Math.round(skill * 100) + '|' + Math.round(lifetimeSkill * 100);
 
   render();
   requestAnimationFrame(tick);
