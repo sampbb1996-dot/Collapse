@@ -33,18 +33,19 @@ body { -webkit-touch-callout:none; touch-action:none; }
 }
 #indicator {
   position: fixed;
-  top: 10px;
-  right: 10px;
-  width: 64px;
-  height: 24px;
-  border-radius: 4px;
+  top: 12px;
+  left: 12px;
+  width: 72px;
+  height: 28px;
+  border-radius: 6px;
   pointer-events: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  font: 11px monospace;
-  color: rgba(255,255,255,0.9);
+  font: bold 12px monospace;
+  color: #fff;
   background: rgb(255, 0, 0);
+  z-index: 9999;
 }
 </style>
 </head>
@@ -69,7 +70,8 @@ let displayScore = 0;
 let lastTapTime  = null;
 let lastTime     = performance.now();
 let skill        = 0;
-let lifetimeSkill = parseFloat(localStorage.getItem('skill')) || 0;
+let lifetimeSkill = 0;
+try { lifetimeSkill = parseFloat(localStorage.getItem('skill')) || 0; } catch(e) {}
 
 const scoreEl = document.getElementById('score');
 const indicatorEl = document.getElementById('indicator');
@@ -160,7 +162,7 @@ function tick() {
   lifetimeSkill += 0.0001 * (perfScore - lifetimeSkill);
 
   if (!window._lastSave || now - window._lastSave > 1000) {
-    localStorage.setItem('skill', lifetimeSkill);
+    try { localStorage.setItem('skill', lifetimeSkill); } catch(e) {}
     window._lastSave = now;
   }
 
