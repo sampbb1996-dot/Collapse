@@ -12,20 +12,14 @@
   <meta name="color-scheme" content="dark" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Tap Surface" />
-  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#000000" />
 
   <title>Tap Surface</title>
 
   <style>
-    :root { color-scheme: dark; }
-
     *, *::before, *::after {
       -webkit-tap-highlight-color: transparent !important;
       -webkit-touch-callout: none !important;
-      outline: none !important;
       box-sizing: border-box;
       margin: 0;
       padding: 0;
@@ -37,7 +31,6 @@
       overflow: hidden;
       background: #000 !important;
       touch-action: none;
-      overscroll-behavior: none;
       user-select: none;
       -webkit-user-select: none;
     }
@@ -46,10 +39,6 @@
       position: fixed;
       inset: 0;
       background: #000;
-      touch-action: none;
-      user-select: none;
-      -webkit-user-select: none;
-      cursor: default;
     }
 
     #score {
@@ -59,16 +48,15 @@
       color: #0f0;
       font-family: monospace;
       font-size: 18px;
-      line-height: 1;
-      display: block; /* visible immediately */
       pointer-events: none;
       z-index: 10;
     }
   </style>
 </head>
-<body bgcolor="#000000" style="background:#000;color-scheme:dark">
+
+<body>
   <div id="surface"></div>
-  <div id="score">0</div>
+  <div id="score">0.00</div>
 
   <script>
     (function () {
@@ -80,7 +68,7 @@
       var variance = 0;
 
       var score = 0;
-      var showScore = true; // visible immediately on app open
+      var showScore = true;
 
       var ALPHA = 0.2;
       var MIN_VARIANCE = 1;
@@ -88,7 +76,7 @@
 
       function renderScore() {
         scoreEl.style.display = showScore ? "block" : "none";
-        scoreEl.textContent = String(Math.floor(score));
+        scoreEl.textContent = score.toFixed(2); // 🔥 decimals
       }
 
       function updateState(dt) {
@@ -109,7 +97,8 @@
       }
 
       function updateScore() {
-        score += currentPressure();
+        // 🔥 scaled so it actually moves
+        score += currentPressure() * 50;
       }
 
       function shouldCollapse(dt) {
@@ -117,9 +106,9 @@
 
         var dev = Math.abs(dt - mean);
         var v = Math.max(variance, MIN_VARIANCE);
-        var pressure = 1 / v;
-        var threshold = Math.sqrt(v) * (2 - Math.min(pressure * 0.01, 1));
+        var p = 1 / v;
 
+        var threshold = Math.sqrt(v) * (2 - Math.min(p * 0.01, 1));
         return dev > threshold;
       }
 
@@ -131,17 +120,14 @@
         renderScore();
       }
 
-      function inToggleZone(x, y) {
-        return x < TOGGLE_SIZE && y < TOGGLE_SIZE;
-      }
-
       function handleInput(e) {
         e.preventDefault();
 
         var x = e.clientX;
         var y = e.clientY;
 
-        if (inToggleZone(x, y)) {
+        // toggle score
+        if (x < TOGGLE_SIZE && y < TOGGLE_SIZE) {
           showScore = !showScore;
           renderScore();
           return;
@@ -165,7 +151,7 @@
         renderScore();
       }
 
-      renderScore(); // show immediately on first paint
+      renderScore();
 
       surface.addEventListener("pointerdown", handleInput, { passive: false });
     })();
