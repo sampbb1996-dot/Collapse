@@ -14,7 +14,8 @@ body {
 #dot {
   width: 40px;
   height: 40px;
-  background: #000;
+  border-radius: 50%;
+  background: #222;
 }
 </style>
 </head>
@@ -29,7 +30,7 @@ let state = 0; // 0 or 1
 const dot = document.getElementById('dot');
 
 function render() {
-  dot.style.background = state ? '#fff' : '#000';
+  dot.style.background = state ? '#fff' : '#222';
 }
 
 function onTap() {
