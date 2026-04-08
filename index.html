@@ -1,119 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<style>
+body {
+  margin: 0;
+  background: #000;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#dot {
+  width: 40px;
+  height: 40px;
+  background: #000;
+}
+</style>
+</head>
+<body>
+<div id="dot"></div>
 <script>
-document.body.style.webkitTapHighlightColor = 'transparent';
+const EPSILON = 0.002;
 
-let hidden = 0;
 let tapBest = 0;
+let state = 0; // 0 or 1
 
-let best   = parseInt(localStorage.getItem('best'))   || 0;
-let streak = parseInt(localStorage.getItem('streak')) || 0;
+const dot = document.getElementById('dot');
 
-function save() {
-  localStorage.setItem('best', best);
-  localStorage.setItem('streak', streak);
+function render() {
+  dot.style.background = state ? '#fff' : '#000';
 }
-
-function updateStreak(success) {
-  if (success) {
-    streak += 1;
-    if (streak > best) best = streak;
-  } else {
-    streak = 0;
-  }
-  save();
-}
-
-const resultEl = document.getElementById('result');
-let fadeTimer = null;
-let longPressTimer = null;
-let longPressFired = false;
-
-function showText(text, duration) {
-  if (fadeTimer) clearTimeout(fadeTimer);
-  resultEl.classList.remove('fade');
-  resultEl.textContent = text;
-  void resultEl.offsetWidth;
-  resultEl.classList.add('show');
-  fadeTimer = setTimeout(() => {
-    resultEl.classList.remove('show');
-    resultEl.classList.add('fade');
-  }, duration);
-}
-
-function showResult(value) {
-  showText(value.toString().padStart(7, '0'), 400);
-}
-
-function showStats() {
-  showText('BEST: ' + best + '\nSTREAK: ' + streak, 1200);
-}
-
-const EPSILON = 0.002; // ← real constraint (tune if needed)
 
 function onTap() {
+  const hidden = Math.sin(performance.now() * 0.001);
   const alignment = 1 - Math.abs(hidden);
   const score = Math.exp(-6 * (1 - alignment));
 
   const success = score >= tapBest + EPSILON;
-  tapBest = success ? score : 0;
 
-  updateStreak(success);
-
-  showResult(Math.round(score * 1000000));
-}
-
-function startLongPress() {
-  longPressFired = false;
-  longPressTimer = setTimeout(() => {
-    longPressFired = true;
-    showStats();
-  }, 800);
-}
-
-function endLongPress(doTap) {
-  if (longPressTimer) {
-    clearTimeout(longPressTimer);
-    longPressTimer = null;
+  if (success) {
+    tapBest = score;      // stay in current state
+  } else {
+    tapBest = 0;
+    state = 1 - state;    // flip state
   }
-  if (!longPressFired && doTap) onTap();
-  longPressFired = false;
+
+  render();
 }
 
-function kill(e) { e.preventDefault(); }
-
-document.addEventListener('touchstart', e => {
-  kill(e);
-  if (e.touches.length === 1) startLongPress();
-}, { passive: false });
-
-document.addEventListener('touchmove', kill, { passive: false });
+document.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
 
 document.addEventListener('touchend', e => {
-  kill(e);
-  if (e.changedTouches.length === 1) endLongPress(true);
+  e.preventDefault();
+  if (e.changedTouches.length === 1) onTap();
 }, { passive: false });
-
-document.addEventListener('touchcancel', e => {
-  kill(e);
-  endLongPress(false);
-}, { passive: false });
-
-document.addEventListener('pointerdown', e => {
-  if (e.pointerType !== 'touch') startLongPress();
-});
 
 document.addEventListener('pointerup', e => {
-  if (e.pointerType !== 'touch') endLongPress(true);
+  if (e.pointerType !== 'touch') onTap();
 });
 
-document.addEventListener('pointercancel', e => {
-  if (e.pointerType !== 'touch') endLongPress(false);
-});
-
-function tick() {
-  const now = performance.now();
-  hidden = Math.sin(now * 0.001);
-  requestAnimationFrame(tick);
-}
-
-tick();
+render();
 </script>
+</body>
+</html>
