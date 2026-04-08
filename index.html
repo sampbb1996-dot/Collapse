@@ -35,9 +35,7 @@ const COLORS = ['#c4b5fd', '#7dd3fc'];
 const BASE = 0.5;
 
 let state = 0;
-let pressure = 0;
-let stability = 0;
-let lastTap = 0;
+let phase = 0;
 
 const dot = document.getElementById('dot');
 
@@ -45,40 +43,29 @@ function render() {
   dot.style.background = COLORS[state];
 }
 
-function onTap() {
-  const now = performance.now();
-  if (now - lastTap < 200) return;
-  lastTap = now;
-
-  const hidden = Math.sin(now * 0.001);
-  const alignment = 1 - Math.pow(Math.abs(hidden), 0.5);
-  const score = alignment;
-
-  const threshold = BASE + pressure;
-
-  if (score >= threshold) {
-    pressure *= 0.1;
-    stability += 0.05;
-  } else {
-    state = 1 - state;
-    pressure = 0;
-    stability = 0;
-  }
-
-  render();
-}
-
 function tick() {
-  pressure += 0.00008;
+  phase += 0.08;
 
-  if (pressure > 0.8) {
+  const hiddenRaw = Math.sin(phase) + 0.5 * Math.sin(1.7 * phase);
+  const hidden = hiddenRaw / 1.5;
+
+  if (Math.abs(hidden) < 0.02) {
     state = 1 - state;
-    pressure = 0;
-    stability = 0;
     render();
   }
 
   requestAnimationFrame(tick);
+}
+
+function onTap() {
+  const hiddenRaw = Math.sin(phase) + 0.5 * Math.sin(1.7 * phase);
+  const hidden = hiddenRaw / 1.5;
+  const alignment = 1 - Math.pow(Math.abs(hidden), 0.5);
+
+  if (alignment < BASE) {
+    state = 1 - state;
+    render();
+  }
 }
 
 document.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
