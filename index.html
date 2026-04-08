@@ -31,25 +31,54 @@ html, body {
 <body>
 <div id="dot"></div>
 <script>
+const COLORS = ['#c4b5fd', '#7dd3fc'];
+const BASE = 0.5;
+
 let state = 0;
+let pressure = 0;
+let stability = 0;
+let lastTap = 0;
 
 const dot = document.getElementById('dot');
-const COLORS = ['#c4b5fd', '#7dd3fc'];
 
 function render() {
   dot.style.background = COLORS[state];
 }
 
 function onTap() {
-  const hidden = Math.sin(performance.now() * 0.001);
-  const alignment = 1 - Math.abs(hidden);
-  const score = Math.exp(-6 * (1 - alignment));
+  const now = performance.now();
+  if (now - lastTap < 200) return;
+  lastTap = now;
 
-  if (score < 0.8) {
+  const hidden = Math.sin(now * 0.001);
+  const alignment = 1 - Math.pow(Math.abs(hidden), 0.5);
+  const score = alignment;
+
+  const threshold = BASE + pressure;
+
+  if (score >= threshold) {
+    pressure *= 0.1;
+    stability += 0.05;
+  } else {
     state = 1 - state;
+    pressure = 0;
+    stability = 0;
   }
 
   render();
+}
+
+function tick() {
+  pressure += 0.00008;
+
+  if (pressure > 0.8) {
+    state = 1 - state;
+    pressure = 0;
+    stability = 0;
+    render();
+  }
+
+  requestAnimationFrame(tick);
 }
 
 document.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
@@ -58,10 +87,12 @@ document.addEventListener('touchend', e => {
   e.preventDefault();
   if (e.changedTouches.length === 1) onTap();
 }, { passive: false });
+
 document.addEventListener('pointerup', e => {
   if (e.pointerType !== 'touch') onTap();
 });
 
+tick();
 render();
 </script>
 </body>
