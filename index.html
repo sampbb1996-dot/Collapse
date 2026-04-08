@@ -28,8 +28,10 @@ let tapBest = 0;
 let state = 0; // 0 or 1
 
 const dot = document.getElementById('dot');
+document.body.style.background = '#000';
 
 function render() {
+  document.body.style.background = '#000';
   dot.style.background = state ? '#fff' : '#222';
 }
 
