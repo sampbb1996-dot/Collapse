@@ -45,7 +45,7 @@ function onTap() {
   const alignment = 1 - Math.abs(hidden);
   const score = Math.exp(-6 * (1 - alignment));
 
-  if (score < 0.95) {
+  if (score < 0.8) {
     state = 1 - state;
   }
 
