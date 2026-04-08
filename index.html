@@ -32,10 +32,10 @@ html, body {
 <div id="dot"></div>
 <script>
 const COLORS = ['#c4b5fd', '#7dd3fc'];
-const BASE = 0.5;
 
 let state = 0;
 let phase = 0;
+let drift = 0;
 
 const dot = document.getElementById('dot');
 
@@ -44,13 +44,13 @@ function render() {
 }
 
 function tick() {
-  phase += 0.08;
+  phase += 0.04 + 0.04 * Math.sin(phase * 0.7) + 0.02 * Math.sin(phase * 1.3);
 
-  const hiddenRaw = Math.sin(phase) + 0.5 * Math.sin(1.7 * phase);
-  const hidden = hiddenRaw / 1.5;
+  drift += 0.01 + 0.01 * Math.sin(phase * 0.5);
 
-  if (Math.abs(hidden) < 0.02) {
+  if (drift > 1) {
     state = 1 - state;
+    drift = 0;
     render();
   }
 
@@ -60,16 +60,17 @@ function tick() {
 function onTap() {
   const hiddenRaw = Math.sin(phase) + 0.5 * Math.sin(1.7 * phase);
   const hidden = hiddenRaw / 1.5;
-  const alignment = 1 - Math.pow(Math.abs(hidden), 0.5);
+  const alignment = 1 - Math.abs(hidden);
 
-  if (alignment < BASE) {
-    state = 1 - state;
-    render();
+  if (alignment > 0.75) {
+    const x = (alignment - 0.75) / 0.25;
+    const strength = x * x * x;
+    drift += strength * 0.8;
   }
 }
 
 document.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
-document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+document.addEventListener('touchmove',  e => e.preventDefault(), { passive: false });
 document.addEventListener('touchend', e => {
   e.preventDefault();
   if (e.changedTouches.length === 1) onTap();
